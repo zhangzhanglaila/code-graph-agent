@@ -3,6 +3,8 @@
 Usage:
     python main.py analyze --project demo/ --error demo/auth.py:29
     python main.py explain --file demo/auth.py --line 17
+    python main.py explain-why --module demo.timeline_demo --func fibonacci
+    python main.py timeline --module demo.timeline_demo --func list_traversal
     python main.py demo
 """
 
@@ -19,6 +21,8 @@ from core.edge_types import EdgeType
 from static.python_analyzer import PythonAnalyzer
 from static.config_linker import ConfigLinker
 from dynamic.tracer import LineTracer
+from dynamic.state_recorder import record_function
+from reasoning.result_explainer import explain_result, explain_result_text
 from dynamic.exception_parser import ExceptionParser, catch_and_parse
 from fusion.merge_engine import MergeEngine
 from reasoning.llm_reasoner import LLMReasoner
@@ -165,6 +169,99 @@ def run_explain(
     return result
 
 
+def run_explain_why(
+    module_path: str,
+    func_name: str,
+    output_dir: str = "output",
+) -> dict:
+    """Record execution and explain WHY the result is what it is."""
+    import importlib
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"Analyzing: {module_path}.{func_name}()")
+
+    # Import and record
+    module = importlib.import_module(module_path)
+    func = getattr(module, func_name)
+    target_file = os.path.abspath(func.__code__.co_filename)
+
+    result, timeline = record_function(func, target_files={target_file})
+
+    # Generate explanation
+    explanation = explain_result(timeline, result, func_name)
+    text = explain_result_text(timeline, result, func_name)
+
+    print(text)
+
+    # Save structured output
+    explanation_path = os.path.join(output_dir, "explain_why.json")
+    with open(explanation_path, "w", encoding="utf-8") as f:
+        json.dump(explanation, f, indent=2, ensure_ascii=False)
+    print(f"\n  → Structured: {explanation_path}")
+
+    # Also generate timeline
+    from visualization.graph_ui import GraphVisualizer
+    viz = GraphVisualizer()
+    html_path = viz.render_timeline(
+        timeline,
+        output_path=os.path.join(output_dir, "execution_timeline.html"),
+        title=f"WHY: {func_name}() = {result}",
+    )
+    print(f"  → Timeline: {html_path}")
+
+    return explanation
+
+
+def run_unified(
+    module_path: str,
+    func_name: str,
+    project_path: Optional[str] = None,
+    output_dir: str = "output",
+) -> dict:
+    """Generate unified WHY+HOW view: causal graph + timeline in one page."""
+    import importlib
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"Unified analysis: {module_path}.{func_name}()")
+
+    # 1. Record execution timeline
+    module = importlib.import_module(module_path)
+    func = getattr(module, func_name)
+    target_file = os.path.abspath(func.__code__.co_filename)
+
+    result, timeline = record_function(func, target_files={target_file})
+    print(f"  → {len(timeline.steps)} steps recorded")
+
+    # 2. Static analysis for causal graph
+    analyzer = PythonAnalyzer()
+    if project_path:
+        graph = analyzer.analyze_directory(project_path)
+    else:
+        graph = analyzer.analyze_file(target_file)
+    print(f"  → {graph.stats()['nodes']} graph nodes, {graph.stats()['edges']} edges")
+
+    # 3. Generate unified view
+    viz = GraphVisualizer()
+    html_path = viz.render_unified(
+        graph=graph,
+        timeline=timeline,
+        output_path=os.path.join(output_dir, "unified_view.html"),
+        title=f"WHY + HOW: {func_name}() = {result}",
+    )
+    print(f"  → Unified view: {html_path}")
+
+    # 4. Also generate explanation
+    explanation = explain_result(timeline, result, func_name)
+    explanation_path = os.path.join(output_dir, "unified_explanation.json")
+    with open(explanation_path, "w", encoding="utf-8") as f:
+        json.dump(explanation, f, indent=2, ensure_ascii=False)
+    print(f"  → Explanation: {explanation_path}")
+
+    return {"result": result, "explanation": explanation}
+
+
 def run_demo():
     """Run the login failure demo."""
     demo_dir = os.path.join(os.path.dirname(__file__), "demo")
@@ -192,6 +289,72 @@ def run_demo():
         config_file=config_path,
         output_dir="output",
     )
+
+
+def run_timeline(
+    module_path: str,
+    func_name: str,
+    output_dir: str = "output",
+) -> dict:
+    """Record and visualize execution timeline of a function."""
+    import importlib
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"Recording: {module_path}.{func_name}()")
+
+    # Import the module
+    module = importlib.import_module(module_path)
+    func = getattr(module, func_name)
+    target_file = os.path.abspath(func.__code__.co_filename)
+
+    # Record execution
+    result, timeline = record_function(func, target_files={target_file})
+
+    summary = timeline.summary()
+    print(f"  → {summary['total_steps']} steps, {len(summary['variables_tracked'])} variables")
+
+    # Show step-by-step summary
+    for step in timeline.steps:
+        changed = ""
+        if step.changed_vars:
+            changed = f" [changed: {', '.join(step.changed_vars)}]"
+        if step.new_vars:
+            changed += f" [new: {', '.join(step.new_vars)}]"
+        print(f"  Step {step.step_index:3d}: {os.path.basename(step.file_path)}:{step.line_number}"
+              f"  {step.code_line[:60]}{changed}")
+
+    # Generate timeline visualization
+    viz = GraphVisualizer()
+    html_path = viz.render_timeline(
+        timeline,
+        output_path=os.path.join(output_dir, "execution_timeline.html"),
+        title=f"Execution Timeline: {func_name}()",
+    )
+    print(f"\n  → Timeline: {html_path}")
+
+    # Also generate variable history
+    all_vars = set()
+    for step in timeline.steps:
+        all_vars.update(step.variables.keys())
+
+    var_history = {}
+    for var in sorted(all_vars):
+        history = timeline.get_variable_history(var)
+        if history:
+            var_history[var] = [
+                {"step": idx, "value": snap.value_repr, "type": snap.value_type}
+                for idx, snap in history
+            ]
+
+    history_path = os.path.join(output_dir, "variable_history.json")
+    with open(history_path, "w", encoding="utf-8") as f:
+        json.dump(var_history, f, indent=2, ensure_ascii=False)
+    print(f"  → Variable history: {history_path}")
+
+    print(f"\n  Result: {result}")
+
+    return {"result": result, "summary": summary}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -296,6 +459,25 @@ Examples:
     # demo command
     subparsers.add_parser("demo", help="Run the login failure demo")
 
+    # timeline command
+    timeline_p = subparsers.add_parser("timeline", help="Record and visualize execution timeline")
+    timeline_p.add_argument("--module", required=True, help="Module path (e.g. demo.timeline_demo)")
+    timeline_p.add_argument("--func", required=True, help="Function name to record")
+    timeline_p.add_argument("--output", default="output", help="Output directory")
+
+    # explain-why command
+    ew_p = subparsers.add_parser("explain-why", help="Explain WHY a function returns this result")
+    ew_p.add_argument("--module", required=True, help="Module path")
+    ew_p.add_argument("--func", required=True, help="Function name")
+    ew_p.add_argument("--output", default="output", help="Output directory")
+
+    # unified command
+    uni_p = subparsers.add_parser("unified", help="Unified WHY+HOW view (graph + timeline)")
+    uni_p.add_argument("--module", required=True, help="Module path")
+    uni_p.add_argument("--func", required=True, help="Function name")
+    uni_p.add_argument("--project", help="Project directory for static analysis")
+    uni_p.add_argument("--output", default="output", help="Output directory")
+
     args = parser.parse_args()
 
     if args.command == "analyze":
@@ -322,6 +504,25 @@ Examples:
         )
     elif args.command == "demo":
         run_demo()
+    elif args.command == "timeline":
+        run_timeline(
+            module_path=args.module,
+            func_name=args.func,
+            output_dir=args.output,
+        )
+    elif args.command == "explain-why":
+        run_explain_why(
+            module_path=args.module,
+            func_name=args.func,
+            output_dir=args.output,
+        )
+    elif args.command == "unified":
+        run_unified(
+            module_path=args.module,
+            func_name=args.func,
+            project_path=args.project,
+            output_dir=args.output,
+        )
     else:
         parser.print_help()
 

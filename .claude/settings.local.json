@@ -4,7 +4,16 @@
       "Bash(pip install *)",
       "Bash(python -c \"import yaml; print\\('yaml OK'\\)\")",
       "Bash(python -c \"import pyvis; print\\('pyvis OK'\\)\")",
-      "Bash(python main.py demo)"
+      "Bash(python main.py demo)",
+      "Bash(python main.py timeline --module demo.timeline_demo --func list_traversal)",
+      "Bash(python main.py timeline --module demo.timeline_demo --func dict_merge)",
+      "Bash(python main.py timeline --module demo.timeline_demo --func fibonacci)",
+      "Bash(python main.py explain-why --module demo.timeline_demo --func fibonacci)",
+      "Bash(python main.py explain-why --module demo.timeline_demo --func list_traversal)",
+      "Bash(python -c ' *)",
+      "Bash(python main.py explain-why --module demo.timeline_demo --func dict_merge)",
+      "Bash(python main.py unified --module demo.timeline_demo --func fibonacci --project demo/)",
+      "Bash(python main.py unified --module demo.timeline_demo --func dict_merge --project demo/)"
     ]
   }
 }

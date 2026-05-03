@@ -1,0 +1,244 @@
+{
+  "summary": "dict_merge() returned {'host': 'localhost', 'port': 9090, 'debug': True} → because merged was initialized to {} at line 24 → then key became 'debug' at line 28",
+  "result_value": "{'host': 'localhost', 'port': 9090, 'debug': True}",
+  "func_name": "dict_merge",
+  "lineage": [
+    {
+      "variable": "merged",
+      "step": 4,
+      "line": 24,
+      "code": "for key, value in config.items():",
+      "value": "{}",
+      "type": "dict",
+      "event": "created",
+      "prev_value": null
+    },
+    {
+      "variable": "merged",
+      "step": 6,
+      "line": 24,
+      "code": "for key, value in config.items():",
+      "value": "{'host': 'localhost'}",
+      "type": "dict",
+      "event": "changed",
+      "prev_value": "{}"
+    },
+    {
+      "variable": "merged",
+      "step": 8,
+      "line": 24,
+      "code": "for key, value in config.items():",
+      "value": "{'host': 'localhost', 'port': 8080}",
+      "type": "dict",
+      "event": "changed",
+      "prev_value": "{'host': 'localhost'}"
+    },
+    {
+      "variable": "merged",
+      "step": 11,
+      "line": 27,
+      "code": "for key, value in overrides.items():",
+      "value": "{'host': 'localhost', 'port': 9090}",
+      "type": "dict",
+      "event": "changed",
+      "prev_value": "{'host': 'localhost', 'port': 8080}"
+    },
+    {
+      "variable": "merged",
+      "step": 13,
+      "line": 27,
+      "code": "for key, value in overrides.items():",
+      "value": "{'host': 'localhost', 'port': 9090, 'debug': True}",
+      "type": "dict",
+      "event": "changed",
+      "prev_value": "{'host': 'localhost', 'port': 9090}"
+    },
+    {
+      "variable": "config",
+      "step": 2,
+      "line": 21,
+      "code": "overrides = {\"port\": 9090, \"debug\": True}",
+      "value": "{'host': 'localhost', 'port': 8080}",
+      "type": "dict",
+      "event": "created",
+      "prev_value": null
+    },
+    {
+      "variable": "value",
+      "step": 5,
+      "line": 25,
+      "code": "merged[key] = value",
+      "value": "'localhost'",
+      "type": "str",
+      "event": "created",
+      "prev_value": null
+    },
+    {
+      "variable": "value",
+      "step": 7,
+      "line": 25,
+      "code": "merged[key] = value",
+      "value": "8080",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "'localhost'"
+    },
+    {
+      "variable": "value",
+      "step": 10,
+      "line": 28,
+      "code": "merged[key] = value",
+      "value": "9090",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "8080"
+    },
+    {
+      "variable": "value",
+      "step": 12,
+      "line": 28,
+      "code": "merged[key] = value",
+      "value": "True",
+      "type": "bool",
+      "event": "changed",
+      "prev_value": "9090"
+    },
+    {
+      "variable": "key",
+      "step": 5,
+      "line": 25,
+      "code": "merged[key] = value",
+      "value": "'host'",
+      "type": "str",
+      "event": "created",
+      "prev_value": null
+    },
+    {
+      "variable": "key",
+      "step": 7,
+      "line": 25,
+      "code": "merged[key] = value",
+      "value": "'port'",
+      "type": "str",
+      "event": "changed",
+      "prev_value": "'host'"
+    },
+    {
+      "variable": "key",
+      "step": 12,
+      "line": 28,
+      "code": "merged[key] = value",
+      "value": "'debug'",
+      "type": "str",
+      "event": "changed",
+      "prev_value": "'port'"
+    },
+    {
+      "variable": "overrides",
+      "step": 3,
+      "line": 23,
+      "code": "merged = {}",
+      "value": "{'port': 9090, 'debug': True}",
+      "type": "dict",
+      "event": "created",
+      "prev_value": null
+    }
+  ],
+  "critical_path": [
+    {
+      "step": 2,
+      "file": "timeline_demo.py",
+      "line": 21,
+      "code": "overrides = {\"port\": 9090, \"debug\": True}",
+      "what_changed": []
+    },
+    {
+      "step": 3,
+      "file": "timeline_demo.py",
+      "line": 23,
+      "code": "merged = {}",
+      "what_changed": []
+    },
+    {
+      "step": 4,
+      "file": "timeline_demo.py",
+      "line": 24,
+      "code": "for key, value in config.items():",
+      "what_changed": []
+    },
+    {
+      "step": 5,
+      "file": "timeline_demo.py",
+      "line": 25,
+      "code": "merged[key] = value",
+      "what_changed": []
+    },
+    {
+      "step": 6,
+      "file": "timeline_demo.py",
+      "line": 24,
+      "code": "for key, value in config.items():",
+      "what_changed": [
+        "merged"
+      ]
+    },
+    {
+      "step": 7,
+      "file": "timeline_demo.py",
+      "line": 25,
+      "code": "merged[key] = value",
+      "what_changed": [
+        "value",
+        "key"
+      ]
+    },
+    {
+      "step": 8,
+      "file": "timeline_demo.py",
+      "line": 24,
+      "code": "for key, value in config.items():",
+      "what_changed": [
+        "merged"
+      ]
+    },
+    {
+      "step": 10,
+      "file": "timeline_demo.py",
+      "line": 28,
+      "code": "merged[key] = value",
+      "what_changed": [
+        "value"
+      ]
+    },
+    {
+      "step": 11,
+      "file": "timeline_demo.py",
+      "line": 27,
+      "code": "for key, value in overrides.items():",
+      "what_changed": [
+        "merged"
+      ]
+    },
+    {
+      "step": 12,
+      "file": "timeline_demo.py",
+      "line": 28,
+      "code": "merged[key] = value",
+      "what_changed": [
+        "value",
+        "key"
+      ]
+    },
+    {
+      "step": 13,
+      "file": "timeline_demo.py",
+      "line": 27,
+      "code": "for key, value in overrides.items():",
+      "what_changed": [
+        "merged"
+      ]
+    }
+  ],
+  "total_steps": 16,
+  "critical_steps": 11
+}

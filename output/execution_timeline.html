@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WHY: dict_merge() = {'host': 'localhost', 'port': 9090, 'debug': True}</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Consolas','Monaco','Courier New',monospace; background:#1a1a2e; color:#eee; }
+.header { background:#16213e; padding:16px 24px; border-bottom:2px solid #0f3460; }
+.header h1 { font-size:18px; color:#e94560; }
+.header .stats { font-size:12px; color:#888; margin-top:4px; }
+.container { display:flex; height:calc(100vh - 80px); }
+
+/* Left: code panel */
+.code-panel { width:45%; border-right:2px solid #0f3460; overflow-y:auto; padding:12px; }
+.code-line { padding:4px 8px; cursor:pointer; border-radius:3px; font-size:13px; line-height:1.6; white-space:pre; }
+.code-line:hover { background:#16213e; }
+.code-line.active { background:#0f3460; border-left:3px solid #e94560; }
+.code-line.executed { color:#a8d8ea; }
+.code-line .line-no { color:#555; display:inline-block; width:40px; text-align:right; margin-right:12px; }
+.code-line .step-badge { background:#e94560; color:#fff; font-size:10px; padding:1px 5px; border-radius:8px; margin-left:8px; }
+
+/* Right: state panel */
+.state-panel { width:55%; overflow-y:auto; padding:16px; }
+.step-header { font-size:14px; color:#e94560; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #333; }
+.step-header .step-num { font-size:28px; font-weight:bold; }
+.step-header .func { color:#a8d8ea; }
+
+/* Variable table */
+.var-table { width:100%; border-collapse:collapse; font-size:12px; }
+.var-table th { text-align:left; padding:6px 10px; background:#16213e; color:#e94560; border-bottom:1px solid #0f3460; }
+.var-table td { padding:5px 10px; border-bottom:1px solid #222; }
+.var-table tr.changed { background:#1a1a0a; }
+.var-table tr.changed td { color:#ffd700; }
+.var-table tr.is-new td { color:#00ff88; }
+.var-name { color:#a8d8ea; font-weight:bold; }
+.var-value { color:#ddd; }
+.var-type { color:#666; font-size:11px; }
+.var-ref { color:#ff6b6b; font-size:11px; }
+.var-changed-badge { background:#ffd700; color:#000; font-size:10px; padding:1px 4px; border-radius:3px; }
+.var-new-badge { background:#00ff88; color:#000; font-size:10px; padding:1px 4px; border-radius:3px; }
+.var-removed { color:#666; text-decoration:line-through; }
+
+/* Controls */
+.controls { display:flex; gap:8px; margin-bottom:16px; align-items:center; }
+.btn { background:#0f3460; color:#eee; border:1px solid #e94560; padding:6px 16px; cursor:pointer; border-radius:3px; font-size:13px; }
+.btn:hover { background:#e94560; }
+.btn:disabled { opacity:0.3; cursor:default; }
+.slider { flex:1; }
+.speed { color:#888; font-size:12px; }
+.current-step { font-size:20px; color:#e94560; font-weight:bold; min-width:60px; text-align:center; }
+
+/* Pointer visualization */
+.pointer-box { margin-top:16px; padding:12px; background:#16213e; border-radius:6px; }
+.pointer-box h3 { color:#e94560; font-size:13px; margin-bottom:8px; }
+.ptr-row { display:flex; align-items:center; gap:8px; padding:3px 0; font-size:12px; }
+.ptr-name { color:#a8d8ea; min-width:80px; }
+.ptr-arrow { color:#e94560; }
+.ptr-target { color:#ffd700; }
+.ptr-new { color:#00ff88; font-size:10px; }
+.ptr-changed { color:#ff6b6b; font-size:10px; }
+</style>
+</head>
+<body>
+<div class="header">
+    <h1>WHY: dict_merge() = {'host': 'localhost', 'port': 9090, 'debug': True}</h1>
+    <div class="stats">Steps: 16 | Variables tracked: config, key, merged, overrides, value</div>
+</div>
+<div class="container">
+    <div class="code-panel" id="codePanel"></div>
+    <div class="state-panel" id="statePanel">
+        <div class="controls">
+            <button class="btn" id="btnPrev" onclick="prevStep()">&#9664; Prev</button>
+            <button class="btn" id="btnPlay" onclick="togglePlay()">&#9654; Play</button>
+            <button class="btn" id="btnNext" onclick="nextStep()">Next &#9654;</button>
+            <input type="range" class="slider" id="slider" min="0" max="0" value="0" oninput="goToStep(+this.value)">
+            <span class="current-step" id="stepNum">0</span>
+            <span class="speed">Speed: <input type="number" id="speedInput" value="500" min="50" max="3000" step="50" style="width:60px;background:#16213e;color:#eee;border:1px solid #333"> ms</span>
+        </div>
+        <div id="stepDetail"></div>
+    </div>
+</div>
+
+<script>
+var steps = [{"index": 0, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 18, "code": "def dict_merge():", "func": "dict_merge", "vars": {}, "changed": [], "new_vars": [], "removed": []}, {"index": 1, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 20, "code": "config = {\"host\": \"localhost\", \"port\": 8080}", "func": "dict_merge", "vars": {}, "changed": [], "new_vars": [], "removed": []}, {"index": 2, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 21, "code": "overrides = {\"port\": 9090, \"debug\": True}", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": true, "ref": null}}, "changed": [], "new_vars": ["config"], "removed": []}, {"index": 3, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 23, "code": "merged = {}", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": true, "ref": null}}, "changed": [], "new_vars": ["overrides"], "removed": []}, {"index": 4, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 24, "code": "for key, value in config.items():", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": false, "ref": null}, "merged": {"value": "{}", "type": "dict", "mem_id": 1998289528320, "changed": false, "is_new": true, "ref": null}}, "changed": [], "new_vars": ["merged"], "removed": []}, {"index": 5, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 25, "code": "merged[key] = value", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": false, "ref": null}, "merged": {"value": "{}", "type": "dict", "mem_id": 1998289528320, "changed": false, "is_new": false, "ref": null}, "key": {"value": "'host'", "type": "str", "mem_id": 1998284070320, "changed": false, "is_new": true, "ref": null}, "value": {"value": "'localhost'", "type": "str", "mem_id": 1998289524592, "changed": false, "is_new": true, "ref": null}}, "changed": [], "new_vars": ["value", "key"], "removed": []}, {"index": 6, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 24, "code": "for key, value in config.items():", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": false, "ref": null}, "merged": {"value": "{'host': 'localhost'}", "type": "dict", "mem_id": 1998289528320, "changed": true, "is_new": false, "ref": null}, "key": {"value": "'host'", "type": "str", "mem_id": 1998284070320, "changed": false, "is_new": false, "ref": null}, "value": {"value": "'localhost'", "type": "str", "mem_id": 1998289524592, "changed": false, "is_new": false, "ref": null}}, "changed": ["merged"], "new_vars": [], "removed": []}, {"index": 7, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 25, "code": "merged[key] = value", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": false, "ref": null}, "merged": {"value": "{'host': 'localhost'}", "type": "dict", "mem_id": 1998289528320, "changed": false, "is_new": false, "ref": null}, "key": {"value": "'port'", "type": "str", "mem_id": 1998284011696, "changed": true, "is_new": false, "ref": null}, "value": {"value": "8080", "type": "int", "mem_id": 1998288516400, "changed": true, "is_new": false, "ref": null}}, "changed": ["value", "key"], "new_vars": [], "removed": []}, {"index": 8, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 24, "code": "for key, value in config.items():", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": false, "ref": null}, "merged": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289528320, "changed": true, "is_new": false, "ref": null}, "key": {"value": "'port'", "type": "str", "mem_id": 1998284011696, "changed": false, "is_new": false, "ref": null}, "value": {"value": "8080", "type": "int", "mem_id": 1998288516400, "changed": false, "is_new": false, "ref": null}}, "changed": ["merged"], "new_vars": [], "removed": []}, {"index": 9, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 27, "code": "for key, value in overrides.items():", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": false, "ref": null}, "merged": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289528320, "changed": false, "is_new": false, "ref": null}, "key": {"value": "'port'", "type": "str", "mem_id": 1998284011696, "changed": false, "is_new": false, "ref": null}, "value": {"value": "8080", "type": "int", "mem_id": 1998288516400, "changed": false, "is_new": false, "ref": null}}, "changed": [], "new_vars": [], "removed": []}, {"index": 10, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 28, "code": "merged[key] = value", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": false, "ref": null}, "merged": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289528320, "changed": false, "is_new": false, "ref": null}, "key": {"value": "'port'", "type": "str", "mem_id": 1998284011696, "changed": false, "is_new": false, "ref": null}, "value": {"value": "9090", "type": "int", "mem_id": 1998288516368, "changed": true, "is_new": false, "ref": null}}, "changed": ["value"], "new_vars": [], "removed": []}, {"index": 11, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 27, "code": "for key, value in overrides.items():", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": false, "ref": null}, "merged": {"value": "{'host': 'localhost', 'port': 9090}", "type": "dict", "mem_id": 1998289528320, "changed": true, "is_new": false, "ref": null}, "key": {"value": "'port'", "type": "str", "mem_id": 1998284011696, "changed": false, "is_new": false, "ref": null}, "value": {"value": "9090", "type": "int", "mem_id": 1998288516368, "changed": false, "is_new": false, "ref": null}}, "changed": ["merged"], "new_vars": [], "removed": []}, {"index": 12, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 28, "code": "merged[key] = value", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": false, "ref": null}, "merged": {"value": "{'host': 'localhost', 'port': 9090}", "type": "dict", "mem_id": 1998289528320, "changed": false, "is_new": false, "ref": null}, "key": {"value": "'debug'", "type": "str", "mem_id": 1998279762992, "changed": true, "is_new": false, "ref": null}, "value": {"value": "True", "type": "bool", "mem_id": 140707491068776, "changed": true, "is_new": false, "ref": null}}, "changed": ["value", "key"], "new_vars": [], "removed": []}, {"index": 13, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 27, "code": "for key, value in overrides.items():", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": false, "ref": null}, "merged": {"value": "{'host': 'localhost', 'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289528320, "changed": true, "is_new": false, "ref": null}, "key": {"value": "'debug'", "type": "str", "mem_id": 1998279762992, "changed": false, "is_new": false, "ref": null}, "value": {"value": "True", "type": "bool", "mem_id": 140707491068776, "changed": false, "is_new": false, "ref": null}}, "changed": ["merged"], "new_vars": [], "removed": []}, {"index": 14, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 30, "code": "return merged", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": false, "ref": null}, "merged": {"value": "{'host': 'localhost', 'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289528320, "changed": false, "is_new": false, "ref": null}, "key": {"value": "'debug'", "type": "str", "mem_id": 1998279762992, "changed": false, "is_new": false, "ref": null}, "value": {"value": "True", "type": "bool", "mem_id": 140707491068776, "changed": false, "is_new": false, "ref": null}}, "changed": [], "new_vars": [], "removed": []}, {"index": 15, "file": "timeline_demo.py", "file_full": "D:\\why-code-agent\\demo\\timeline_demo.py", "line": 30, "code": "return merged", "func": "dict_merge", "vars": {"config": {"value": "{'host': 'localhost', 'port': 8080}", "type": "dict", "mem_id": 1998289527424, "changed": false, "is_new": false, "ref": null}, "overrides": {"value": "{'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289527744, "changed": false, "is_new": false, "ref": null}, "merged": {"value": "{'host': 'localhost', 'port': 9090, 'debug': True}", "type": "dict", "mem_id": 1998289528320, "changed": false, "is_new": false, "ref": null}, "key": {"value": "'debug'", "type": "str", "mem_id": 1998279762992, "changed": false, "is_new": false, "ref": null}, "value": {"value": "True", "type": "bool", "mem_id": 140707491068776, "changed": false, "is_new": false, "ref": null}}, "changed": [], "new_vars": [], "removed": []}];
+var currentStep = 0;
+var playing = false;
+var playTimer = null;
+
+// Build code panel: collect unique lines across all steps
+var codeMap = {};
+var codeOrder = [];
+steps.forEach(function(s) {
+    var key = s.file + ":" + s.line;
+    if (!codeMap[key]) {
+        codeMap[key] = { file:s.file, line:s.line, code:s.code, steps:[] };
+        codeOrder.push(key);
+    }
+    codeMap[key].steps.push(s.index);
+});
+
+var codePanel = document.getElementById("codePanel");
+codeOrder.forEach(function(key) {
+    var info = codeMap[key];
+    var div = document.createElement("div");
+    div.className = "code-line executed";
+    div.id = "code-" + key.replace(/[^a-zA-Z0-9]/g, "_");
+    div.innerHTML = '<span class="line-no">' + info.line + '</span>' + escapeHtml(info.code);
+    div.onclick = function() { goToStep(info.steps[0]); };
+    codePanel.appendChild(div);
+});
+
+function escapeHtml(s) {
+    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function goToStep(idx) {
+    currentStep = Math.max(0, Math.min(idx, steps.length - 1));
+    document.getElementById("slider").value = currentStep;
+    document.getElementById("stepNum").textContent = currentStep;
+    renderStep();
+}
+
+function nextStep() { goToStep(currentStep + 1); }
+function prevStep() { goToStep(currentStep - 1); }
+
+function togglePlay() {
+    playing = !playing;
+    document.getElementById("btnPlay").textContent = playing ? "\u23F9 Pause" : "\u25B6 Play";
+    if (playing) playNext();
+    else if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+}
+
+function playNext() {
+    if (!playing) return;
+    var speed = parseInt(document.getElementById("speedInput").value) || 500;
+    if (currentStep < steps.length - 1) {
+        nextStep();
+        playTimer = setTimeout(playNext, speed);
+    } else {
+        playing = false;
+        document.getElementById("btnPlay").textContent = "\u25B6 Play";
+    }
+}
+
+function renderStep() {
+    var s = steps[currentStep];
+
+    // Highlight active code line
+    document.querySelectorAll(".code-line").forEach(function(el) {
+        el.classList.remove("active");
+    });
+    var codeKey = s.file + ":" + s.line;
+    var codeId = "code-" + codeKey.replace(/[^a-zA-Z0-9]/g, "_");
+    var activeEl = document.getElementById(codeId);
+    if (activeEl) {
+        activeEl.classList.add("active");
+        activeEl.scrollIntoView({ block:"center", behavior:"smooth" });
+        // Add step badge
+        var existing = activeEl.querySelector(".step-badge");
+        if (!existing) {
+            var badge = document.createElement("span");
+            badge.className = "step-badge";
+            badge.textContent = "step " + s.index;
+            activeEl.appendChild(badge);
+        } else {
+            existing.textContent = "step " + s.index;
+        }
+    }
+
+    // Render state panel
+    var html = '';
+    html += '<div class="step-header">';
+    html += '<span class="step-num">Step ' + s.index + '</span> ';
+    html += '<span class="func">' + s.file + ':' + s.line + ' in ' + s.func + '()</span>';
+    html += '<br><code style="color:#a8d8ea">' + escapeHtml(s.code) + '</code>';
+    html += '</div>';
+
+    // Changes summary
+    if (s.changed.length || s.new_vars.length || s.removed.length) {
+        html += '<div style="margin-bottom:12px;font-size:12px">';
+        if (s.changed.length) html += '<div style="color:#ffd700">Changed: ' + s.changed.join(", ") + '</div>';
+        if (s.new_vars.length) html += '<div style="color:#00ff88">New: ' + s.new_vars.join(", ") + '</div>';
+        if (s.removed.length) html += '<div style="color:#666">Removed: ' + s.removed.join(", ") + '</div>';
+        html += '</div>';
+    }
+
+    // Variable table
+    var varNames = Object.keys(s.vars);
+    if (varNames.length) {
+        html += '<table class="var-table">';
+        html += '<tr><th>Variable</th><th>Value</th><th>Type</th><th>State</th></tr>';
+        varNames.forEach(function(name) {
+            var v = s.vars[name];
+            var rowClass = v.changed ? 'changed' : (v.is_new ? 'is-new' : '');
+            html += '<tr class="' + rowClass + '">';
+            html += '<td><span class="var-name">' + escapeHtml(name) + '</span></td>';
+            html += '<td><span class="var-value">' + escapeHtml(v.value) + '</span></td>';
+            html += '<td><span class="var-type">' + escapeHtml(v.type) + '</span></td>';
+            html += '<td>';
+            if (v.is_new) html += '<span class="var-new-badge">NEW</span> ';
+            if (v.changed) html += '<span class="var-changed-badge">CHANGED</span> ';
+            if (v.ref) html += '<span class="var-ref">\u2192 ' + escapeHtml(v.ref) + '</span>';
+            html += '</td></tr>';
+        });
+        html += '</table>';
+    } else {
+        html += '<div style="color:#666;font-size:12px">No local variables</div>';
+    }
+
+    // Pointer / reference box
+    var refs = [];
+    varNames.forEach(function(name) {
+        var v = s.vars[name];
+        if (v.ref) refs.push({ from:name, to:v.ref });
+    });
+    if (refs.length) {
+        html += '<div class="pointer-box"><h3>References</h3>';
+        refs.forEach(function(r) {
+            html += '<div class="ptr-row">';
+            html += '<span class="ptr-name">' + escapeHtml(r.from) + '</span>';
+            html += '<span class="ptr-arrow">\u2192</span>';
+            html += '<span class="ptr-target">' + escapeHtml(r.to) + '</span>';
+            html += '</div>';
+        });
+        html += '</div>';
+    }
+
+    document.getElementById("stepDetail").innerHTML = html;
+}
+
+// Keyboard shortcuts
+document.addEventListener("keydown", function(e) {
+    if (e.key === "ArrowRight" || e.key === "l") nextStep();
+    else if (e.key === "ArrowLeft" || e.key === "h") prevStep();
+    else if (e.key === " ") { e.preventDefault(); togglePlay(); }
+});
+
+// Init
+document.getElementById("slider").max = steps.length - 1;
+goToStep(0);
+</script>
+</body>
+</html>
