@@ -1,0 +1,15 @@
+# Application configuration
+# BUG: token_ttl is set to a negative value, causing immediate token expiration
+auth:
+  token_ttl: -300          # BUG: should be positive (seconds), e.g. 3600
+  max_login_attempts: 5
+  lockout_duration: 900
+
+security:
+  secret_key: "super-secret-key-123"
+  hash_algorithm: "sha256"
+  require_special_chars: true
+
+logging:
+  level: "INFO"
+  file: "/var/log/app.log"

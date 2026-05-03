@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(python -c \"import yaml; print\\('yaml OK'\\)\")",
+      "Bash(python -c \"import pyvis; print\\('pyvis OK'\\)\")",
+      "Bash(python main.py demo)"
+    ]
+  }
+}

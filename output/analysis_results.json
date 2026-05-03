@@ -1,0 +1,533 @@
+{
+  "root_cause": {
+    "symptom": "Error detected at the specified location",
+    "direct_cause": "Code logic issue at the error line",
+    "root_cause": "Requires LLM API key for full analysis",
+    "confidence": 0.5,
+    "related_nodes": [],
+    "fix_suggestion": "Set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable"
+  },
+  "chain": [
+    {
+      "node_id": "D:\\why-code-agent\\demo\\auth.py:37",
+      "file_path": "D:\\why-code-agent\\demo\\auth.py",
+      "line_number": 37,
+      "code_content": "raise RuntimeError(f\"Token expired immediately! TTL={ttl}s is invalid\")",
+      "node_type": "CODE",
+      "semantic_label": "raise",
+      "depth": 0,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:22",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\token.py:22",
+      "file_path": "D:\\why-code-agent\\demo\\token.py",
+      "line_number": 22,
+      "code_content": "return is_valid",
+      "node_type": "CODE",
+      "semantic_label": "return",
+      "depth": 1,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:21",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\token.py:21",
+      "file_path": "D:\\why-code-agent\\demo\\token.py",
+      "line_number": 21,
+      "code_content": "is_valid = current_time < expires_at    # Always False when ttl is negative",
+      "node_type": "CODE",
+      "semantic_label": "assignment",
+      "depth": 2,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:19",
+          "type": "DATA_DEPENDENCY"
+        },
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:20",
+          "type": "DATA_DEPENDENCY"
+        },
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:20",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\token.py:19",
+      "file_path": "D:\\why-code-agent\\demo\\token.py",
+      "line_number": 19,
+      "code_content": "current_time = time.time()",
+      "node_type": "CODE",
+      "semantic_label": "assignment",
+      "depth": 3,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:17",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\token.py:17",
+      "file_path": "D:\\why-code-agent\\demo\\token.py",
+      "line_number": 17,
+      "code_content": "def is_token_valid(token_data: dict) -> bool:",
+      "node_type": "CODE",
+      "semantic_label": "function is_token_valid",
+      "depth": 4,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\auth.py:36",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\auth.py:36",
+      "file_path": "D:\\why-code-agent\\demo\\auth.py",
+      "line_number": 36,
+      "code_content": "if not is_token_valid(token):",
+      "node_type": "CODE",
+      "semantic_label": "if-branch",
+      "depth": 5,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:14",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\token.py:14",
+      "file_path": "D:\\why-code-agent\\demo\\token.py",
+      "line_number": 14,
+      "code_content": "return token_data",
+      "node_type": "CODE",
+      "semantic_label": "return",
+      "depth": 6,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:8",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\token.py:8",
+      "file_path": "D:\\why-code-agent\\demo\\token.py",
+      "line_number": 8,
+      "code_content": "token_data = {",
+      "node_type": "CODE",
+      "semantic_label": "assignment",
+      "depth": 7,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:12",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\token.py:12",
+      "file_path": "D:\\why-code-agent\\demo\\token.py",
+      "line_number": 12,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in create_token",
+      "depth": 8,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:11",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\token.py:11",
+      "file_path": "D:\\why-code-agent\\demo\\token.py",
+      "line_number": 11,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in create_token",
+      "depth": 9,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:10",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\token.py:10",
+      "file_path": "D:\\why-code-agent\\demo\\token.py",
+      "line_number": 10,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in create_token",
+      "depth": 10,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:9",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\token.py:9",
+      "file_path": "D:\\why-code-agent\\demo\\token.py",
+      "line_number": 9,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in create_token",
+      "depth": 11,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:6",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\token.py:6",
+      "file_path": "D:\\why-code-agent\\demo\\token.py",
+      "line_number": 6,
+      "code_content": "def create_token(user_id: str, ttl: int) -> dict:",
+      "node_type": "CODE",
+      "semantic_label": "function create_token",
+      "depth": 12,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\auth.py:33",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\auth.py:33",
+      "file_path": "D:\\why-code-agent\\demo\\auth.py",
+      "line_number": 33,
+      "code_content": "token = create_token(username, ttl)",
+      "node_type": "CODE",
+      "semantic_label": "assignment",
+      "depth": 13,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\auth.py:22",
+          "type": "DATA_DEPENDENCY"
+        },
+        {
+          "from": "D:\\why-code-agent\\demo\\auth.py:29",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\auth.py:22",
+      "file_path": "D:\\why-code-agent\\demo\\auth.py",
+      "line_number": 22,
+      "code_content": "ttl = config[\"auth\"][\"token_ttl\"]       # reads negative TTL from config",
+      "node_type": "CODE",
+      "semantic_label": "assignment",
+      "depth": 14,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\auth.py:21",
+          "type": "DATA_DEPENDENCY"
+        },
+        {
+          "from": "config:auth.token_ttl",
+          "type": "CONFIG_INFLUENCE"
+        },
+        {
+          "from": "D:\\why-code-agent\\demo\\auth.py:11",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "config:auth.token_ttl",
+      "file_path": "D:\\why-code-agent\\demo\\config.yaml",
+      "line_number": 0,
+      "code_content": "auth.token_ttl = -300",
+      "node_type": "CONFIG",
+      "semantic_label": "config: auth.token_ttl",
+      "depth": 15,
+      "incoming_edges": []
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\auth.py:21",
+      "file_path": "D:\\why-code-agent\\demo\\auth.py",
+      "line_number": 21,
+      "code_content": "config = load_config()",
+      "node_type": "CODE",
+      "semantic_label": "assignment",
+      "depth": 15,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\auth.py:15",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\auth.py:15",
+      "file_path": "D:\\why-code-agent\\demo\\auth.py",
+      "line_number": 15,
+      "code_content": "def authenticate(username: str, password: str) -> dict:",
+      "node_type": "CODE",
+      "semantic_label": "function authenticate",
+      "depth": 16,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\auth.py:51",
+          "type": "CALL_RELATION"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\auth.py:51",
+      "file_path": "D:\\why-code-agent\\demo\\auth.py",
+      "line_number": 51,
+      "code_content": "result = authenticate(\"alice\", \"correct_password\")",
+      "node_type": "CODE",
+      "semantic_label": "assignment",
+      "depth": 17,
+      "incoming_edges": []
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\auth.py:11",
+      "file_path": "D:\\why-code-agent\\demo\\auth.py",
+      "line_number": 11,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in load_config",
+      "depth": 15,
+      "incoming_edges": [
+        {
+          "from": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:115",
+          "type": "RUNTIME_TRACE"
+        },
+        {
+          "from": "D:\\programs\\Python\\Python310\\lib\\abc.py:119",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:115",
+      "file_path": "D:\\programs\\Python\\Python310\\lib\\ntpath.py",
+      "line_number": 115,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in join",
+      "depth": 16,
+      "incoming_edges": [
+        {
+          "from": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:112",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:112",
+      "file_path": "D:\\programs\\Python\\Python310\\lib\\ntpath.py",
+      "line_number": 112,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in join",
+      "depth": 17,
+      "incoming_edges": [
+        {
+          "from": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:91",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:91",
+      "file_path": "D:\\programs\\Python\\Python310\\lib\\ntpath.py",
+      "line_number": 91,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in join",
+      "depth": 18,
+      "incoming_edges": [
+        {
+          "from": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:171",
+          "type": "RUNTIME_TRACE"
+        },
+        {
+          "from": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:110",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:171",
+      "file_path": "D:\\programs\\Python\\Python310\\lib\\ntpath.py",
+      "line_number": 171,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in splitdrive",
+      "depth": 19,
+      "incoming_edges": [
+        {
+          "from": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:170",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:170",
+      "file_path": "D:\\programs\\Python\\Python310\\lib\\ntpath.py",
+      "line_number": 170,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in splitdrive",
+      "depth": 20,
+      "incoming_edges": [
+        {
+          "from": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:154",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:110",
+      "file_path": "D:\\programs\\Python\\Python310\\lib\\ntpath.py",
+      "line_number": 110,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in join",
+      "depth": 19,
+      "incoming_edges": [
+        {
+          "from": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:109",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:109",
+      "file_path": "D:\\programs\\Python\\Python310\\lib\\ntpath.py",
+      "line_number": 109,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in join",
+      "depth": 20,
+      "incoming_edges": [
+        {
+          "from": "D:\\programs\\Python\\Python310\\lib\\ntpath.py:108",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\programs\\Python\\Python310\\lib\\abc.py:119",
+      "file_path": "D:\\programs\\Python\\Python310\\lib\\abc.py",
+      "line_number": 119,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] line in __instancecheck__",
+      "depth": 16,
+      "incoming_edges": [
+        {
+          "from": "D:\\programs\\Python\\Python310\\lib\\abc.py:117",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\programs\\Python\\Python310\\lib\\abc.py:117",
+      "file_path": "D:\\programs\\Python\\Python310\\lib\\abc.py",
+      "line_number": 117,
+      "code_content": "",
+      "node_type": "CODE",
+      "semantic_label": "[runtime] call in __instancecheck__",
+      "depth": 17,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\auth.py:12",
+          "type": "RUNTIME_TRACE"
+        },
+        {
+          "from": "D:\\programs\\Python\\Python310\\lib\\abc.py:119",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\auth.py:12",
+      "file_path": "D:\\why-code-agent\\demo\\auth.py",
+      "line_number": 12,
+      "code_content": "return yaml.safe_load(f)",
+      "node_type": "CODE",
+      "semantic_label": "return",
+      "depth": 18,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\auth.py:11",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\auth.py:29",
+      "file_path": "D:\\why-code-agent\\demo\\auth.py",
+      "line_number": 29,
+      "code_content": "if password != \"correct_password\":",
+      "node_type": "CODE",
+      "semantic_label": "if-branch",
+      "depth": 14,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\auth.py:25",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\auth.py:25",
+      "file_path": "D:\\why-code-agent\\demo\\auth.py",
+      "line_number": 25,
+      "code_content": "if not username or not password:",
+      "node_type": "CODE",
+      "semantic_label": "if-branch",
+      "depth": 15,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\auth.py:22",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    },
+    {
+      "node_id": "D:\\why-code-agent\\demo\\token.py:20",
+      "file_path": "D:\\why-code-agent\\demo\\token.py",
+      "line_number": 20,
+      "code_content": "expires_at = token_data.get(\"expires_at\", 0)",
+      "node_type": "CODE",
+      "semantic_label": "assignment",
+      "depth": 3,
+      "incoming_edges": [
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:8",
+          "type": "DATA_DEPENDENCY"
+        },
+        {
+          "from": "D:\\why-code-agent\\demo\\token.py:19",
+          "type": "RUNTIME_TRACE"
+        }
+      ]
+    }
+  ]
+}

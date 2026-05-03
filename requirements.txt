@@ -1,0 +1,12 @@
+# Core
+pyyaml>=6.0
+
+# Visualization
+pyvis>=0.3.2
+
+# LLM providers (optional)
+anthropic>=0.40.0
+openai>=1.0.0
+
+# Optional: production tracing
+# py-spy>=0.3.14
