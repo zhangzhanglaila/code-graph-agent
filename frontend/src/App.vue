@@ -1,12 +1,14 @@
 <script setup lang="ts">
+import { onMounted, onUnmounted } from 'vue'
 import TopBar from './components/TopBar.vue'
 import CodeEditor from './components/CodeEditor.vue'
 import InsightPanel from './components/InsightPanel.vue'
 import TimelinePanel from './components/TimelinePanel.vue'
 import GraphPanel from './components/GraphPanel.vue'
 import DSVizPanel from './components/DSVizPanel.vue'
+import ErrorToast from './components/ErrorToast.vue'
 import { useAnalysisStore } from './store/analysisStore'
-import { getInsight, analyzeCode, getDSViz } from './api/analysis'
+import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps } from './api/analysis'
 
 const store = useAnalysisStore()
 
@@ -52,14 +54,49 @@ async function runAnalysis() {
   store.error = ''
   store.reset()
   try {
-    const [insightRes, analyzeRes, dsRes] = await Promise.all([
+    const results = await Promise.allSettled([
       getInsight(store.code, store.funcName, store.language),
       analyzeCode(store.code, store.language),
       getDSViz(store.code, store.funcName, store.language),
+      getExplain(store.code, store.funcName, store.language),
+      getExplainSteps(store.code, store.funcName, store.language),
     ])
-    store.insightResult = insightRes
-    store.analyzeResult = analyzeRes
-    store.dsVizResult = dsRes
+
+    const errors: string[] = []
+
+    if (results[0].status === 'fulfilled') {
+      store.insightResult = results[0].value
+    } else {
+      errors.push(`Insight: ${results[0].reason?.message || 'failed'}`)
+    }
+
+    if (results[1].status === 'fulfilled') {
+      store.analyzeResult = results[1].value
+    } else {
+      errors.push(`Graph: ${results[1].reason?.message || 'failed'}`)
+    }
+
+    if (results[2].status === 'fulfilled') {
+      store.dsVizResult = results[2].value
+    } else {
+      errors.push(`DS Viz: ${results[2].reason?.message || 'failed'}`)
+    }
+
+    if (results[3].status === 'fulfilled') {
+      store.explainResult = results[3].value
+    }
+
+    if (results[4].status === 'fulfilled') {
+      store.stepExplanations = results[4].value
+    }
+
+    if (errors.length === 3) {
+      store.error = errors.join('; ')
+    } else if (errors.length > 0) {
+      store.error = 'Partial failure: ' + errors.join('; ')
+    }
+
+    if (store.hasResults) store.saveToHistory()
   } catch (e: any) {
     store.error = e.message
   } finally {
@@ -70,10 +107,21 @@ async function runAnalysis() {
 function loadDemo(name: string) {
   store.setCode(DEMOS[name] || '')
 }
+
+function onKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault()
+    if (!store.loading && store.code.trim()) runAnalysis()
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
   <TopBar @analyze="runAnalysis" @demo="loadDemo" />
+  <ErrorToast />
 
   <div class="main-layout">
     <!-- Left: Code Editor -->
@@ -87,11 +135,6 @@ function loadDemo(name: string) {
       <div v-if="store.loading" class="loading-overlay">
         <div class="loading-spinner"></div>
         <div class="loading-text">Analyzing code...</div>
-      </div>
-
-      <!-- Error -->
-      <div v-if="store.error" class="error-banner animate-slide-up">
-        {{ store.error }}
       </div>
 
       <!-- Tab bar -->
@@ -166,16 +209,6 @@ function loadDemo(name: string) {
   margin-top: 12px;
   color: var(--text-dim);
   font-size: 14px;
-}
-
-.error-banner {
-  background: rgba(248,113,113,0.15);
-  border: 1px solid rgba(248,113,113,0.3);
-  color: var(--error);
-  padding: 10px 16px;
-  margin: 12px;
-  border-radius: 8px;
-  font-size: 13px;
 }
 
 .tab-bar {

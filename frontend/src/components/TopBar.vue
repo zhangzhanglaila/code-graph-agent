@@ -27,6 +27,7 @@ const emit = defineEmits<{
       <button
         class="btn btn-primary"
         :disabled="store.loading || !store.code.trim()"
+        title="Ctrl+Enter"
         @click="emit('analyze')"
       >
         <span v-if="store.loading" class="animate-pulse">Analyzing...</span>

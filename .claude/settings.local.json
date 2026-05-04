@@ -19,7 +19,12 @@
       "Bash(python main.py insight --module demo.timeline_demo --func dict_merge)",
       "Bash(python main.py ds-viz --module demo.linked_list_demo --func build_and_traverse)",
       "Bash(python main.py ds-viz --module demo.linked_list_demo --func find_max)",
-      "Bash(python main.py ds-viz --module demo.linked_list_demo --func reverse_list)"
+      "Bash(python main.py ds-viz --module demo.linked_list_demo --func reverse_list)",
+      "Bash(npx vue-tsc *)",
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(npx vite *)",
+      "Bash(python -c \"from api.server import app; print\\('OK'\\)\")"
     ]
   }
 }

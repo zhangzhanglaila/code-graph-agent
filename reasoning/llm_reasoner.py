@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from core.graph import CausalGraph
 from core.node import CodeNode
@@ -13,6 +13,8 @@ from reasoning.prompt_templates import (
     ROOT_CAUSE_ANALYSIS,
     CODE_EXISTENCE_REASON,
     QUICK_EXPLAIN,
+    EXECUTION_EXPLAIN,
+    STEP_EXPLAIN_BATCH,
 )
 
 
@@ -78,6 +80,96 @@ class LLMReasoner:
         )
         raw = self._call_llm(prompt)
         return self._extract_json(raw)
+
+    def explain_execution(
+        self,
+        code: str,
+        func_name: str,
+        result: Any,
+        timeline_steps: list,
+        patterns: list,
+        phases: list,
+        lineage: str = "",
+    ) -> dict:
+        """Generate cognitive-level explanation from execution trace data."""
+        # Format timeline (compact — key steps only)
+        timeline_lines = []
+        for step in timeline_steps[:40]:  # Cap at 40 steps to control prompt size
+            vars_str = ", ".join(
+                f"{k}={v['value'][:30]}" for k, v in list(step.get("vars", {}).items())[:6]
+            )
+            marker = " >>" if step.get("changed") else "   "
+            timeline_lines.append(
+                f"{marker} step {step['index']}: line {step['line']} | {step['code'][:60]} | {vars_str}"
+            )
+        timeline_text = "\n".join(timeline_lines) if timeline_lines else "(no steps)"
+
+        # Format patterns
+        patterns_text = "\n".join(
+            f"- {p['name']} ({p['confidence']*100:.0f}%): {p['description']}"
+            for p in patterns
+        ) if patterns else "(none detected)"
+
+        # Format phases
+        phases_text = "\n".join(
+            f"- {p['name']} (steps {p['start_step']}-{p['end_step']}): {p['description']}"
+            for p in phases
+        ) if phases else "(none detected)"
+
+        prompt = EXECUTION_EXPLAIN.format(
+            code=code,
+            func_name=func_name,
+            result=repr(result)[:200],
+            total_steps=len(timeline_steps),
+            timeline=timeline_text,
+            patterns=patterns_text,
+            phases=phases_text,
+            lineage=lineage or "(not available)",
+        )
+        raw = self._call_llm(prompt)
+        return self._extract_json(raw)
+
+    def explain_steps_batch(
+        self,
+        code: str,
+        func_name: str,
+        timeline_steps: list,
+        algorithm_summary: str = "",
+    ) -> list:
+        """Generate step-by-step explanations for all steps in one batch call."""
+        # Build compact step descriptions
+        step_lines = []
+        for step in timeline_steps[:60]:
+            changed = step.get("changed", [])
+            new_vars = step.get("new_vars", [])
+            var_snippets = []
+            for name, v in list(step.get("vars", {}).items())[:5]:
+                marker = "*" if name in changed else ("+" if name in new_vars else " ")
+                var_snippets.append(f"{marker}{name}={v['value'][:25]}")
+            vars_str = ", ".join(var_snippets)
+            step_lines.append(
+                f"Step {step['index']}: line {step['line']} | {step.code if hasattr(step, 'code') else step.get('code', '')[:50]} | {vars_str}"
+            )
+
+        steps_text = "\n".join(step_lines)
+
+        prompt = STEP_EXPLAIN_BATCH.format(
+            code=code,
+            func_name=func_name,
+            algorithm_summary=algorithm_summary or f"Execution of {func_name}()",
+            steps_json=steps_text,
+        )
+        raw = self._call_llm(prompt)
+        result = self._extract_json(raw)
+
+        if isinstance(result, list):
+            return result
+        # If wrapped in an object, try to extract array
+        if isinstance(result, dict):
+            for v in result.values():
+                if isinstance(v, list):
+                    return v
+        return [{"step": i, "explanation": "", "importance": "medium"} for i in range(len(timeline_steps))]
 
     # ── Context builders ─────────────────────────────────────────────
 

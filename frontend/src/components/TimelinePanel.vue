@@ -1,15 +1,32 @@
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted, watch } from 'vue'
 import { useAnalysisStore } from '../store/analysisStore'
 
 const store = useAnalysisStore()
 const playTimer = ref<number | null>(null)
+const explainPlaying = ref(false)
 
 const steps = computed(() => store.timeline)
+const hasStepExplanations = computed(() => store.stepExplanations.length > 0)
 
+// Importance color
+function importanceColor(imp: string): string {
+  if (imp === 'high') return 'var(--primary)'
+  if (imp === 'low') return 'var(--text-muted)'
+  return 'var(--highlight)'
+}
+
+function importanceIcon(imp: string): string {
+  if (imp === 'high') return '⭐'
+  if (imp === 'low') return '—'
+  return '○'
+}
+
+// Normal play
 function togglePlay() {
   store.isPlaying = !store.isPlaying
   if (store.isPlaying) {
+    explainPlaying.value = false
     playNext()
   } else if (playTimer.value) {
     clearTimeout(playTimer.value)
@@ -27,6 +44,37 @@ function playNext() {
   }
 }
 
+// Explain Mode — auto-play with AI narration
+function toggleExplainMode() {
+  if (explainPlaying.value) {
+    explainPlaying.value = false
+    store.isPlaying = false
+    if (playTimer.value) {
+      clearTimeout(playTimer.value)
+      playTimer.value = null
+    }
+    return
+  }
+
+  explainPlaying.value = true
+  store.isPlaying = true
+  store.goToStep(0)
+  explainPlayNext()
+}
+
+function explainPlayNext() {
+  if (!explainPlaying.value) return
+  if (store.currentStep < store.totalSteps - 1) {
+    store.nextStep()
+    // Slower speed for explain mode — give time to read
+    const speed = Math.max(store.playSpeed * 2, 1500)
+    playTimer.value = window.setTimeout(explainPlayNext, speed)
+  } else {
+    explainPlaying.value = false
+    store.isPlaying = false
+  }
+}
+
 onUnmounted(() => {
   if (playTimer.value) clearTimeout(playTimer.value)
 })
@@ -37,8 +85,8 @@ onUnmounted(() => {
     <!-- Controls -->
     <div class="controls">
       <button class="btn btn-secondary btn-sm" @click="store.prevStep()">&#9664;</button>
-      <button class="btn btn-sm" :class="store.isPlaying ? 'btn-primary' : 'btn-secondary'" @click="togglePlay">
-        {{ store.isPlaying ? '&#9632;' : '&#9654;' }}
+      <button class="btn btn-sm" :class="store.isPlaying && !explainPlaying ? 'btn-primary' : 'btn-secondary'" @click="togglePlay">
+        {{ store.isPlaying && !explainPlaying ? '&#9632;' : '&#9654;' }}
       </button>
       <button class="btn btn-secondary btn-sm" @click="store.nextStep()">&#9654;</button>
       <input
@@ -52,6 +100,33 @@ onUnmounted(() => {
       <span class="step-display">{{ store.currentStep }} / {{ store.totalSteps - 1 }}</span>
       <input type="number" class="speed-input" v-model.number="store.playSpeed" min="100" max="3000" step="100" />
       <span class="speed-label">ms</span>
+
+      <!-- Explain Mode button -->
+      <button
+        v-if="hasStepExplanations"
+        class="btn btn-sm explain-btn"
+        :class="explainPlaying ? 'explain-active' : ''"
+        @click="toggleExplainMode"
+        title="AI-guided walkthrough"
+      >
+        {{ explainPlaying ? 'Stop' : 'Explain' }}
+      </button>
+    </div>
+
+    <!-- AI Step Explanation -->
+    <div v-if="store.currentStepExplanation" class="step-explain card">
+      <div class="explain-header">
+        <span class="explain-badge">AI</span>
+        <span class="explain-step-label">Step {{ store.currentStep }}</span>
+        <span
+          class="explain-importance"
+          :style="{ color: importanceColor(store.currentStepExplanation.importance) }"
+        >
+          {{ importanceIcon(store.currentStepExplanation.importance) }}
+          {{ store.currentStepExplanation.importance }}
+        </span>
+      </div>
+      <div class="explain-text">{{ store.currentStepExplanation.explanation }}</div>
     </div>
 
     <!-- Current step highlight -->
@@ -96,11 +171,19 @@ onUnmounted(() => {
           v-for="step in steps"
           :key="step.index"
           class="step-item"
-          :class="{ active: step.index === store.currentStep }"
+          :class="{
+            active: step.index === store.currentStep,
+            'has-ai': hasStepExplanations
+          }"
           @click="store.goToStep(step.index)"
         >
           <span class="step-idx">{{ step.index }}</span>
           <span class="step-code-text">{{ step.code }}</span>
+          <span
+            v-if="hasStepExplanations"
+            class="step-ai-dot"
+            :style="{ color: importanceColor(store.stepExplanations.find(e => e.step === step.index)?.importance || 'medium') }"
+          >{{ importanceIcon(store.stepExplanations.find(e => e.step === step.index)?.importance || 'medium') }}</span>
           <span v-if="step.changed.length" class="step-changes-dot">&#x1F534;</span>
         </div>
       </div>
@@ -119,11 +202,12 @@ onUnmounted(() => {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 12px;
+  flex-wrap: wrap;
 }
 
 .btn-sm { padding: 4px 12px; font-size: 12px; }
 
-.slider { flex: 1; accent-color: var(--primary); }
+.slider { flex: 1; accent-color: var(--primary); min-width: 80px; }
 
 .step-display { font-size: 13px; color: var(--highlight); font-weight: 600; min-width: 60px; text-align: center; }
 
@@ -140,6 +224,75 @@ onUnmounted(() => {
 
 .speed-label { font-size: 11px; color: var(--text-muted); }
 
+.explain-btn {
+  background: linear-gradient(135deg, rgba(34,211,238,0.15), rgba(167,139,250,0.15));
+  border-color: rgba(34,211,238,0.3);
+  color: var(--highlight);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.explain-btn:hover {
+  border-color: var(--highlight);
+  background: linear-gradient(135deg, rgba(34,211,238,0.25), rgba(167,139,250,0.25));
+}
+
+.explain-active {
+  background: linear-gradient(135deg, var(--highlight), #a78bfa) !important;
+  color: #0f172a !important;
+  border-color: transparent !important;
+  animation: pulse-glow 1.5s infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(34,211,238,0.3); }
+  50% { box-shadow: 0 0 16px rgba(34,211,238,0.6); }
+}
+
+/* AI Step Explanation */
+.step-explain {
+  background: linear-gradient(135deg, rgba(34,211,238,0.06), rgba(167,139,250,0.06));
+  border: 1px solid rgba(34,211,238,0.2);
+  border-left: 3px solid var(--highlight);
+}
+
+.explain-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.explain-badge {
+  background: linear-gradient(135deg, #22d3ee, #a78bfa);
+  color: #0f172a;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 1px;
+}
+
+.explain-step-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--highlight);
+}
+
+.explain-importance {
+  font-size: 10px;
+  margin-left: auto;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.explain-text {
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* Current step */
 .current-step { border-color: var(--primary); }
 
 .step-header { display: flex; justify-content: space-between; margin-bottom: 6px; }
@@ -200,8 +353,10 @@ onUnmounted(() => {
 
 .step-item:hover { background: var(--bg-card-hover); }
 .step-item.active { background: rgba(251,114,153,0.15); border-left: 2px solid var(--primary); }
+.step-item.has-ai .step-idx { min-width: 24px; }
 
 .step-idx { color: var(--text-muted); min-width: 30px; text-align: right; }
 .step-code-text { font-family: monospace; color: var(--text-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .step-changes-dot { font-size: 8px; }
+.step-ai-dot { font-size: 10px; min-width: 14px; text-align: center; }
 </style>

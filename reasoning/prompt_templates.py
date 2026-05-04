@@ -91,3 +91,100 @@ Context: {context}
 
 Return JSON: {{"purpose": "...", "confidence": 0.85}}
 """
+
+
+STEP_EXPLAIN_BATCH = """You are a programming teacher explaining code execution step by step.
+
+A student is stepping through code execution. For EACH step below, explain what happens and why it matters.
+
+## Code
+```python
+{code}
+```
+
+## Context
+Function `{func_name}` — {algorithm_summary}
+
+## Steps to explain
+{steps_json}
+
+For each step, write a 1-2 sentence explanation. Be specific about:
+- WHAT changed (variable values, state)
+- WHY this step matters for the algorithm
+- The INVARIANT or insight at this moment
+
+Return a JSON array with one object per step:
+```json
+[
+    {{"step": 0, "explanation": "...", "importance": "high|medium|low"}},
+    {{"step": 1, "explanation": "...", "importance": "high|medium|low"}}
+]
+```
+
+Rules:
+- "importance" = "high" for steps that are algorithmically critical (key assignments, loop boundaries, returns)
+- "importance" = "medium" for meaningful state changes
+- "importance" = "low" for boilerplate / minor updates
+- Be concise. Each explanation should be 1-2 sentences max.
+- Use the variable values from the trace to make explanations concrete.
+- Reference what CHANGED at this step, not what the line generally does.
+"""
+
+
+EXECUTION_EXPLAIN = """You are a world-class programming teacher and code explainer.
+
+A user ran the following code and you have FULL access to its execution trace.
+Your job is to explain this code at a cognitive level — not what each line does, but WHY it works and HOW it thinks.
+
+## Code
+```python
+{code}
+```
+
+## Execution Result
+Function `{func_name}()` returned: `{result}`
+
+## Execution Timeline ({total_steps} steps)
+{timeline}
+
+## Detected Patterns
+{patterns}
+
+## Execution Phases
+{phases}
+
+## Variable Lineage (how the result was computed)
+{lineage}
+
+---
+
+Produce a JSON explanation with this structure:
+
+```json
+{{
+    "what_it_does": "One sentence: what this code accomplishes (the GOAL, not the mechanics)",
+    "how_it_works": "2-3 sentences: the algorithm/approach explained like a senior dev would to a junior. Use analogies if helpful.",
+    "why_it_works": "1-2 sentences: the key insight that makes this approach correct. What invariant or property holds?",
+    "complexity": {{
+        "time": "O(...) with brief justification",
+        "space": "O(...) with brief justification"
+    }},
+    "key_moments": [
+        {{
+            "step": 3,
+            "what_happened": "brief description",
+            "why_it_matters": "why this step is important to understanding the code"
+        }}
+    ],
+    "aha_insight": "The ONE thing a student should remember about this code. The 'aha' moment. 1 sentence.",
+    "teaching_example": "If you were teaching this concept, what real-world analogy would you use? 1-2 sentences."
+}}
+```
+
+Rules:
+- Write for a CS student who knows basics but hasn't seen this algorithm
+- Focus on the WHY, not the WHAT
+- The "aha_insight" should be genuinely insightful — something that makes the code "click"
+- key_moments should pick the 2-3 most important steps, not all steps
+- Be concise. Every word should earn its place.
+"""

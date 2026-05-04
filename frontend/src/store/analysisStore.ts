@@ -1,6 +1,29 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { InsightResponse, AnalyzeResponse, DSVizResponse, StepData } from '../api/analysis'
+import type { InsightResponse, AnalyzeResponse, DSVizResponse, ExplainResponse, StepExplanation, StepData } from '../api/analysis'
+
+interface HistoryEntry {
+  id: string
+  code: string
+  funcName: string
+  timestamp: number
+  oneLiner: string
+  algorithmType: string
+  resultPreview: string
+}
+
+const HISTORY_KEY = 'why-code-history'
+const MAX_HISTORY = 20
+
+function loadHistory(): HistoryEntry[] {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]')
+  } catch { return [] }
+}
+
+function saveHistory(entries: HistoryEntry[]) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, MAX_HISTORY)))
+}
 
 export const useAnalysisStore = defineStore('analysis', () => {
   // Input
@@ -23,17 +46,26 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const insightResult = ref<InsightResponse | null>(null)
   const analyzeResult = ref<AnalyzeResponse | null>(null)
   const dsVizResult = ref<DSVizResponse | null>(null)
+  const explainResult = ref<ExplainResponse | null>(null)
+  const stepExplanations = ref<StepExplanation[]>([])
 
   // Timeline state
   const currentStep = ref(0)
   const isPlaying = ref(false)
   const playSpeed = ref(500)
+  const explainMode = ref(false)
+
+  // History
+  const history = ref<HistoryEntry[]>(loadHistory())
 
   // Computed
   const hasResults = computed(() => !!insightResult.value)
   const timeline = computed(() => insightResult.value?.timeline || [])
   const totalSteps = computed(() => timeline.value.length)
   const currentStepData = computed(() => timeline.value[currentStep.value] || null)
+  const currentStepExplanation = computed(() =>
+    stepExplanations.value.find(e => e.step === currentStep.value) || null
+  )
 
   // Actions
   function setCode(newCode: string) {
@@ -51,16 +83,49 @@ export const useAnalysisStore = defineStore('analysis', () => {
     insightResult.value = null
     analyzeResult.value = null
     dsVizResult.value = null
+    explainResult.value = null
+    stepExplanations.value = []
     currentStep.value = 0
+    explainMode.value = false
+    isPlaying.value = false
     error.value = ''
+  }
+
+  function saveToHistory() {
+    if (!insightResult.value) return
+    const entry: HistoryEntry = {
+      id: Date.now().toString(36),
+      code: code.value.slice(0, 500),
+      funcName: funcName.value || insightResult.value.func_name,
+      timestamp: Date.now(),
+      oneLiner: insightResult.value.insight?.one_liner || '',
+      algorithmType: insightResult.value.insight?.algorithm_type || '',
+      resultPreview: String(insightResult.value.result).slice(0, 80),
+    }
+    // Dedupe by code
+    history.value = [entry, ...history.value.filter(h => h.code !== entry.code)]
+    saveHistory(history.value)
+  }
+
+  function loadFromHistory(entry: HistoryEntry) {
+    code.value = entry.code
+    funcName.value = entry.funcName
+  }
+
+  function clearHistory() {
+    history.value = []
+    saveHistory([])
   }
 
   return {
     code, language, funcName,
     loading, error, activeTab,
-    insightResult, analyzeResult, dsVizResult,
+    insightResult, analyzeResult, dsVizResult, explainResult,
+    stepExplanations, explainMode,
     currentStep, isPlaying, playSpeed,
-    hasResults, timeline, totalSteps, currentStepData,
+    history,
+    hasResults, timeline, totalSteps, currentStepData, currentStepExplanation,
     setCode, goToStep, nextStep, prevStep, reset,
+    saveToHistory, loadFromHistory, clearHistory,
   }
 })

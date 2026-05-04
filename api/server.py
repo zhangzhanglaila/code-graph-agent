@@ -8,7 +8,7 @@ import sys
 import tempfile
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -29,6 +29,8 @@ from reasoning.insight_summarizer import summarize_insight
 from query.root_cause import RootCauseQuery
 from visualization.graph_ui import GraphVisualizer
 from visualization.ds_viz import render_ds_timeline
+from api.sandbox import run_sandboxed
+from reasoning.llm_reasoner import LLMReasoner
 
 app = FastAPI(title="Why-Code-Agent API")
 
@@ -65,6 +67,28 @@ class DSVizRequest(BaseModel):
     code: str
     func_name: str = ""
     language: str = "python"
+
+
+class RunRequest(BaseModel):
+    code: str
+    func_name: str = ""
+    timeout: int = 10
+
+
+class ExplainRequest(BaseModel):
+    code: str
+    func_name: str = ""
+    language: str = "python"
+    provider: str = "mock"  # mock | anthropic | openai
+    api_key: str = ""
+
+
+class ExplainStepsRequest(BaseModel):
+    code: str
+    func_name: str = ""
+    language: str = "python"
+    provider: str = "mock"
+    api_key: str = ""
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -105,6 +129,7 @@ def _import_code_as_module(code: str, module_name: str = "_user_code"):
 @app.post("/api/analyze")
 async def analyze(req: AnalyzeRequest):
     """Full causal analysis of code."""
+    tmp_path = None
     try:
         tmp_path = _write_temp_code(req.code, req.language)
         analyzer = PythonAnalyzer()
@@ -135,7 +160,6 @@ async def analyze(req: AnalyzeRequest):
         )
 
         stats = graph.stats()
-        os.unlink(tmp_path)
 
         return {
             "stats": stats,
@@ -145,16 +169,23 @@ async def analyze(req: AnalyzeRequest):
             "edges": [{"source": s, "target": t, "type": e.value} for s, t, e, _ in graph.edges],
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return {"success": False, "error": str(e), "error_type": type(e).__name__}
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 @app.post("/api/insight")
 async def get_insight(req: InsightRequest):
     """Get cognitive-level insight for code."""
+    tmp_path = None
     try:
         func_name = _extract_func_name(req.code, req.func_name)
         if not func_name:
-            raise HTTPException(status_code=400, detail="No function found in code")
+            return {"success": False, "error": "No function found in code. Define a function to analyze."}
 
         module = _import_code_as_module(req.code)
         func = getattr(module, func_name)
@@ -200,9 +231,8 @@ async def get_insight(req: InsightRequest):
                 "new_vars": step.new_vars,
             })
 
-        os.unlink(tmp_path)
-
         return {
+            "success": True,
             "result": result,
             "func_name": func_name,
             "insight": {
@@ -218,19 +248,24 @@ async def get_insight(req: InsightRequest):
             "timeline_url": "/output/execution_timeline.html",
             "total_steps": len(steps_data),
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return {"success": False, "error": str(e), "error_type": type(e).__name__}
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 @app.post("/api/ds-viz")
 async def get_ds_viz(req: DSVizRequest):
     """Data structure visualization."""
+    tmp_path = None
     try:
         func_name = _extract_func_name(req.code, req.func_name)
         if not func_name:
-            raise HTTPException(status_code=400, detail="No function found in code")
+            return {"success": False, "error": "No function found in code. Define a function to analyze."}
 
         module = _import_code_as_module(req.code)
         func = getattr(module, func_name)
@@ -290,19 +325,195 @@ async def get_ds_viz(req: DSVizRequest):
                 "changed_objects": step.changed_objects,
             })
 
-        os.unlink(tmp_path)
-
         return {
+            "success": True,
             "result": result,
             "func_name": func_name,
             "steps": steps_data,
             "total_steps": len(steps_data),
             "ds_viz_url": "/output/ds_visualization.html",
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return {"success": False, "error": str(e), "error_type": type(e).__name__}
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+@app.post("/api/run")
+async def run_code(req: RunRequest):
+    """Run code in sandboxed subprocess."""
+    func_name = _extract_func_name(req.code, req.func_name)
+    result = run_sandboxed(
+        code=req.code,
+        func_name=func_name,
+        timeout=req.timeout,
+    )
+    if not result["success"]:
+        return {
+            "success": False,
+            "error": result["error"],
+            "timed_out": result["timed_out"],
+            "stdout": result["stdout"],
+            "stderr": result["stderr"],
+        }
+    return {
+        "success": True,
+        "result": result["result"],
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+    }
+
+
+@app.post("/api/explain")
+async def explain_code(req: ExplainRequest):
+    """LLM-powered execution-aware code explanation."""
+    tmp_path = None
+    try:
+        func_name = _extract_func_name(req.code, req.func_name)
+        if not func_name:
+            return {"success": False, "error": "No function found in code. Define a function to analyze."}
+
+        module = _import_code_as_module(req.code)
+        func = getattr(module, func_name)
+        tmp_path = _write_temp_code(req.code, req.language)
+
+        # Record execution
+        result, timeline = record_function(func, target_files={os.path.abspath(tmp_path)})
+
+        # Generate insight data
+        insight = summarize_insight(timeline, result, func_name)
+        explanation = explain_result(timeline, result, func_name)
+
+        # Format steps for LLM
+        steps_data = []
+        for step in timeline.steps:
+            var_states = {}
+            for name, snap in step.variables.items():
+                var_states[name] = {
+                    "value": snap.value_repr,
+                    "type": snap.value_type,
+                    "changed": name in step.changed_vars,
+                }
+            steps_data.append({
+                "index": step.step_index,
+                "line": step.line_number,
+                "code": step.code_line,
+                "vars": var_states,
+                "changed": step.changed_vars or step.new_vars,
+            })
+
+        # Format lineage for LLM
+        lineage_text = ""
+        if explanation.get("lineage"):
+            parts = []
+            for item in explanation["lineage"]:
+                event = item["event"]
+                var = item["variable"]
+                val = item["value"]
+                if event == "created":
+                    parts.append(f"{var} = {val} (step {item['step']})")
+                else:
+                    prev = item.get("prev_value", "?")
+                    parts.append(f"{var}: {prev} -> {val} (step {item['step']})")
+            lineage_text = "\n".join(parts)
+
+        # Call LLM
+        reasoner = LLMReasoner(
+            provider=req.provider,
+            api_key=req.api_key or None,
+        )
+        llm_explanation = reasoner.explain_execution(
+            code=req.code,
+            func_name=func_name,
+            result=result,
+            timeline_steps=steps_data,
+            patterns=[{"name": p.name, "confidence": p.confidence, "description": p.description} for p in insight.patterns],
+            phases=[{"name": p.name, "start_step": p.start_step, "end_step": p.end_step, "description": p.description} for p in insight.phases],
+            lineage=lineage_text,
+        )
+
+        return {
+            "success": True,
+            "llm_explanation": llm_explanation,
+            "result": result,
+            "func_name": func_name,
+            "total_steps": len(steps_data),
+            "patterns_count": len(insight.patterns),
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e), "error_type": type(e).__name__}
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+@app.post("/api/explain_steps")
+async def explain_steps(req: ExplainStepsRequest):
+    """Batch step-by-step AI explanations for timeline."""
+    tmp_path = None
+    try:
+        func_name = _extract_func_name(req.code, req.func_name)
+        if not func_name:
+            return {"success": False, "error": "No function found in code."}
+
+        module = _import_code_as_module(req.code)
+        func = getattr(module, func_name)
+        tmp_path = _write_temp_code(req.code, req.language)
+
+        result, timeline = record_function(func, target_files={os.path.abspath(tmp_path)})
+        insight = summarize_insight(timeline, result, func_name)
+
+        # Build steps data
+        steps_data = []
+        for step in timeline.steps:
+            var_states = {}
+            for name, snap in step.variables.items():
+                var_states[name] = {
+                    "value": snap.value_repr,
+                    "type": snap.value_type,
+                    "changed": name in step.changed_vars,
+                    "is_new": name in step.new_vars,
+                }
+            sd = type('StepData', (), {
+                'index': step.step_index,
+                'line': step.line_number,
+                'code': step.code_line,
+                'vars': var_states,
+                'changed': step.changed_vars,
+                'new_vars': step.new_vars,
+            })()
+            steps_data.append(sd)
+
+        algorithm_summary = insight.one_liner or f"Execution of {func_name}()"
+
+        reasoner = LLMReasoner(provider=req.provider, api_key=req.api_key or None)
+        explanations = reasoner.explain_steps_batch(
+            code=req.code,
+            func_name=func_name,
+            timeline_steps=steps_data,
+            algorithm_summary=algorithm_summary,
+        )
+
+        return {
+            "success": True,
+            "explanations": explanations,
+            "total_steps": len(steps_data),
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e), "error_type": type(e).__name__}
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 @app.get("/api/health")

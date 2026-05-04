@@ -1,6 +1,9 @@
 const API_BASE = ''
 
 export interface InsightResponse {
+  success?: boolean
+  error?: string
+  error_type?: string
   result: any
   func_name: string
   insight: {
@@ -37,6 +40,8 @@ export interface AnalyzeResponse {
 }
 
 export interface DSVizResponse {
+  success?: boolean
+  error?: string
   result: any
   func_name: string
   steps: DSStepData[]
@@ -54,14 +59,26 @@ export interface DSStepData {
   changed_objects: number[]
 }
 
+function _friendlyError(msg: string, errorType?: string): string {
+  if (errorType === 'SyntaxError') return `Syntax error: ${msg}`
+  if (errorType === 'IndentationError') return `Indentation error: ${msg}`
+  if (errorType === 'NameError') return `Name error: ${msg}`
+  if (errorType === 'TypeError') return `Type error: ${msg}`
+  if (errorType === 'AttributeError') return `Attribute error: ${msg}`
+  if (msg.includes('No function found')) return msg
+  return msg
+}
+
 export async function analyzeCode(code: string, language = 'python', errorLine?: number, config?: string): Promise<AnalyzeResponse> {
   const res = await fetch(`${API_BASE}/api/analyze`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, language, error_line: errorLine, config }),
   })
-  if (!res.ok) throw new Error((await res.json()).detail || 'Analysis failed')
-  return res.json()
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.detail || 'Analysis failed')
+  if (data.success === false) throw new Error(_friendlyError(data.error, data.error_type))
+  return data
 }
 
 export async function getInsight(code: string, funcName = '', language = 'python'): Promise<InsightResponse> {
@@ -70,8 +87,10 @@ export async function getInsight(code: string, funcName = '', language = 'python
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language }),
   })
-  if (!res.ok) throw new Error((await res.json()).detail || 'Insight failed')
-  return res.json()
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.detail || 'Insight failed')
+  if (data.success === false) throw new Error(_friendlyError(data.error, data.error_type))
+  return data
 }
 
 export async function getDSViz(code: string, funcName = '', language = 'python'): Promise<DSVizResponse> {
@@ -80,6 +99,63 @@ export async function getDSViz(code: string, funcName = '', language = 'python')
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language }),
   })
-  if (!res.ok) throw new Error((await res.json()).detail || 'DS Viz failed')
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.detail || 'DS Viz failed')
+  if (data.success === false) throw new Error(_friendlyError(data.error, data.error_type))
+  return data
+}
+
+export async function runCode(code: string, funcName = '', timeout = 10): Promise<{ success: boolean; result?: any; error?: string; timed_out?: boolean; stdout?: string; stderr?: string }> {
+  const res = await fetch(`${API_BASE}/api/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, timeout }),
+  })
   return res.json()
+}
+
+export interface ExplainResponse {
+  success?: boolean
+  error?: string
+  llm_explanation?: {
+    what_it_does?: string
+    how_it_works?: string
+    why_it_works?: string
+    complexity?: { time?: string; space?: string }
+    key_moments?: { step: number; what_happened: string; why_it_matters: string }[]
+    aha_insight?: string
+    teaching_example?: string
+  }
+  result?: any
+  func_name?: string
+  total_steps?: number
+}
+
+export async function getExplain(code: string, funcName = '', language = 'python', provider = 'mock', apiKey = ''): Promise<ExplainResponse> {
+  const res = await fetch(`${API_BASE}/api/explain`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, language, provider, api_key: apiKey }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.detail || 'Explain failed')
+  if (data.success === false) throw new Error(_friendlyError(data.error, data.error_type))
+  return data
+}
+
+export interface StepExplanation {
+  step: number
+  explanation: string
+  importance: 'high' | 'medium' | 'low'
+}
+
+export async function getExplainSteps(code: string, funcName = '', language = 'python', provider = 'mock', apiKey = ''): Promise<StepExplanation[]> {
+  const res = await fetch(`${API_BASE}/api/explain_steps`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, language, provider, api_key: apiKey }),
+  })
+  const data = await res.json()
+  if (!res.ok || data.success === false) return []
+  return data.explanations || []
 }
