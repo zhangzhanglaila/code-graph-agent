@@ -10,12 +10,12 @@ const explainPlaying = ref(false)
 const steps = computed(() => store.timeline)
 const hasStepExplanations = computed(() => store.stepExplanations.length > 0)
 
-// Auto-collapse: only show important steps when folded
+// Auto-collapse: only show steps above score threshold
 const visibleSteps = computed(() => {
   if (store.showAllSteps || !hasStepExplanations.value) return steps.value
   return steps.value.filter(step => {
     const exp = store.stepExplanations.find(e => e.step === step.index)
-    return !exp || exp.importance !== 'low'
+    return !exp || (exp.importance_score || 0) >= 0.30
   })
 })
 
@@ -45,6 +45,66 @@ function importanceIcon(imp: string): string {
   if (imp === 'high') return '⭐'
   if (imp === 'low') return '—'
   return '○'
+}
+
+function reasonIcon(r: string): string {
+  const map: Record<string, string> = {
+    base_case: '🛑',
+    bounds_check: '🛡',
+    branch: '🔀',
+    loop_entry: '🔁',
+    loop_break: '⏭',
+    loop_continue: '↪',
+    return: '↩',
+    raise: '⚠',
+    error_boundary: '🛡',
+    generator: '⚡',
+    function_call: '▸',
+    mutation: '🔄',
+    large_value_jump: '📈',
+    value_jump: '📊',
+    type_change: '🔀',
+    boolean_flip: '🔀',
+    new_var: '✦',
+    string_growth: '📝',
+    collection_growth: '📦',
+    future_impact: '→',
+    turning_point: '💫',
+    state_change: '•',
+  }
+  if (r.includes('_new_vars')) return '✦'
+  if (r.includes('_vars_changed')) return '🔄'
+  return map[r] || '•'
+}
+
+function reasonLabel(r: string): string {
+  const map: Record<string, string> = {
+    branch: 'conditional branch',
+    loop_entry: 'loop start',
+    loop_break: 'loop break',
+    loop_continue: 'loop continue',
+    return: 'return statement',
+    raise: 'exception raised',
+    error_boundary: 'try block',
+    error_catch: 'exception caught',
+    generator: 'yield',
+    function_call: 'function call',
+    state_change: 'state changed',
+    large_value_jump: 'large value jump',
+    turning_point: 'turning point',
+    llm_high: 'LLM: high',
+    llm_low: 'LLM: low',
+  }
+  if (r.includes('_vars_changed')) return r.replace('_', ' ')
+  if (r.includes('_new_vars')) return r.replace('_', ' ')
+  return map[r] || r
+}
+
+function scoreToHeatColor(score: number): string {
+  if (score >= 0.7) return 'var(--primary)'
+  if (score >= 0.5) return '#fb923c'
+  if (score >= 0.30) return 'var(--highlight)'
+  return 'var(--border)'
 }
 
 // Fetch focused explanation for current step
@@ -187,18 +247,38 @@ onUnmounted(() => {
           {{ store.focusLoading ? '...' : 'AI' }}
         </span>
         <span class="explain-step-label">Step {{ store.currentStep }}</span>
+        <!-- Reason icons (primary visual) -->
+        <span v-if="activeExplanation.importance_reasons?.length" class="explain-reason-icons">
+          <span
+            v-for="r in activeExplanation.importance_reasons"
+            :key="r"
+            class="reason-icon-lg"
+            :title="reasonLabel(r)"
+          >{{ reasonIcon(r) }}</span>
+        </span>
         <span
           class="explain-importance"
           :style="{ color: importanceColor(activeExplanation.importance) }"
         >
           {{ importanceIcon(activeExplanation.importance) }}
-          {{ activeExplanation.importance }}
         </span>
         <span v-if="activeExplanation.turning_point" class="turning-badge">TURNING POINT</span>
       </div>
+      <!-- Natural language explanation (secondary, compact) -->
+      <div v-if="activeExplanation.importance_explanation" class="explain-importance-text">
+        {{ activeExplanation.importance_explanation }}
+      </div>
+      <!-- LLM explanation (main content) -->
       <div class="explain-text">{{ activeExplanation.explanation }}</div>
       <div v-if="activeExplanation.what_changed" class="explain-diff">
         {{ activeExplanation.what_changed }}
+      </div>
+      <!-- Score bar -->
+      <div v-if="activeExplanation.importance_score != null" class="explain-score-bar">
+        <div class="score-track">
+          <div class="score-fill" :style="{ width: (activeExplanation.importance_percentile ?? activeExplanation.importance_score) * 100 + '%', background: scoreToHeatColor(activeExplanation.importance_percentile ?? activeExplanation.importance_score) }"></div>
+        </div>
+        <span class="score-num">{{ ((activeExplanation.importance_percentile ?? activeExplanation.importance_score) * 100).toFixed(0) }}%ile</span>
       </div>
     </div>
 
@@ -240,6 +320,24 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- Importance Heatmap -->
+    <div v-if="hasStepExplanations" class="heatmap-bar">
+      <div class="heatmap-label">Importance</div>
+      <div class="heatmap-row">
+        <div
+          v-for="step in steps"
+          :key="step.index"
+          class="heatmap-cell"
+          :style="{
+            background: scoreToHeatColor(store.stepExplanations.find(e => e.step === step.index)?.importance_percentile ?? store.stepExplanations.find(e => e.step === step.index)?.importance_score ?? 0),
+            opacity: (store.stepExplanations.find(e => e.step === step.index)?.importance_percentile ?? store.stepExplanations.find(e => e.step === step.index)?.importance_score ?? 0) * 0.7 + 0.3,
+          }"
+          :title="`Step ${step.index}: ${((store.stepExplanations.find(e => e.step === step.index)?.importance_percentile ?? 0) * 100).toFixed(0)}%ile`"
+          @click="goToStepWithFocus(step.index)"
+        />
+      </div>
+    </div>
+
     <!-- Step list -->
     <div class="step-list">
       <div class="section-title">
@@ -264,16 +362,28 @@ onUnmounted(() => {
               active: step.index === store.currentStep,
               'has-ai': hasStepExplanations,
               'step-important': store.stepExplanations.find(e => e.step === step.index)?.importance === 'high',
+              'step-weight-high': (store.stepExplanations.find(e => e.step === step.index)?.importance_score || 0) >= 0.55,
+              'step-weight-medium': (store.stepExplanations.find(e => e.step === step.index)?.importance_score || 0) >= 0.30 && (store.stepExplanations.find(e => e.step === step.index)?.importance_score || 0) < 0.55,
             }"
+            :title="store.stepExplanations.find(e => e.step === step.index)?.importance_explanation || ''"
             @click="goToStepWithFocus(step.index)"
           >
             <span class="step-idx">{{ step.index }}</span>
+            <!-- Reason icons (compact, inline) -->
+            <span v-if="hasStepExplanations" class="step-reason-icons">
+              <span
+                v-for="r in (store.stepExplanations.find(e => e.step === step.index)?.importance_reasons || []).slice(0, 3)"
+                :key="r"
+                class="reason-icon"
+                :title="reasonLabel(r)"
+              >{{ reasonIcon(r) }}</span>
+            </span>
             <span class="step-code-text">{{ step.code }}</span>
             <span
               v-if="hasStepExplanations"
-              class="step-ai-dot"
-              :style="{ color: importanceColor(store.stepExplanations.find(e => e.step === step.index)?.importance || 'medium') }"
-            >{{ importanceIcon(store.stepExplanations.find(e => e.step === step.index)?.importance || 'medium') }}</span>
+              class="step-score-bar"
+              :style="{ background: scoreToHeatColor(store.stepExplanations.find(e => e.step === step.index)?.importance_percentile ?? store.stepExplanations.find(e => e.step === step.index)?.importance_score ?? 0) }"
+            ></span>
             <span v-if="step.changed.length" class="step-changes-dot">&#x1F534;</span>
           </div>
         </template>
@@ -348,6 +458,62 @@ onUnmounted(() => {
   opacity: 0.7;
 }
 
+.explain-importance-text {
+  font-size: 12px;
+  color: var(--highlight);
+  line-height: 1.5;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--highlight) 8%, transparent);
+  border-radius: 6px;
+  border-left: 3px solid var(--highlight);
+  margin-bottom: 6px;
+}
+
+.explain-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.reason-tag {
+  font-size: 10px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.explain-score-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.score-track {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.score-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.score-num {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 32px;
+  text-align: right;
+  font-family: monospace;
+}
+
 @keyframes turning-pulse {
   0% { transform: scale(0.97); opacity: 0.7; }
   50% { transform: scale(1.02); }
@@ -418,6 +584,41 @@ onUnmounted(() => {
 .changed-badge { background: var(--warning); color: #000; }
 .new-badge { background: var(--success); color: #000; }
 
+.heatmap-bar {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.heatmap-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.heatmap-row {
+  display: flex;
+  gap: 1px;
+  height: 16px;
+  align-items: flex-end;
+}
+
+.heatmap-cell {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 1px 1px 0 0;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.heatmap-cell:hover {
+  transform: scaleY(1.5);
+  filter: brightness(1.3);
+}
+
 .step-list { flex: 1; min-height: 0; }
 .steps-scroll { max-height: 300px; overflow-y: auto; }
 
@@ -463,8 +664,42 @@ onUnmounted(() => {
 }
 .step-item.has-ai .step-idx { min-width: 24px; }
 
+/* Visual weight: high importance steps are larger and brighter */
+.step-item.step-weight-high {
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(251,114,153,0.06);
+  padding: 6px 8px;
+}
+.step-item.step-weight-high .step-code-text {
+  color: var(--text);
+}
+.step-item.step-weight-medium .step-code-text {
+  color: var(--text-dim);
+  opacity: 0.9;
+}
+
 .step-idx { color: var(--text-muted); min-width: 30px; text-align: right; }
 .step-code-text { font-family: monospace; color: var(--text-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .step-changes-dot { font-size: 8px; }
 .step-ai-dot { font-size: 10px; min-width: 14px; text-align: center; }
+.step-score-bar { width: 3px; height: 14px; border-radius: 1px; flex-shrink: 0; }
+
+/* Reason icons (inline in step list) */
+.step-reason-icons {
+  display: inline-flex; gap: 2px; flex-shrink: 0;
+}
+.reason-icon {
+  font-size: 10px; line-height: 1;
+  opacity: 0.7;
+}
+
+/* Reason icons (in explanation card) */
+.explain-reason-icons {
+  display: inline-flex; gap: 4px; margin-left: 8px;
+}
+.reason-icon-lg {
+  font-size: 16px; line-height: 1;
+  cursor: default;
+}
 </style>

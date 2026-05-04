@@ -147,6 +147,12 @@ export interface StepExplanation {
   step: number
   explanation: string
   importance: 'high' | 'medium' | 'low'
+  importance_score: number
+  importance_percentile?: number
+  importance_reasons: string[]
+  importance_explanation?: string
+  signals: { structural: number; dynamic: number; llm: number; future?: number }
+  turning_point?: boolean
 }
 
 export async function getExplainSteps(code: string, funcName = '', language = 'python', provider = 'mock', apiKey = '', sessionId = ''): Promise<StepExplanation[]> {
@@ -164,6 +170,11 @@ export interface FocusedExplanation {
   step: number
   explanation: string
   importance: 'high' | 'medium' | 'low'
+  importance_score: number
+  importance_percentile?: number
+  importance_reasons: string[]
+  importance_explanation?: string
+  signals: { structural: number; dynamic: number; llm: number; future?: number }
   turning_point: boolean
   what_changed: string
 }

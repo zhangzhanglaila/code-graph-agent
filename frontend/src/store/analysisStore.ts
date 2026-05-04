@@ -71,7 +71,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     stepExplanations.value.find(e => e.step === currentStep.value) || null
   )
   const importantSteps = computed(() =>
-    stepExplanations.value.filter(e => e.importance !== 'low').map(e => e.step)
+    stepExplanations.value.filter(e => (e.importance_score || 0) >= 0.30).map(e => e.step)
   )
 
   // Actions

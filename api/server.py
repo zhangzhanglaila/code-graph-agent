@@ -33,6 +33,7 @@ from visualization.graph_ui import GraphVisualizer
 from visualization.ds_viz import render_ds_timeline
 from api.sandbox import run_sandboxed
 from reasoning.llm_reasoner import LLMReasoner
+from reasoning.importance import compute_importance
 
 app = FastAPI(title="Why-Code-Agent API")
 
@@ -560,9 +561,46 @@ async def explain_steps(req: ExplainStepsRequest):
             algorithm_summary=algorithm_summary,
         )
 
+        # Hybrid importance: merge structural + dynamic + LLM signals
+        llm_map = {e.get("step", i): e for i, e in enumerate(explanations)}
+        enriched = []
+        for i, step in enumerate(steps_data):
+            llm = llm_map.get(step["index"], llm_map.get(i, {}))
+            prev_vars = steps_data[i - 1]["vars"] if i > 0 else None
+            future = steps_data[i + 1:i + 4]  # next 3 steps for impact analysis
+            hybrid = compute_importance(
+                code_line=step["code"],
+                changed_vars=step.get("changed", []),
+                new_vars=step.get("new_vars", []),
+                all_vars=step.get("vars", {}),
+                prev_vars=prev_vars,
+                llm_importance=llm.get("importance"),
+                llm_turning_point=llm.get("turning_point", False),
+                future_steps=future,
+            )
+            enriched.append({
+                "step": step["index"],
+                "explanation": llm.get("explanation", ""),
+                "importance": hybrid["label"],
+                "importance_score": hybrid["score"],
+                "importance_reasons": hybrid["reasons"],
+                "importance_explanation": hybrid.get("explanation", ""),
+                "signals": hybrid["signals"],
+                "turning_point": llm.get("turning_point", False),
+            })
+
+        # Relative ranking: compute percentile within trace
+        if enriched:
+            scores = [e["importance_score"] for e in enriched]
+            n = len(scores)
+            for e in enriched:
+                e["importance_percentile"] = round(
+                    sum(1 for s in scores if s <= e["importance_score"]) / n, 3
+                )
+
         return {
             "success": True,
-            "explanations": explanations,
+            "explanations": enriched,
             "total_steps": len(steps_data),
         }
     except Exception as e:
@@ -626,6 +664,26 @@ async def explain_step_focus(req: ExplainStepFocusRequest):
             window=(-req.window_before, req.window_after),
             algorithm_summary=algorithm_summary,
         )
+
+        # Hybrid importance
+        step = steps_data[req.step_index]
+        prev_vars = steps_data[req.step_index - 1]["vars"] if req.step_index > 0 else None
+        future = steps_data[req.step_index + 1:req.step_index + 4]
+        hybrid = compute_importance(
+            code_line=step["code"],
+            changed_vars=step.get("changed", []),
+            new_vars=step.get("new_vars", []),
+            all_vars=step.get("vars", {}),
+            prev_vars=prev_vars,
+            llm_importance=explanation.get("importance"),
+            llm_turning_point=explanation.get("turning_point", False),
+            future_steps=future,
+        )
+        explanation["importance_score"] = hybrid["score"]
+        explanation["importance_reasons"] = hybrid["reasons"]
+        explanation["importance_explanation"] = hybrid.get("explanation", "")
+        explanation["signals"] = hybrid["signals"]
+        explanation["importance"] = hybrid["label"]
 
         return {"success": True, "explanation": explanation}
     except Exception as e:
