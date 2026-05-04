@@ -131,6 +131,47 @@ Rules:
 """
 
 
+STEP_EXPLAIN_FOCUS = """You are a programming teacher. A student is looking at ONE specific step in a code execution trace.
+
+Your job: explain WHY THIS step matters compared to its neighbors. Not what the line does — why this moment is significant.
+
+## Code
+```python
+{code}
+```
+
+## Context
+Function `{func_name}` — {algorithm_summary}
+
+## The trace around the target step:
+{window_steps}
+
+## Target: Step {target_step}
+
+Explain:
+- What changed at THIS moment (variable diffs)
+- Why this is a turning point (or why it's not)
+- What invariant or structure becomes true (or breaks) here
+
+Return JSON:
+```json
+{{
+    "step": {target_step},
+    "explanation": "1-2 sentences. Sharp. Focus on what makes THIS moment different from the steps before/after.",
+    "importance": "high|medium|low",
+    "turning_point": true/false,
+    "what_changed": "brief summary of state change"
+}}
+```
+
+Rules:
+- Be CONCRETE. Reference actual variable values from the trace.
+- If this step is not special, say so — "importance": "low" is fine.
+- "turning_point": true only if this step fundamentally changes the state or direction of the algorithm.
+- Write like you're tapping the student on the shoulder: "Look here — this is where X happens."
+"""
+
+
 EXECUTION_EXPLAIN = """You are a world-class programming teacher and code explainer.
 
 A user ran the following code and you have FULL access to its execution trace.

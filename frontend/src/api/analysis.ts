@@ -149,13 +149,39 @@ export interface StepExplanation {
   importance: 'high' | 'medium' | 'low'
 }
 
-export async function getExplainSteps(code: string, funcName = '', language = 'python', provider = 'mock', apiKey = ''): Promise<StepExplanation[]> {
+export async function getExplainSteps(code: string, funcName = '', language = 'python', provider = 'mock', apiKey = '', sessionId = ''): Promise<StepExplanation[]> {
   const res = await fetch(`${API_BASE}/api/explain_steps`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, func_name: funcName, language, provider, api_key: apiKey }),
+    body: JSON.stringify({ code, func_name: funcName, language, provider, api_key: apiKey, session_id: sessionId }),
   })
   const data = await res.json()
   if (!res.ok || data.success === false) return []
   return data.explanations || []
+}
+
+export interface FocusedExplanation {
+  step: number
+  explanation: string
+  importance: 'high' | 'medium' | 'low'
+  turning_point: boolean
+  what_changed: string
+}
+
+export async function getExplainStepFocus(
+  code: string, stepIndex: number, funcName = '', language = 'python',
+  windowBefore = 2, windowAfter = 2, provider = 'mock', apiKey = '', sessionId = ''
+): Promise<FocusedExplanation | null> {
+  const res = await fetch(`${API_BASE}/api/explain_step_focus`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code, func_name: funcName, language, step_index: stepIndex,
+      window_before: windowBefore, window_after: windowAfter,
+      provider, api_key: apiKey, session_id: sessionId,
+    }),
+  })
+  const data = await res.json()
+  if (!res.ok || data.success === false) return null
+  return data.explanation || null
 }

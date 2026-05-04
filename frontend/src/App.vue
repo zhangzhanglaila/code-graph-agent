@@ -54,18 +54,19 @@ async function runAnalysis() {
   store.error = ''
   store.reset()
   try {
+    // Phase 1: independent calls
     const results = await Promise.allSettled([
       getInsight(store.code, store.funcName, store.language),
       analyzeCode(store.code, store.language),
       getDSViz(store.code, store.funcName, store.language),
       getExplain(store.code, store.funcName, store.language),
-      getExplainSteps(store.code, store.funcName, store.language),
     ])
 
     const errors: string[] = []
 
     if (results[0].status === 'fulfilled') {
       store.insightResult = results[0].value
+      store.sessionId = results[0].value.session_id || ''
     } else {
       errors.push(`Insight: ${results[0].reason?.message || 'failed'}`)
     }
@@ -86,8 +87,10 @@ async function runAnalysis() {
       store.explainResult = results[3].value
     }
 
-    if (results[4].status === 'fulfilled') {
-      store.stepExplanations = results[4].value
+    // Phase 2: step explanations (uses cached session)
+    if (store.sessionId) {
+      const stepsRes = await getExplainSteps(store.code, store.funcName, store.language, 'mock', '', store.sessionId)
+      store.stepExplanations = stepsRes
     }
 
     if (errors.length === 3) {

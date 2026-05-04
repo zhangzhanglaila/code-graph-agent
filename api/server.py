@@ -6,6 +6,8 @@ import json
 import os
 import sys
 import tempfile
+import time
+import uuid
 from typing import Optional
 
 from fastapi import FastAPI
@@ -47,6 +49,29 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 
+# Session cache — avoid re-executing code for explain endpoints
+SESSION_CACHE: dict = {}
+SESSION_TTL = 600  # 10 minutes
+
+
+def _cache_put(session_id: str, data: dict):
+    SESSION_CACHE[session_id] = {**data, "_ts": time.time()}
+    # Evict expired
+    now = time.time()
+    expired = [k for k, v in SESSION_CACHE.items() if now - v.get("_ts", 0) > SESSION_TTL]
+    for k in expired:
+        del SESSION_CACHE[k]
+
+
+def _cache_get(session_id: str) -> dict | None:
+    entry = SESSION_CACHE.get(session_id)
+    if not entry:
+        return None
+    if time.time() - entry.get("_ts", 0) > SESSION_TTL:
+        del SESSION_CACHE[session_id]
+        return None
+    return entry
+
 
 # ── Request/Response models ─────────────────────────────────────────
 
@@ -84,11 +109,24 @@ class ExplainRequest(BaseModel):
 
 
 class ExplainStepsRequest(BaseModel):
-    code: str
+    code: str = ""
     func_name: str = ""
     language: str = "python"
     provider: str = "mock"
     api_key: str = ""
+    session_id: str = ""
+
+
+class ExplainStepFocusRequest(BaseModel):
+    code: str = ""
+    func_name: str = ""
+    language: str = "python"
+    step_index: int = 0
+    window_before: int = 2
+    window_after: int = 2
+    provider: str = "mock"
+    api_key: str = ""
+    session_id: str = ""
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -231,8 +269,21 @@ async def get_insight(req: InsightRequest):
                 "new_vars": step.new_vars,
             })
 
+        # Cache for explain endpoints
+        session_id = str(uuid.uuid4())[:8]
+        _cache_put(session_id, {
+            "code": req.code,
+            "func_name": func_name,
+            "language": req.language,
+            "steps_data": steps_data,
+            "insight": insight,
+            "result": result,
+            "timeline": timeline,
+        })
+
         return {
             "success": True,
+            "session_id": session_id,
             "result": result,
             "func_name": func_name,
             "insight": {
@@ -456,46 +507,54 @@ async def explain_code(req: ExplainRequest):
 
 @app.post("/api/explain_steps")
 async def explain_steps(req: ExplainStepsRequest):
-    """Batch step-by-step AI explanations for timeline."""
-    tmp_path = None
+    """Batch step-by-step AI explanations for timeline. Uses cache if session_id provided."""
     try:
-        func_name = _extract_func_name(req.code, req.func_name)
-        if not func_name:
-            return {"success": False, "error": "No function found in code."}
+        # Try cache first
+        cached = _cache_get(req.session_id) if req.session_id else None
+        if cached:
+            code = cached["code"]
+            func_name = cached["func_name"]
+            steps_data = cached["steps_data"]
+            insight = cached["insight"]
+        else:
+            if not req.code:
+                return {"success": False, "error": "No code or session_id provided."}
+            func_name = _extract_func_name(req.code, req.func_name)
+            if not func_name:
+                return {"success": False, "error": "No function found in code."}
 
-        module = _import_code_as_module(req.code)
-        func = getattr(module, func_name)
-        tmp_path = _write_temp_code(req.code, req.language)
+            module = _import_code_as_module(req.code)
+            func = getattr(module, func_name)
+            tmp_path = _write_temp_code(req.code, req.language)
+            result, timeline = record_function(func, target_files={os.path.abspath(tmp_path)})
+            insight = summarize_insight(timeline, result, func_name)
+            os.unlink(tmp_path)
 
-        result, timeline = record_function(func, target_files={os.path.abspath(tmp_path)})
-        insight = summarize_insight(timeline, result, func_name)
+            steps_data = []
+            for step in timeline.steps:
+                var_states = {}
+                for name, snap in step.variables.items():
+                    var_states[name] = {
+                        "value": snap.value_repr,
+                        "type": snap.value_type,
+                        "changed": name in step.changed_vars,
+                        "is_new": name in step.new_vars,
+                    }
+                steps_data.append({
+                    "index": step.step_index,
+                    "line": step.line_number,
+                    "code": step.code_line,
+                    "vars": var_states,
+                    "changed": step.changed_vars,
+                    "new_vars": step.new_vars,
+                })
+            code = req.code
 
-        # Build steps data
-        steps_data = []
-        for step in timeline.steps:
-            var_states = {}
-            for name, snap in step.variables.items():
-                var_states[name] = {
-                    "value": snap.value_repr,
-                    "type": snap.value_type,
-                    "changed": name in step.changed_vars,
-                    "is_new": name in step.new_vars,
-                }
-            sd = type('StepData', (), {
-                'index': step.step_index,
-                'line': step.line_number,
-                'code': step.code_line,
-                'vars': var_states,
-                'changed': step.changed_vars,
-                'new_vars': step.new_vars,
-            })()
-            steps_data.append(sd)
-
-        algorithm_summary = insight.one_liner or f"Execution of {func_name}()"
+        algorithm_summary = insight.one_liner if hasattr(insight, 'one_liner') else (insight.get("one_liner", "") if isinstance(insight, dict) else "")
 
         reasoner = LLMReasoner(provider=req.provider, api_key=req.api_key or None)
         explanations = reasoner.explain_steps_batch(
-            code=req.code,
+            code=code,
             func_name=func_name,
             timeline_steps=steps_data,
             algorithm_summary=algorithm_summary,
@@ -508,12 +567,69 @@ async def explain_steps(req: ExplainStepsRequest):
         }
     except Exception as e:
         return {"success": False, "error": str(e), "error_type": type(e).__name__}
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+
+
+@app.post("/api/explain_step_focus")
+async def explain_step_focus(req: ExplainStepFocusRequest):
+    """Focused explanation for a single step. Uses cache if session_id provided."""
+    try:
+        # Try cache first
+        cached = _cache_get(req.session_id) if req.session_id else None
+        if cached:
+            code = cached["code"]
+            func_name = cached["func_name"]
+            steps_data = cached["steps_data"]
+            insight = cached["insight"]
+        else:
+            if not req.code:
+                return {"success": False, "error": "No code or session_id provided."}
+            func_name = _extract_func_name(req.code, req.func_name)
+            if not func_name:
+                return {"success": False, "error": "No function found in code."}
+
+            module = _import_code_as_module(req.code)
+            func = getattr(module, func_name)
+            tmp_path = _write_temp_code(req.code, req.language)
+            result, timeline = record_function(func, target_files={os.path.abspath(tmp_path)})
+            insight = summarize_insight(timeline, result, func_name)
+            os.unlink(tmp_path)
+
+            steps_data = []
+            for step in timeline.steps:
+                var_states = {}
+                for name, snap in step.variables.items():
+                    var_states[name] = {
+                        "value": snap.value_repr,
+                        "type": snap.value_type,
+                        "changed": name in step.changed_vars,
+                    }
+                steps_data.append({
+                    "index": step.step_index,
+                    "line": step.line_number,
+                    "code": step.code_line,
+                    "vars": var_states,
+                    "changed": step.changed_vars,
+                })
+            code = req.code
+
+        if req.step_index >= len(steps_data):
+            return {"success": False, "error": f"Step {req.step_index} out of range (0-{len(steps_data)-1})"}
+
+        algorithm_summary = insight.one_liner if hasattr(insight, 'one_liner') else (insight.get("one_liner", "") if isinstance(insight, dict) else "")
+
+        reasoner = LLMReasoner(provider=req.provider, api_key=req.api_key or None)
+        explanation = reasoner.explain_step_focus(
+            code=code,
+            func_name=func_name,
+            timeline_steps=steps_data,
+            target_step=req.step_index,
+            window=(-req.window_before, req.window_after),
+            algorithm_summary=algorithm_summary,
+        )
+
+        return {"success": True, "explanation": explanation}
+    except Exception as e:
+        return {"success": False, "error": str(e), "error_type": type(e).__name__}
 
 
 @app.get("/api/health")

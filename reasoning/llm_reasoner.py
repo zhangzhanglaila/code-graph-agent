@@ -15,6 +15,7 @@ from reasoning.prompt_templates import (
     QUICK_EXPLAIN,
     EXECUTION_EXPLAIN,
     STEP_EXPLAIN_BATCH,
+    STEP_EXPLAIN_FOCUS,
 )
 
 
@@ -170,6 +171,56 @@ class LLMReasoner:
                 if isinstance(v, list):
                     return v
         return [{"step": i, "explanation": "", "importance": "medium"} for i in range(len(timeline_steps))]
+
+    def explain_step_focus(
+        self,
+        code: str,
+        func_name: str,
+        timeline_steps: list,
+        target_step: int,
+        window: tuple = (-2, 2),
+        algorithm_summary: str = "",
+    ) -> dict:
+        """Explain a single step with focused context window."""
+        # Build window of steps around target
+        start = max(0, target_step + window[0])
+        end = min(len(timeline_steps), target_step + window[1] + 1)
+
+        window_lines = []
+        for i in range(start, end):
+            step = timeline_steps[i]
+            marker = ">>>" if i == target_step else "   "
+            changed = step.get("changed", [])
+            var_snippets = []
+            for name, v in list(step.get("vars", {}).items())[:4]:
+                ch = "*" if name in changed else " "
+                var_snippets.append(f"{ch}{name}={v['value'][:20]}")
+            vars_str = ", ".join(var_snippets)
+            code_line = step.get("code", "") if isinstance(step, dict) else step.code
+            line_no = step.get("line", 0) if isinstance(step, dict) else step.line
+            window_lines.append(
+                f"{marker} Step {i}: line {line_no} | {code_line[:50]} | {vars_str}"
+            )
+
+        prompt = STEP_EXPLAIN_FOCUS.format(
+            code=code,
+            func_name=func_name,
+            algorithm_summary=algorithm_summary or f"Execution of {func_name}()",
+            window_steps="\n".join(window_lines),
+            target_step=target_step,
+        )
+        raw = self._call_llm(prompt)
+        result = self._extract_json(raw)
+
+        if isinstance(result, dict) and "step" in result:
+            return result
+        return {
+            "step": target_step,
+            "explanation": result.get("explanation", "") if isinstance(result, dict) else "",
+            "importance": "medium",
+            "turning_point": False,
+            "what_changed": "",
+        }
 
     # ── Context builders ─────────────────────────────────────────────
 

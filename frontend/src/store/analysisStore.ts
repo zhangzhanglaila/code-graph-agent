@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { InsightResponse, AnalyzeResponse, DSVizResponse, ExplainResponse, StepExplanation, StepData } from '../api/analysis'
+import type { InsightResponse, AnalyzeResponse, DSVizResponse, ExplainResponse, StepExplanation, FocusedExplanation, StepData } from '../api/analysis'
 
 interface HistoryEntry {
   id: string
@@ -41,6 +41,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const loading = ref(false)
   const error = ref('')
   const activeTab = ref<'insight' | 'timeline' | 'graph' | 'dsviz'>('insight')
+  const sessionId = ref('')
+  const showAllSteps = ref(false)
 
   // Results
   const insightResult = ref<InsightResponse | null>(null)
@@ -48,6 +50,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const dsVizResult = ref<DSVizResponse | null>(null)
   const explainResult = ref<ExplainResponse | null>(null)
   const stepExplanations = ref<StepExplanation[]>([])
+  const focusedExplanation = ref<FocusedExplanation | null>(null)
+  const focusLoading = ref(false)
 
   // Timeline state
   const currentStep = ref(0)
@@ -65,6 +69,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const currentStepData = computed(() => timeline.value[currentStep.value] || null)
   const currentStepExplanation = computed(() =>
     stepExplanations.value.find(e => e.step === currentStep.value) || null
+  )
+  const importantSteps = computed(() =>
+    stepExplanations.value.filter(e => e.importance !== 'low').map(e => e.step)
   )
 
   // Actions
@@ -85,9 +92,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
     dsVizResult.value = null
     explainResult.value = null
     stepExplanations.value = []
+    focusedExplanation.value = null
+    sessionId.value = ''
     currentStep.value = 0
     explainMode.value = false
     isPlaying.value = false
+    showAllSteps.value = false
     error.value = ''
   }
 
@@ -121,7 +131,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
     code, language, funcName,
     loading, error, activeTab,
     insightResult, analyzeResult, dsVizResult, explainResult,
-    stepExplanations, explainMode,
+    stepExplanations, focusedExplanation, focusLoading, explainMode,
+    sessionId, showAllSteps, importantSteps,
     currentStep, isPlaying, playSpeed,
     history,
     hasResults, timeline, totalSteps, currentStepData, currentStepExplanation,
