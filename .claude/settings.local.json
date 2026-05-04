@@ -13,7 +13,13 @@
       "Bash(python -c ' *)",
       "Bash(python main.py explain-why --module demo.timeline_demo --func dict_merge)",
       "Bash(python main.py unified --module demo.timeline_demo --func fibonacci --project demo/)",
-      "Bash(python main.py unified --module demo.timeline_demo --func dict_merge --project demo/)"
+      "Bash(python main.py unified --module demo.timeline_demo --func dict_merge --project demo/)",
+      "Bash(python main.py insight --module demo.timeline_demo --func fibonacci)",
+      "Bash(python main.py insight --module demo.timeline_demo --func list_traversal)",
+      "Bash(python main.py insight --module demo.timeline_demo --func dict_merge)",
+      "Bash(python main.py ds-viz --module demo.linked_list_demo --func build_and_traverse)",
+      "Bash(python main.py ds-viz --module demo.linked_list_demo --func find_max)",
+      "Bash(python main.py ds-viz --module demo.linked_list_demo --func reverse_list)"
     ]
   }
 }

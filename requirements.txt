@@ -4,6 +4,10 @@ pyyaml>=6.0
 # Visualization
 pyvis>=0.3.2
 
+# API Server
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
 # LLM providers (optional)
 anthropic>=0.40.0
 openai>=1.0.0

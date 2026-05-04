@@ -204,6 +204,7 @@ class GraphVisualizer:
         output_path: str = "unified_view.html",
         title: str = "WHY + HOW: Unified View",
         highlight_chain: Optional[list] = None,
+        insight=None,
     ) -> str:
         """Render causal graph + timeline in a single interactive page.
 
@@ -262,6 +263,18 @@ class GraphVisualizer:
         abs_path = os.path.abspath(output_path)
         os.makedirs(os.path.dirname(abs_path) or ".", exist_ok=True)
 
+        # Insight data
+        insight_html = ""
+        if insight:
+            insight_html = f"""
+            <div style="background:#1a1a3e;border:1px solid #e94560;border-radius:6px;padding:12px 16px;margin-bottom:8px;">
+                <div style="color:#e94560;font-weight:bold;font-size:13px;">INSIGHT ({insight.algorithm_type}, {insight.confidence:.0%})</div>
+                <div style="color:#ffd700;font-size:14px;margin-top:4px;">{insight.one_liner}</div>
+                <div style="margin-top:8px;">
+                    {''.join(f'<span style="background:#0f3460;color:#a8d8ea;padding:2px 8px;border-radius:10px;font-size:11px;margin-right:6px;">{p.name} ({p.confidence:.0%})</span>' for p in insight.patterns)}
+                </div>
+            </div>"""
+
         html = _UNIFIED_HTML.format(
             title=title,
             nodes_json=json.dumps(nodes_data, ensure_ascii=False),
@@ -269,6 +282,7 @@ class GraphVisualizer:
             steps_json=json.dumps(steps_data, ensure_ascii=False),
             total_steps=len(steps_data),
             total_nodes=len(nodes_data),
+            insight_html=insight_html,
         )
 
         with open(abs_path, "w", encoding="utf-8") as f:
@@ -667,6 +681,7 @@ body {{ font-family:'Consolas','Monaco','Courier New',monospace; background:#1a1
     <h1>{title}</h1>
     <div class="stats">Graph: {total_nodes} nodes | Timeline: {total_steps} steps | Click timeline step to highlight graph node</div>
 </div>
+{insight_html}
 <div class="main">
     <div class="graph-panel">
         <div class="graph-highlight" id="graphHighlight"></div>

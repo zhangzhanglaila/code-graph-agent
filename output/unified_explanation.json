@@ -1,244 +1,592 @@
 {
-  "summary": "dict_merge() returned {'host': 'localhost', 'port': 9090, 'debug': True} → because merged was initialized to {} at line 24 → then key became 'debug' at line 28",
-  "result_value": "{'host': 'localhost', 'port': 9090, 'debug': True}",
-  "func_name": "dict_merge",
+  "summary": "fibonacci() returned {0: 0, 1: 1, 2: 1, 3: 2, 4: 3, 5: 5, 6: 8, 7: 13} → because memo was initialized to {} at line 36 → then i became 7 at line 39",
+  "result_value": "{0: 0, 1: 1, 2: 1, 3: 2, 4: 3, 5: 5, 6: 8, 7: 13}",
+  "func_name": "fibonacci",
   "lineage": [
     {
-      "variable": "merged",
-      "step": 4,
-      "line": 24,
-      "code": "for key, value in config.items():",
+      "variable": "memo",
+      "step": 2,
+      "line": 36,
+      "code": "a, b = 0, 1",
       "value": "{}",
       "type": "dict",
       "event": "created",
       "prev_value": null
     },
     {
-      "variable": "merged",
-      "step": 6,
-      "line": 24,
-      "code": "for key, value in config.items():",
-      "value": "{'host': 'localhost'}",
+      "variable": "memo",
+      "step": 5,
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "value": "{0: 0}",
       "type": "dict",
       "event": "changed",
       "prev_value": "{}"
     },
     {
-      "variable": "merged",
+      "variable": "memo",
       "step": 8,
-      "line": 24,
-      "code": "for key, value in config.items():",
-      "value": "{'host': 'localhost', 'port': 8080}",
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "value": "{0: 0, 1: 1}",
       "type": "dict",
       "event": "changed",
-      "prev_value": "{'host': 'localhost'}"
+      "prev_value": "{0: 0}"
     },
     {
-      "variable": "merged",
+      "variable": "memo",
       "step": 11,
-      "line": 27,
-      "code": "for key, value in overrides.items():",
-      "value": "{'host': 'localhost', 'port': 9090}",
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "value": "{0: 0, 1: 1, 2: 1}",
       "type": "dict",
       "event": "changed",
-      "prev_value": "{'host': 'localhost', 'port': 8080}"
+      "prev_value": "{0: 0, 1: 1}"
     },
     {
-      "variable": "merged",
-      "step": 13,
-      "line": 27,
-      "code": "for key, value in overrides.items():",
-      "value": "{'host': 'localhost', 'port': 9090, 'debug': True}",
+      "variable": "memo",
+      "step": 14,
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "value": "{0: 0, 1: 1, 2: 1, 3: 2}",
       "type": "dict",
       "event": "changed",
-      "prev_value": "{'host': 'localhost', 'port': 9090}"
+      "prev_value": "{0: 0, 1: 1, 2: 1}"
     },
     {
-      "variable": "config",
-      "step": 2,
-      "line": 21,
-      "code": "overrides = {\"port\": 9090, \"debug\": True}",
-      "value": "{'host': 'localhost', 'port': 8080}",
+      "variable": "memo",
+      "step": 17,
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "value": "{0: 0, 1: 1, 2: 1, 3: 2, 4: 3}",
       "type": "dict",
-      "event": "created",
-      "prev_value": null
-    },
-    {
-      "variable": "value",
-      "step": 5,
-      "line": 25,
-      "code": "merged[key] = value",
-      "value": "'localhost'",
-      "type": "str",
-      "event": "created",
-      "prev_value": null
-    },
-    {
-      "variable": "value",
-      "step": 7,
-      "line": 25,
-      "code": "merged[key] = value",
-      "value": "8080",
-      "type": "int",
       "event": "changed",
-      "prev_value": "'localhost'"
+      "prev_value": "{0: 0, 1: 1, 2: 1, 3: 2}"
     },
     {
-      "variable": "value",
-      "step": 10,
-      "line": 28,
-      "code": "merged[key] = value",
-      "value": "9090",
-      "type": "int",
+      "variable": "memo",
+      "step": 20,
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "value": "{0: 0, 1: 1, 2: 1, 3: 2, 4: 3, 5: 5}",
+      "type": "dict",
       "event": "changed",
-      "prev_value": "8080"
+      "prev_value": "{0: 0, 1: 1, 2: 1, 3: 2, 4: 3}"
     },
     {
-      "variable": "value",
-      "step": 12,
-      "line": 28,
-      "code": "merged[key] = value",
-      "value": "True",
-      "type": "bool",
+      "variable": "memo",
+      "step": 23,
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "value": "{0: 0, 1: 1, 2: 1, 3: 2, 4: 3, 5: 5, 6: 8}",
+      "type": "dict",
       "event": "changed",
-      "prev_value": "9090"
+      "prev_value": "{0: 0, 1: 1, 2: 1, 3: 2, 4: 3, 5: 5}"
     },
     {
-      "variable": "key",
-      "step": 5,
-      "line": 25,
-      "code": "merged[key] = value",
-      "value": "'host'",
-      "type": "str",
-      "event": "created",
-      "prev_value": null
-    },
-    {
-      "variable": "key",
-      "step": 7,
-      "line": 25,
-      "code": "merged[key] = value",
-      "value": "'port'",
-      "type": "str",
+      "variable": "memo",
+      "step": 26,
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "value": "{0: 0, 1: 1, 2: 1, 3: 2, 4: 3, 5: 5, 6: 8, 7: 13}",
+      "type": "dict",
       "event": "changed",
-      "prev_value": "'host'"
+      "prev_value": "{0: 0, 1: 1, 2: 1, 3: 2, 4: 3, 5: 5, 6: 8}"
     },
     {
-      "variable": "key",
-      "step": 12,
-      "line": 28,
-      "code": "merged[key] = value",
-      "value": "'debug'",
-      "type": "str",
-      "event": "changed",
-      "prev_value": "'port'"
-    },
-    {
-      "variable": "overrides",
+      "variable": "b",
       "step": 3,
-      "line": 23,
-      "code": "merged = {}",
-      "value": "{'port': 9090, 'debug': True}",
-      "type": "dict",
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "1",
+      "type": "int",
       "event": "created",
       "prev_value": null
+    },
+    {
+      "variable": "b",
+      "step": 9,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "2",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "1"
+    },
+    {
+      "variable": "b",
+      "step": 12,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "3",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "2"
+    },
+    {
+      "variable": "b",
+      "step": 15,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "5",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "3"
+    },
+    {
+      "variable": "b",
+      "step": 18,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "8",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "5"
+    },
+    {
+      "variable": "b",
+      "step": 21,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "13",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "8"
+    },
+    {
+      "variable": "b",
+      "step": 24,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "21",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "13"
+    },
+    {
+      "variable": "b",
+      "step": 27,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "34",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "21"
+    },
+    {
+      "variable": "a",
+      "step": 3,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "0",
+      "type": "int",
+      "event": "created",
+      "prev_value": null
+    },
+    {
+      "variable": "a",
+      "step": 6,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "1",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "0"
+    },
+    {
+      "variable": "a",
+      "step": 12,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "2",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "1"
+    },
+    {
+      "variable": "a",
+      "step": 15,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "3",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "2"
+    },
+    {
+      "variable": "a",
+      "step": 18,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "5",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "3"
+    },
+    {
+      "variable": "a",
+      "step": 21,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "8",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "5"
+    },
+    {
+      "variable": "a",
+      "step": 24,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "13",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "8"
+    },
+    {
+      "variable": "a",
+      "step": 27,
+      "line": 38,
+      "code": "for i in range(n):",
+      "value": "21",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "13"
+    },
+    {
+      "variable": "n",
+      "step": 0,
+      "line": 33,
+      "code": "def fibonacci(n=8):",
+      "value": "8",
+      "type": "int",
+      "event": "created",
+      "prev_value": null
+    },
+    {
+      "variable": "i",
+      "step": 4,
+      "line": 39,
+      "code": "memo[i] = a",
+      "value": "0",
+      "type": "int",
+      "event": "created",
+      "prev_value": null
+    },
+    {
+      "variable": "i",
+      "step": 7,
+      "line": 39,
+      "code": "memo[i] = a",
+      "value": "1",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "0"
+    },
+    {
+      "variable": "i",
+      "step": 10,
+      "line": 39,
+      "code": "memo[i] = a",
+      "value": "2",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "1"
+    },
+    {
+      "variable": "i",
+      "step": 13,
+      "line": 39,
+      "code": "memo[i] = a",
+      "value": "3",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "2"
+    },
+    {
+      "variable": "i",
+      "step": 16,
+      "line": 39,
+      "code": "memo[i] = a",
+      "value": "4",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "3"
+    },
+    {
+      "variable": "i",
+      "step": 19,
+      "line": 39,
+      "code": "memo[i] = a",
+      "value": "5",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "4"
+    },
+    {
+      "variable": "i",
+      "step": 22,
+      "line": 39,
+      "code": "memo[i] = a",
+      "value": "6",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "5"
+    },
+    {
+      "variable": "i",
+      "step": 25,
+      "line": 39,
+      "code": "memo[i] = a",
+      "value": "7",
+      "type": "int",
+      "event": "changed",
+      "prev_value": "6"
     }
   ],
   "critical_path": [
     {
+      "step": 0,
+      "file": "timeline_demo.py",
+      "line": 33,
+      "code": "def fibonacci(n=8):",
+      "what_changed": []
+    },
+    {
       "step": 2,
       "file": "timeline_demo.py",
-      "line": 21,
-      "code": "overrides = {\"port\": 9090, \"debug\": True}",
+      "line": 36,
+      "code": "a, b = 0, 1",
       "what_changed": []
     },
     {
       "step": 3,
       "file": "timeline_demo.py",
-      "line": 23,
-      "code": "merged = {}",
+      "line": 38,
+      "code": "for i in range(n):",
       "what_changed": []
     },
     {
       "step": 4,
       "file": "timeline_demo.py",
-      "line": 24,
-      "code": "for key, value in config.items():",
+      "line": 39,
+      "code": "memo[i] = a",
       "what_changed": []
     },
     {
       "step": 5,
       "file": "timeline_demo.py",
-      "line": 25,
-      "code": "merged[key] = value",
-      "what_changed": []
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "what_changed": [
+        "memo"
+      ]
     },
     {
       "step": 6,
       "file": "timeline_demo.py",
-      "line": 24,
-      "code": "for key, value in config.items():",
+      "line": 38,
+      "code": "for i in range(n):",
       "what_changed": [
-        "merged"
+        "a"
       ]
     },
     {
       "step": 7,
       "file": "timeline_demo.py",
-      "line": 25,
-      "code": "merged[key] = value",
+      "line": 39,
+      "code": "memo[i] = a",
       "what_changed": [
-        "value",
-        "key"
+        "i"
       ]
     },
     {
       "step": 8,
       "file": "timeline_demo.py",
-      "line": 24,
-      "code": "for key, value in config.items():",
+      "line": 40,
+      "code": "a, b = b, a + b",
       "what_changed": [
-        "merged"
+        "memo"
+      ]
+    },
+    {
+      "step": 9,
+      "file": "timeline_demo.py",
+      "line": 38,
+      "code": "for i in range(n):",
+      "what_changed": [
+        "b"
       ]
     },
     {
       "step": 10,
       "file": "timeline_demo.py",
-      "line": 28,
-      "code": "merged[key] = value",
+      "line": 39,
+      "code": "memo[i] = a",
       "what_changed": [
-        "value"
+        "i"
       ]
     },
     {
       "step": 11,
       "file": "timeline_demo.py",
-      "line": 27,
-      "code": "for key, value in overrides.items():",
+      "line": 40,
+      "code": "a, b = b, a + b",
       "what_changed": [
-        "merged"
+        "memo"
       ]
     },
     {
       "step": 12,
       "file": "timeline_demo.py",
-      "line": 28,
-      "code": "merged[key] = value",
+      "line": 38,
+      "code": "for i in range(n):",
       "what_changed": [
-        "value",
-        "key"
+        "b",
+        "a"
       ]
     },
     {
       "step": 13,
       "file": "timeline_demo.py",
-      "line": 27,
-      "code": "for key, value in overrides.items():",
+      "line": 39,
+      "code": "memo[i] = a",
       "what_changed": [
-        "merged"
+        "i"
+      ]
+    },
+    {
+      "step": 14,
+      "file": "timeline_demo.py",
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "what_changed": [
+        "memo"
+      ]
+    },
+    {
+      "step": 15,
+      "file": "timeline_demo.py",
+      "line": 38,
+      "code": "for i in range(n):",
+      "what_changed": [
+        "b",
+        "a"
+      ]
+    },
+    {
+      "step": 16,
+      "file": "timeline_demo.py",
+      "line": 39,
+      "code": "memo[i] = a",
+      "what_changed": [
+        "i"
+      ]
+    },
+    {
+      "step": 17,
+      "file": "timeline_demo.py",
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "what_changed": [
+        "memo"
+      ]
+    },
+    {
+      "step": 18,
+      "file": "timeline_demo.py",
+      "line": 38,
+      "code": "for i in range(n):",
+      "what_changed": [
+        "b",
+        "a"
+      ]
+    },
+    {
+      "step": 19,
+      "file": "timeline_demo.py",
+      "line": 39,
+      "code": "memo[i] = a",
+      "what_changed": [
+        "i"
+      ]
+    },
+    {
+      "step": 20,
+      "file": "timeline_demo.py",
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "what_changed": [
+        "memo"
+      ]
+    },
+    {
+      "step": 21,
+      "file": "timeline_demo.py",
+      "line": 38,
+      "code": "for i in range(n):",
+      "what_changed": [
+        "b",
+        "a"
+      ]
+    },
+    {
+      "step": 22,
+      "file": "timeline_demo.py",
+      "line": 39,
+      "code": "memo[i] = a",
+      "what_changed": [
+        "i"
+      ]
+    },
+    {
+      "step": 23,
+      "file": "timeline_demo.py",
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "what_changed": [
+        "memo"
+      ]
+    },
+    {
+      "step": 24,
+      "file": "timeline_demo.py",
+      "line": 38,
+      "code": "for i in range(n):",
+      "what_changed": [
+        "b",
+        "a"
+      ]
+    },
+    {
+      "step": 25,
+      "file": "timeline_demo.py",
+      "line": 39,
+      "code": "memo[i] = a",
+      "what_changed": [
+        "i"
+      ]
+    },
+    {
+      "step": 26,
+      "file": "timeline_demo.py",
+      "line": 40,
+      "code": "a, b = b, a + b",
+      "what_changed": [
+        "memo"
+      ]
+    },
+    {
+      "step": 27,
+      "file": "timeline_demo.py",
+      "line": 38,
+      "code": "for i in range(n):",
+      "what_changed": [
+        "b",
+        "a"
       ]
     }
   ],
-  "total_steps": 16,
-  "critical_steps": 11
+  "total_steps": 30,
+  "critical_steps": 27
 }

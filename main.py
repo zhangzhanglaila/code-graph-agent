@@ -23,6 +23,9 @@ from static.config_linker import ConfigLinker
 from dynamic.tracer import LineTracer
 from dynamic.state_recorder import record_function
 from reasoning.result_explainer import explain_result, explain_result_text
+from reasoning.insight_summarizer import summarize_insight, insight_text
+from dynamic.ds_tracer import trace_ds_function
+from visualization.ds_viz import render_ds_timeline
 from dynamic.exception_parser import ExceptionParser, catch_and_parse
 from fusion.merge_engine import MergeEngine
 from reasoning.llm_reasoner import LLMReasoner
@@ -213,6 +216,96 @@ def run_explain_why(
     return explanation
 
 
+def run_insight(
+    module_path: str,
+    func_name: str,
+    output_dir: str = "output",
+) -> dict:
+    """Generate cognitive-level insight for a function."""
+    import importlib
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"Insight: {module_path}.{func_name}()")
+
+    # Import and record
+    module = importlib.import_module(module_path)
+    func = getattr(module, func_name)
+    target_file = os.path.abspath(func.__code__.co_filename)
+
+    result, timeline = record_function(func, target_files={target_file})
+
+    # Generate insight
+    insight = summarize_insight(timeline, result, func_name)
+
+    # Print
+    print(insight_text(insight))
+
+    # Save
+    insight_data = {
+        "one_liner": insight.one_liner,
+        "algorithm_type": insight.algorithm_type,
+        "confidence": insight.confidence,
+        "patterns": [{"name": p.name, "confidence": p.confidence, "description": p.description} for p in insight.patterns],
+        "phases": [{"name": p.name, "steps": f"{p.start_step}-{p.end_step}", "description": p.description} for p in insight.phases],
+        "explanation_levels": insight.explanation_levels,
+    }
+    insight_path = os.path.join(output_dir, "insight.json")
+    with open(insight_path, "w", encoding="utf-8") as f:
+        json.dump(insight_data, f, indent=2, ensure_ascii=False)
+    print(f"\n  → {insight_path}")
+
+    return insight_data
+
+
+def run_ds_viz(
+    module_path: str,
+    func_name: str,
+    output_dir: str = "output",
+) -> dict:
+    """Visualize data structure evolution with pointer animation."""
+    import importlib
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"Data Structure Visualization: {module_path}.{func_name}()")
+
+    # Import and trace
+    module = importlib.import_module(module_path)
+    func = getattr(module, func_name)
+    target_file = os.path.abspath(func.__code__.co_filename)
+
+    result, timeline = trace_ds_function(func, target_files={target_file})
+
+    # Stats
+    total_objects = set()
+    for step in timeline.steps:
+        total_objects.update(step.objects.keys())
+
+    print(f"  → {len(timeline.steps)} steps, {len(total_objects)} objects tracked")
+
+    # Show step summary
+    for step in timeline.steps:
+        changed = ""
+        if step.changed_objects:
+            changed = f" [changed: {len(step.changed_objects)} objects]"
+        if step.changed_refs:
+            changed += f" [refs: {len(step.changed_refs)}]"
+        if step.objects:
+            print(f"  Step {step.step_index:3d}: {step.code_line[:55]}{changed}")
+
+    # Render visualization
+    html_path = render_ds_timeline(
+        timeline,
+        output_path=os.path.join(output_dir, "ds_visualization.html"),
+        title=f"Data Structure: {func_name}()",
+    )
+    print(f"\n  → Visualization: {html_path}")
+    print(f"  → Result: {result}")
+
+    return {"result": result, "steps": len(timeline.steps), "objects": len(total_objects)}
+
+
 def run_unified(
     module_path: str,
     func_name: str,
@@ -242,13 +335,18 @@ def run_unified(
         graph = analyzer.analyze_file(target_file)
     print(f"  → {graph.stats()['nodes']} graph nodes, {graph.stats()['edges']} edges")
 
-    # 3. Generate unified view
+    # 3. Generate insight
+    insight = summarize_insight(timeline, result, func_name)
+    print(f"  → Insight: {insight.one_liner}")
+
+    # 4. Generate unified view
     viz = GraphVisualizer()
     html_path = viz.render_unified(
         graph=graph,
         timeline=timeline,
         output_path=os.path.join(output_dir, "unified_view.html"),
         title=f"WHY + HOW: {func_name}() = {result}",
+        insight=insight,
     )
     print(f"  → Unified view: {html_path}")
 
@@ -459,6 +557,18 @@ Examples:
     # demo command
     subparsers.add_parser("demo", help="Run the login failure demo")
 
+    # insight command
+    insight_p = subparsers.add_parser("insight", help="Cognitive-level function insight")
+    insight_p.add_argument("--module", required=True, help="Module path")
+    insight_p.add_argument("--func", required=True, help="Function name")
+    insight_p.add_argument("--output", default="output", help="Output directory")
+
+    # ds-viz command
+    ds_p = subparsers.add_parser("ds-viz", help="Data structure visualization with pointer animation")
+    ds_p.add_argument("--module", required=True, help="Module path")
+    ds_p.add_argument("--func", required=True, help="Function name")
+    ds_p.add_argument("--output", default="output", help="Output directory")
+
     # timeline command
     timeline_p = subparsers.add_parser("timeline", help="Record and visualize execution timeline")
     timeline_p.add_argument("--module", required=True, help="Module path (e.g. demo.timeline_demo)")
@@ -502,6 +612,12 @@ Examples:
             llm_provider=args.provider,
             llm_model=args.model,
         )
+    elif args.command == "insight":
+        run_insight(
+            module_path=args.module,
+            func_name=args.func,
+            output_dir=args.output,
+        )
     elif args.command == "demo":
         run_demo()
     elif args.command == "timeline":
@@ -521,6 +637,12 @@ Examples:
             module_path=args.module,
             func_name=args.func,
             project_path=args.project,
+            output_dir=args.output,
+        )
+    elif args.command == "ds-viz":
+        run_ds_viz(
+            module_path=args.module,
+            func_name=args.func,
             output_dir=args.output,
         )
     else:
