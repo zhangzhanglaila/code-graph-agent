@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { InsightResponse, AnalyzeResponse, DSVizResponse, ExplainResponse, StepExplanation, FocusedExplanation, StepData, ControlEdge, LoopGroup } from '../api/analysis'
+import type { InsightResponse, AnalyzeResponse, DSVizResponse, ExplainResponse, StepExplanation, FocusedExplanation, StepData, ControlEdge, LoopGroup, PatternNarrativeResponse, SubproblemGraphResponse } from '../api/analysis'
 
 interface HistoryEntry {
   id: string
@@ -54,6 +54,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const loopGroups = ref<LoopGroup[]>([])
   const focusedExplanation = ref<FocusedExplanation | null>(null)
   const focusLoading = ref(false)
+  const patternResult = ref<PatternNarrativeResponse | null>(null)
+  const subproblemGraph = ref<SubproblemGraphResponse | null>(null)
 
   // Timeline state
   const currentStep = ref(0)
@@ -97,6 +99,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
     controlEdges.value = []
     loopGroups.value = []
     focusedExplanation.value = null
+    patternResult.value = null
+    subproblemGraph.value = null
     sessionId.value = ''
     currentStep.value = 0
     explainMode.value = false
@@ -136,7 +140,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     loading, error, activeTab,
     insightResult, analyzeResult, dsVizResult, explainResult,
     stepExplanations, controlEdges, loopGroups,
-    focusedExplanation, focusLoading, explainMode,
+    focusedExplanation, focusLoading, patternResult, subproblemGraph, explainMode,
     sessionId, showAllSteps, importantSteps,
     currentStep, isPlaying, playSpeed,
     history,

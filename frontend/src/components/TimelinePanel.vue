@@ -148,6 +148,255 @@ const criticalPath = computed(() => {
   return new Set(path)
 })
 
+// Ordered critical path for narrative generation
+const criticalPathOrdered = computed(() => {
+  if (!store.stepExplanations.length) return []
+
+  const reverseMap = new Map<number, number[]>()
+  for (const exp of store.stepExplanations) {
+    for (const target of (exp.affects || [])) {
+      if (!reverseMap.has(target)) reverseMap.set(target, [])
+      reverseMap.get(target)!.push(exp.step)
+    }
+  }
+  for (const ce of store.controlEdges) {
+    if (!reverseMap.has(ce.to)) reverseMap.set(ce.to, [])
+    reverseMap.get(ce.to)!.push(ce.from)
+  }
+
+  const returnStep = store.stepExplanations
+    .filter(e => e.importance_reasons?.includes('return'))
+    .sort((a, b) => b.step - a.step)[0]
+  const endStep = returnStep?.step ?? store.stepExplanations[store.stepExplanations.length - 1]?.step ?? 0
+
+  const path: number[] = [endStep]
+  const visited = new Set<number>([endStep])
+  let current = endStep
+  const maxDepth = 10
+
+  for (let depth = 0; depth < maxDepth; depth++) {
+    const parents = reverseMap.get(current) || []
+    if (parents.length === 0) break
+    let bestParent = -1
+    let bestScore = -1
+    for (const p of parents) {
+      if (visited.has(p)) continue
+      const exp = store.stepExplanations.find(e => e.step === p)
+      const score = exp?.importance_score || 0
+      if (score > bestScore) { bestScore = score; bestParent = p }
+    }
+    if (bestParent === -1) break
+    path.push(bestParent)
+    visited.add(bestParent)
+    current = bestParent
+  }
+
+  path.reverse()
+  return path
+})
+
+// WHY Narrative: combines algorithm-level pattern with step-level causal chain
+const narrative = computed(() => {
+  const path = criticalPathOrdered.value
+  if (path.length < 2) return null
+
+  // If we have algorithm-level narrative from pattern recognition, use it as the core
+  const algoNarrative = store.patternResult?.narrative
+  if (algoNarrative) {
+    // Build step-level detail from critical path
+    const getExp = (step: number) => store.stepExplanations.find(e => e.step === step)
+    const getStep = (step: number) => store.timeline.find(s => s.index === step)
+    const sharedVars = (from: number, to: number): string[] => {
+      const fs = getStep(from)
+      const ts = getStep(to)
+      if (!fs || !ts) return []
+      const fromChanged = new Set(fs.changed || [])
+      return [...fromChanged].filter(v => (ts.changed || []).includes(v) || (ts.code || '').includes(v))
+    }
+    const isControlEdge = (from: number, to: number) =>
+      store.controlEdges.some(e => e.from === from && e.to === to)
+    const _describeAction2 = (code: string) => {
+      const c = code.trim()
+      if (c.startsWith('return ')) return 'returns result'
+      if (c.startsWith('if ') || c.startsWith('elif ')) return 'checks condition'
+      if (c.startsWith('for ')) return 'iterates'
+      if (c.startsWith('while ')) return 'loops'
+      if (c.includes('= [')) return 'builds collection'
+      if (c.includes('.append(')) return 'adds to collection'
+      if (c.match(/^\w+\s*=\s*/)) return `computes ${c.split('=')[0].trim()}`
+      return c.length > 24 ? c.slice(0, 24) + '…' : c
+    }
+
+    // Build a compact causal chain description
+    const chainParts: string[] = []
+    for (let i = 1; i < path.length; i++) {
+      const prev = path[i - 1]
+      const cur = path[i]
+      const exp = getExp(cur)
+      const imp = exp?.importance || 'medium'
+      const explanation = exp?.importance_explanation || exp?.explanation || _describeAction2(getStep(cur)?.code || '')
+
+      let transition = ''
+      if (i === 1) transition = 'First, it '
+      else if (i === path.length - 1) transition = 'Finally, it '
+      else if (imp === 'high') transition = 'Then, critically, it '
+      else transition = 'Then it '
+
+      let cause = ''
+      if (isControlEdge(prev, cur)) {
+        const condCode = getStep(prev)?.code?.replace(/^(if |elif |for |while )/, '').replace(/:$/, '') || ''
+        cause = ` based on "${condCode}"`
+      } else {
+        const shared = sharedVars(prev, cur)
+        if (shared.length > 0) cause = ` using ${shared.join(' and ')}`
+      }
+
+      const expLower = explanation.charAt(0).toLowerCase() + explanation.slice(1)
+      chainParts.push(`${transition}${expLower}${cause}`)
+    }
+
+    // Find turning points
+    const turningPoints = path.filter(s => getExp(s)?.turning_point)
+    let turningNote = ''
+    if (turningPoints.length > 0 && path.length > 4) {
+      const tpStep = turningPoints[turningPoints.length - 1]
+      const tpExp = getExp(tpStep)?.importance_explanation || ''
+      if (tpExp) turningNote = ` The key turning point is when ${tpExp.toLowerCase()}.`
+    }
+
+    // Compose: algorithm narrative + critical path chain + complexity reasoning
+    const chain = chainParts.length > 0 ? ' Specifically: ' + chainParts.join(', then ') + '.' : ''
+    const complexity = store.patternResult?.complexity || ''
+    const complexityNote = complexity ? ' ' + complexity : ''
+    return algoNarrative + chain + turningNote + complexityNote
+  }
+
+  const getExp = (step: number) => store.stepExplanations.find(e => e.step === step)
+  const getStep = (step: number) => store.timeline.find(s => s.index === step)
+  const getAction = (step: number) => {
+    const s = getStep(step)
+    return s ? _describeAction(s.code || '') : `step ${step}`
+  }
+  const getExplanation = (step: number) => {
+    const exp = getExp(step)
+    return exp?.importance_explanation || exp?.explanation || getAction(step)
+  }
+  const getImportance = (step: number) => getExp(step)?.importance || 'medium'
+
+  // Find shared variables between two steps
+  const sharedVars = (from: number, to: number): string[] => {
+    const fs = getStep(from)
+    const ts = getStep(to)
+    if (!fs || !ts) return []
+    const fromChanged = new Set(fs.changed || [])
+    return [...fromChanged].filter(v => (ts.changed || []).includes(v) || (ts.code || '').includes(v))
+  }
+
+  // Check if edge is control flow
+  const isControlEdge = (from: number, to: number) =>
+    store.controlEdges.some(e => e.from === from && e.to === to)
+
+  // Detect pattern: is this a loop-heavy path?
+  const loopSteps = path.filter(s => {
+    const exp = getExp(s)
+    return exp?.importance_reasons?.some(r => r.includes('loop'))
+  })
+  const isLoopHeavy = loopSteps.length >= path.length * 0.4
+
+  // Detect pattern: does it have a base case?
+  const baseCaseStep = path.find(s => {
+    const exp = getExp(s)
+    return exp?.importance_reasons?.includes('base_case')
+  })
+
+  // Build sentences
+  const sentences: string[] = []
+
+  // Opening: what does the algorithm do
+  const firstAction = getAction(path[0])
+  const lastAction = getAction(path[path.length - 1])
+  const lastExp = getExp(path[path.length - 1])
+  const returnReason = lastExp?.importance_reasons?.includes('return')
+
+  if (path.length <= 3) {
+    // Short path: compact summary
+    sentences.push(`This algorithm executes through ${path.length} key steps.`)
+  } else if (isLoopHeavy) {
+    sentences.push(`This algorithm processes data through ${path.length} key steps, iterating to build up a result.`)
+  } else {
+    sentences.push(`This algorithm works through ${path.length} key steps to produce its result.`)
+  }
+
+  // Base case: if present, mention it early
+  if (baseCaseStep && baseCaseStep !== path[0]) {
+    const bcExp = getExplanation(baseCaseStep)
+    sentences.push(`It first checks a base case — ${bcExp.toLowerCase()} — to handle the simplest scenario before proceeding.`)
+  }
+
+  // Middle: walk the path with causal transitions
+  const startIdx = baseCaseStep && baseCaseStep !== path[0] ? path.indexOf(baseCaseStep) + 1 : 1
+  for (let i = startIdx; i < path.length; i++) {
+    const prev = path[i - 1]
+    const cur = path[i]
+    const exp = getExplanation(cur)
+    const imp = getImportance(cur)
+
+    // Transition word
+    let transition = ''
+    if (i === 1 && !baseCaseStep) {
+      transition = 'First, '
+    } else if (i === path.length - 1) {
+      transition = 'Finally, '
+    } else if (i === path.length - 2) {
+      transition = 'Then, '
+    } else if (imp === 'high') {
+      transition = 'Critically, '
+    } else {
+      transition = 'Next, '
+    }
+
+    // Causal link
+    let cause = ''
+    const control = isControlEdge(prev, cur)
+    const shared = sharedVars(prev, cur)
+    if (control) {
+      const condCode = getStep(prev)?.code?.replace(/^(if |elif |for |while )/, '').replace(/:$/, '') || ''
+      cause = ` because "${condCode}" determines this path`
+    } else if (shared.length > 0) {
+      cause = ` using ${shared.join(' and ')} from the previous step`
+    }
+
+    // Compose sentence
+    const expLower = exp.charAt(0).toLowerCase() + exp.slice(1)
+    if (cause) {
+      sentences.push(`${transition}${expLower}${cause}.`)
+    } else {
+      sentences.push(`${transition}${expLower}.`)
+    }
+  }
+
+  // Closing: wrap up with result significance
+  if (returnReason) {
+    const resultCode = getStep(path[path.length - 1])?.code || ''
+    const resultVar = resultCode.replace(/^return\s*/, '').trim()
+    if (resultVar) {
+      sentences.push(`This produces the final result: ${resultVar}.`)
+    } else {
+      sentences.push(`This produces the final result.`)
+    }
+  }
+
+  // Complexity note if we have turning points
+  const turningPoints = path.filter(s => getExp(s)?.turning_point)
+  if (turningPoints.length > 0 && path.length > 4) {
+    const tpStep = turningPoints[turningPoints.length - 1]
+    const tpExp = getExplanation(tpStep)
+    sentences.push(`The most significant turning point is at step ${tpStep}, where ${tpExp.toLowerCase()}.`)
+  }
+
+  return sentences.join(' ')
+})
+
 // Downstream steps for causal highlighting
 const downstreamSteps = computed(() => {
   if (causalSource.value === null) return new Set<number>()
@@ -403,6 +652,35 @@ function reasonIcon(r: string): string {
   if (r.includes('_new_vars')) return '✦'
   if (r.includes('_vars_changed')) return '🔄'
   return map[r] || '•'
+}
+
+function patternLabel(p: string): string {
+  const map: Record<string, string> = {
+    memoization: 'Memoization',
+    divide_and_conquer: 'Divide & Conquer',
+    recursion: 'Recursion',
+    search: 'Search',
+    accumulation: 'Accumulation',
+    state_transformation: 'State Transform',
+    iteration: 'Iteration',
+    sequential: 'Sequential',
+  }
+  return map[p] || p
+}
+
+function propertyLabel(p: string): string {
+  const map: Record<string, string> = {
+    overlapping_subproblems: 'Overlapping Subproblems',
+    result_reuse: 'Result Reuse',
+    divide_structure: 'Divide Structure',
+    recursive_decomposition: 'Recursive Decomposition',
+    early_termination: 'Early Termination',
+    accumulation: 'Accumulation',
+    state_evolution: 'State Evolution',
+    iteration: 'Iteration',
+    sequential: 'Sequential',
+  }
+  return map[p] || p
 }
 
 function reasonLabel(r: string): string {
@@ -681,6 +959,34 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- WHY Narrative -->
+    <div v-if="narrative" class="narrative card">
+      <div class="narrative-header">
+        <span class="narrative-badge">WHY</span>
+        <span v-if="store.patternResult?.pattern" class="pattern-badge">{{ patternLabel(store.patternResult.pattern) }}</span>
+        <span class="narrative-title">How this algorithm works</span>
+        <span class="narrative-path">{{ criticalPathOrdered.join(' → ') }}</span>
+      </div>
+      <div class="narrative-text">{{ narrative }}</div>
+      <!-- Complexity reasoning -->
+      <div v-if="store.patternResult?.complexity" class="narrative-complexity">
+        <span class="complexity-icon">⚡</span>
+        {{ store.patternResult.complexity }}
+      </div>
+      <!-- Evidence chips -->
+      <div v-if="store.patternResult?.properties" class="narrative-evidence">
+        <span
+          v-for="(data, prop) in store.patternResult.properties"
+          :key="prop"
+          class="evidence-chip"
+          :title="(data.evidence_sample || []).join('\n')"
+        >
+          <span class="evidence-name">{{ propertyLabel(String(prop)) }}</span>
+          <span class="evidence-conf">{{ Math.round((data.confidence || 0) * 100) }}%</span>
+        </span>
+      </div>
+    </div>
+
     <!-- Step list -->
     <div class="step-list">
       <div class="section-title">
@@ -862,6 +1168,112 @@ onUnmounted(() => {
         <div v-if="edgeExplanation.sharedVars.length" class="edge-vars">
           Shared: {{ edgeExplanation.sharedVars.join(', ') }}
         </div>
+      </div>
+    </div>
+
+    <!-- Subproblem Graph: Computation DAG + Complexity -->
+    <div v-if="store.subproblemGraph?.is_recursive && store.subproblemGraph?.layout" class="subproblem-section">
+      <div class="subproblem-header">
+        <span class="subproblem-badge">DAG</span>
+        <span class="subproblem-title">Computation Structure</span>
+        <span class="subproblem-stats" v-if="store.subproblemGraph.dag">
+          {{ store.subproblemGraph.dag.unique_count }} unique / {{ store.subproblemGraph.dag.total_count }} total calls
+        </span>
+      </div>
+
+      <!-- Complexity Analysis -->
+      <div class="complexity-card" v-if="store.subproblemGraph.complexity">
+        <div class="complexity-row">
+          <span class="complexity-label">Recurrence</span>
+          <span class="complexity-value">{{ store.subproblemGraph.complexity.recurrence }}</span>
+        </div>
+        <div class="complexity-row">
+          <span class="complexity-label">Without cache</span>
+          <span class="complexity-value complexity-bad">{{ store.subproblemGraph.complexity.without_cache }}</span>
+        </div>
+        <div class="complexity-row">
+          <span class="complexity-label">With cache</span>
+          <span class="complexity-value complexity-good">{{ store.subproblemGraph.complexity.with_cache }}</span>
+        </div>
+        <div class="complexity-row">
+          <span class="complexity-label">Speedup</span>
+          <span class="complexity-value complexity-highlight">{{ store.subproblemGraph.complexity.speedup }}</span>
+        </div>
+      </div>
+
+      <!-- DAG Visualization -->
+      <div class="dag-container">
+        <svg
+          :width="store.subproblemGraph.layout.width"
+          :height="store.subproblemGraph.layout.height"
+          class="dag-svg"
+        >
+          <defs>
+            <marker id="dag-arrow" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+              <polygon points="0 0, 6 2.5, 0 5" fill="rgba(167,139,250,0.5)" />
+            </marker>
+          </defs>
+          <!-- Edges -->
+          <line
+            v-for="(edge, i) in store.subproblemGraph.layout.edges"
+            :key="'de'+i"
+            :x1="edge.from_pos.x + store.subproblemGraph.layout.nodeW"
+            :y1="edge.from_pos.y + store.subproblemGraph.layout.nodeH / 2"
+            :x2="edge.to_pos.x"
+            :y2="edge.to_pos.y + store.subproblemGraph.layout.nodeH / 2"
+            stroke="rgba(167,139,250,0.35)"
+            stroke-width="1.5"
+            marker-end="url(#dag-arrow)"
+          />
+          <!-- Nodes -->
+          <g
+            v-for="node in store.subproblemGraph.layout.nodes"
+            :key="node.id"
+            :transform="`translate(${node.x}, ${node.y})`"
+            class="dag-node"
+            :class="{ 'dag-reused': node.is_reused }"
+          >
+            <rect
+              :width="store.subproblemGraph.layout.nodeW"
+              :height="store.subproblemGraph.layout.nodeH"
+              rx="4"
+              :fill="node.is_reused ? 'rgba(251,114,153,0.12)' : 'rgba(100,100,120,0.06)'"
+              :stroke="node.is_reused ? 'var(--primary)' : 'var(--border)'"
+              :stroke-width="node.is_reused ? 2 : 1"
+            />
+            <text x="6" y="14" class="dag-label" :fill="node.is_reused ? 'var(--primary)' : 'var(--text-dim)'">
+              {{ node.label }}
+            </text>
+            <text v-if="node.result != null" x="6" y="28" class="dag-result" fill="var(--text-muted)">
+              → {{ String(node.result).slice(0, 12) }}
+            </text>
+            <!-- Reuse count badge -->
+            <g v-if="node.call_count > 1">
+              <circle :cx="store.subproblemGraph.layout.nodeW - 8" cy="10" r="8" fill="var(--primary)" />
+              <text :x="store.subproblemGraph.layout.nodeW - 8" y="14" class="dag-count" fill="#0f172a" text-anchor="middle">
+                {{ node.call_count }}
+              </text>
+            </g>
+          </g>
+        </svg>
+      </div>
+
+      <!-- Shared subproblems detail -->
+      <div v-if="store.subproblemGraph.complexity?.shared_subproblems?.length" class="shared-subs">
+        <div class="shared-title">Most recomputed subproblems:</div>
+        <div
+          v-for="sub in store.subproblemGraph.complexity.shared_subproblems.slice(0, 5)"
+          :key="sub.id"
+          class="shared-item"
+        >
+          <span class="shared-id">{{ sub.id }}</span>
+          <span class="shared-count">×{{ sub.called }}</span>
+        </div>
+      </div>
+
+      <!-- Performance narrative -->
+      <div v-if="store.subproblemGraph.narrative" class="perf-narrative">
+        {{ store.subproblemGraph.narrative }}
       </div>
     </div>
   </div>
@@ -1230,6 +1642,67 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+/* WHY Narrative */
+.narrative {
+  background: linear-gradient(135deg, rgba(251,114,153,0.06), rgba(167,139,250,0.06));
+  border: 1px solid rgba(251,114,153,0.2);
+  border-left: 3px solid var(--primary);
+  padding: 12px 14px;
+}
+.narrative-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.narrative-badge {
+  background: linear-gradient(135deg, #fb7299, #a78bfa);
+  color: #0f172a; font-size: 9px; font-weight: 800;
+  padding: 2px 8px; border-radius: 3px; letter-spacing: 1px;
+}
+.narrative-title {
+  font-size: 13px; font-weight: 700; color: var(--primary);
+}
+.pattern-badge {
+  font-size: 10px; font-weight: 700; color: var(--highlight);
+  background: rgba(34,211,238,0.12); border: 1px solid rgba(34,211,238,0.25);
+  padding: 1px 8px; border-radius: 10px; letter-spacing: 0.3px;
+}
+.narrative-path {
+  font-size: 10px; color: var(--text-muted); font-family: monospace;
+  margin-left: auto;
+}
+.narrative-text {
+  font-size: 13px; color: var(--text); line-height: 1.8;
+  letter-spacing: 0.01em;
+}
+.narrative-complexity {
+  margin-top: 10px; padding: 8px 10px;
+  background: rgba(251,191,36,0.06);
+  border: 1px solid rgba(251,191,36,0.15);
+  border-left: 3px solid rgba(251,191,36,0.4);
+  border-radius: 6px;
+  font-size: 12px; color: var(--text-dim); line-height: 1.6;
+}
+.complexity-icon { margin-right: 4px; }
+.narrative-evidence {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;
+}
+.evidence-chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 12px;
+  background: rgba(167,139,250,0.08);
+  border: 1px solid rgba(167,139,250,0.2);
+  font-size: 11px; cursor: default;
+  transition: all 0.2s;
+}
+.evidence-chip:hover {
+  background: rgba(167,139,250,0.15);
+  border-color: rgba(167,139,250,0.4);
+}
+.evidence-name { color: var(--text); font-weight: 600; }
+.evidence-conf {
+  color: var(--highlight);
+  font-family: monospace; font-size: 10px;
+}
+
 /* Causal Graph */
 .causal-graph {
   padding: 10px;
@@ -1319,5 +1792,91 @@ onUnmounted(() => {
 .edge-vars {
   margin-top: 4px; font-size: 10px; color: var(--text-muted);
   font-family: monospace;
+}
+
+/* Subproblem Graph / Computation DAG */
+.subproblem-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  overflow: hidden;
+}
+.subproblem-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.subproblem-badge {
+  background: linear-gradient(135deg, #fb7299, #a78bfa);
+  color: #0f172a; font-size: 9px; font-weight: 800;
+  padding: 2px 8px; border-radius: 3px; letter-spacing: 1px;
+}
+.subproblem-title {
+  font-size: 13px; font-weight: 700; color: var(--primary);
+}
+.subproblem-stats {
+  font-size: 11px; color: var(--text-muted); font-family: monospace; margin-left: auto;
+}
+
+.complexity-card {
+  background: rgba(251,191,36,0.04);
+  border: 1px solid rgba(251,191,36,0.15);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.complexity-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 3px 0;
+}
+.complexity-label {
+  font-size: 11px; color: var(--text-muted); font-weight: 600;
+}
+.complexity-value {
+  font-size: 12px; color: var(--text); font-family: monospace;
+}
+.complexity-bad { color: #f87171; }
+.complexity-good { color: #34d399; }
+.complexity-highlight {
+  color: var(--highlight); font-weight: 700;
+}
+
+.dag-container {
+  overflow-x: auto; overflow-y: hidden;
+  padding: 4px 0;
+  margin-bottom: 10px;
+}
+.dag-svg { display: block; }
+.dag-node { cursor: default; }
+.dag-label { font-size: 9px; font-family: monospace; }
+.dag-result { font-size: 8px; font-family: monospace; }
+.dag-count { font-size: 8px; font-weight: 800; }
+
+.shared-subs {
+  background: rgba(251,114,153,0.04);
+  border: 1px solid rgba(251,114,153,0.12);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+.shared-title {
+  font-size: 10px; color: var(--text-muted); margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.shared-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 2px 0; font-size: 11px;
+}
+.shared-id { color: var(--text); font-family: monospace; }
+.shared-count {
+  color: var(--primary); font-weight: 700; font-family: monospace;
+  background: rgba(251,114,153,0.1); padding: 1px 6px; border-radius: 4px;
+}
+
+.perf-narrative {
+  font-size: 12px; color: var(--text-dim); line-height: 1.7;
+  padding: 8px 10px;
+  background: rgba(167,139,250,0.04);
+  border-left: 3px solid rgba(167,139,250,0.3);
+  border-radius: 0 6px 6px 0;
 }
 </style>

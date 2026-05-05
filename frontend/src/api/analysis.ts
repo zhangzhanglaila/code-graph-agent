@@ -165,6 +165,17 @@ export interface ExplainStepsResponse {
   loop_groups?: LoopGroup[]
 }
 
+export interface PatternNarrativeResponse {
+  success?: boolean
+  error?: string
+  pattern: string
+  dominant_property: string
+  properties: Record<string, { confidence: number; evidence_count: number; evidence_sample: string[] }>
+  narrative: string
+  complexity: string
+  property_names: string[]
+}
+
 export async function getExplainSteps(code: string, funcName = '', language = 'python', provider = 'mock', apiKey = '', sessionId = ''): Promise<ExplainStepsResponse> {
   const res = await fetch(`${API_BASE}/api/explain_steps`, {
     method: 'POST',
@@ -210,4 +221,73 @@ export async function getExplainStepFocus(
   const data = await res.json()
   if (!res.ok || data.success === false) return null
   return data.explanation || null
+}
+
+export async function getPatternNarrative(code: string, funcName = '', language = 'python', sessionId = ''): Promise<PatternNarrativeResponse | null> {
+  const res = await fetch(`${API_BASE}/api/pattern_narrative`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, language, session_id: sessionId }),
+  })
+  const data = await res.json()
+  if (!res.ok || data.success === false) return null
+  return data
+}
+
+export interface SubproblemGraphNode {
+  id: string
+  args: string[]
+  result: any
+  call_count: number
+}
+
+export interface SubproblemGraphEdge {
+  from: string
+  to: string
+}
+
+export interface SubproblemGraphLayout {
+  nodes: { id: string; x: number; y: number; label: string; result: any; call_count: number; is_reused: boolean }[]
+  edges: { from: string; to: string; from_pos: { x: number; y: number }; to_pos: { x: number; y: number } }[]
+  width: number
+  height: number
+  nodeW: number
+  nodeH: number
+}
+
+export interface SubproblemGraphResponse {
+  success?: boolean
+  error?: string
+  is_recursive: boolean
+  result?: any
+  dag?: {
+    nodes: SubproblemGraphNode[]
+    edges: SubproblemGraphEdge[]
+    unique_count: number
+    total_count: number
+  }
+  layout?: SubproblemGraphLayout
+  complexity?: {
+    recurrence: string
+    branching_factor: number
+    depth: number
+    without_cache: string
+    with_cache: string
+    speedup: string
+    total_calls: number
+    unique_calls: number
+    shared_subproblems: { id: string; called: number }[]
+  }
+  narrative?: string
+}
+
+export async function getSubproblemGraph(code: string, funcName = '', language = 'python'): Promise<SubproblemGraphResponse | null> {
+  const res = await fetch(`${API_BASE}/api/subproblem_graph`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, language }),
+  })
+  const data = await res.json()
+  if (!res.ok || data.success === false) return null
+  return data
 }

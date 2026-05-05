@@ -8,7 +8,7 @@ import GraphPanel from './components/GraphPanel.vue'
 import DSVizPanel from './components/DSVizPanel.vue'
 import ErrorToast from './components/ErrorToast.vue'
 import { useAnalysisStore } from './store/analysisStore'
-import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps } from './api/analysis'
+import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps, getPatternNarrative, getSubproblemGraph } from './api/analysis'
 
 const store = useAnalysisStore()
 
@@ -87,12 +87,27 @@ async function runAnalysis() {
       store.explainResult = results[3].value
     }
 
-    // Phase 2: step explanations (uses cached session)
+    // Phase 2: step explanations + pattern recognition + subproblem graph (uses cached session)
     if (store.sessionId) {
-      const stepsRes = await getExplainSteps(store.code, store.funcName, store.language, 'mock', '', store.sessionId)
-      store.stepExplanations = stepsRes.explanations
-      store.controlEdges = stepsRes.control_edges || []
-      store.loopGroups = stepsRes.loop_groups || []
+      const [stepsRes, patternRes, subgraphRes] = await Promise.allSettled([
+        getExplainSteps(store.code, store.funcName, store.language, 'mock', '', store.sessionId),
+        getPatternNarrative(store.code, store.funcName, store.language, store.sessionId),
+        getSubproblemGraph(store.code, store.funcName, store.language),
+      ])
+
+      if (stepsRes.status === 'fulfilled') {
+        store.stepExplanations = stepsRes.value.explanations
+        store.controlEdges = stepsRes.value.control_edges || []
+        store.loopGroups = stepsRes.value.loop_groups || []
+      }
+
+      if (patternRes.status === 'fulfilled' && patternRes.value) {
+        store.patternResult = patternRes.value
+      }
+
+      if (subgraphRes.status === 'fulfilled' && subgraphRes.value) {
+        store.subproblemGraph = subgraphRes.value
+      }
     }
 
     if (errors.length === 3) {
