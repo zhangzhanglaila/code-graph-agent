@@ -90,7 +90,9 @@ async function runAnalysis() {
     // Phase 2: step explanations (uses cached session)
     if (store.sessionId) {
       const stepsRes = await getExplainSteps(store.code, store.funcName, store.language, 'mock', '', store.sessionId)
-      store.stepExplanations = stepsRes
+      store.stepExplanations = stepsRes.explanations
+      store.controlEdges = stepsRes.control_edges || []
+      store.loopGroups = stepsRes.loop_groups || []
     }
 
     if (errors.length === 3) {

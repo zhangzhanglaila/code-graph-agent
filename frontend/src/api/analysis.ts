@@ -151,19 +151,33 @@ export interface StepExplanation {
   importance_percentile?: number
   importance_reasons: string[]
   importance_explanation?: string
+  affects?: number[]
   signals: { structural: number; dynamic: number; llm: number; future?: number }
   turning_point?: boolean
 }
 
-export async function getExplainSteps(code: string, funcName = '', language = 'python', provider = 'mock', apiKey = '', sessionId = ''): Promise<StepExplanation[]> {
+export interface ControlEdge { from: number; to: number; type: 'control' }
+export interface LoopGroup { line: number; steps: number[]; label: string }
+
+export interface ExplainStepsResponse {
+  explanations: StepExplanation[]
+  control_edges?: ControlEdge[]
+  loop_groups?: LoopGroup[]
+}
+
+export async function getExplainSteps(code: string, funcName = '', language = 'python', provider = 'mock', apiKey = '', sessionId = ''): Promise<ExplainStepsResponse> {
   const res = await fetch(`${API_BASE}/api/explain_steps`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language, provider, api_key: apiKey, session_id: sessionId }),
   })
   const data = await res.json()
-  if (!res.ok || data.success === false) return []
-  return data.explanations || []
+  if (!res.ok || data.success === false) return { explanations: [] }
+  return {
+    explanations: data.explanations || [],
+    control_edges: data.control_edges || [],
+    loop_groups: data.loop_groups || [],
+  }
 }
 
 export interface FocusedExplanation {
@@ -174,6 +188,7 @@ export interface FocusedExplanation {
   importance_percentile?: number
   importance_reasons: string[]
   importance_explanation?: string
+  affects?: number[]
   signals: { structural: number; dynamic: number; llm: number; future?: number }
   turning_point: boolean
   what_changed: string

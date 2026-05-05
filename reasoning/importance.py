@@ -10,7 +10,15 @@ Output: score 0-1 + reasons array
 
 from __future__ import annotations
 import ast
+import re
 from typing import Any, Dict, List, Optional, Tuple
+
+
+# ── Helpers ─────────────────────────────────────────────────────────
+
+def _var_in_code(var: str, code: str) -> bool:
+    """Check if var appears as a whole word in code (not substring)."""
+    return bool(re.search(r'\b' + re.escape(var) + r'\b', code))
 
 
 # ── Structural signals (AST-based) ──────────────────────────────────
@@ -356,10 +364,11 @@ def future_impact_score(
         if overlap:
             hit = True
 
-        # Code-level reference: var name appears in future code
+        # Code-level reference: var name appears in future code (whole word)
+        # Skip for single-char vars to avoid false positives (e.g. loop vars)
         if not hit:
             for var in changed_set:
-                if var in step_code:
+                if len(var) >= 2 and _var_in_code(var, step_code):
                     hit = True
                     break
 
@@ -446,6 +455,7 @@ def compute_importance(
         "label": label,
         "reasons": list(dict.fromkeys(all_reasons)),  # dedupe preserving order
         "explanation": explanation,
+        "affects": affects,
         "signals": {
             "structural": round(s_score, 3),
             "dynamic": round(d_score, 3),

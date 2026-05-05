@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { InsightResponse, AnalyzeResponse, DSVizResponse, ExplainResponse, StepExplanation, FocusedExplanation, StepData } from '../api/analysis'
+import type { InsightResponse, AnalyzeResponse, DSVizResponse, ExplainResponse, StepExplanation, FocusedExplanation, StepData, ControlEdge, LoopGroup } from '../api/analysis'
 
 interface HistoryEntry {
   id: string
@@ -50,6 +50,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const dsVizResult = ref<DSVizResponse | null>(null)
   const explainResult = ref<ExplainResponse | null>(null)
   const stepExplanations = ref<StepExplanation[]>([])
+  const controlEdges = ref<ControlEdge[]>([])
+  const loopGroups = ref<LoopGroup[]>([])
   const focusedExplanation = ref<FocusedExplanation | null>(null)
   const focusLoading = ref(false)
 
@@ -92,6 +94,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
     dsVizResult.value = null
     explainResult.value = null
     stepExplanations.value = []
+    controlEdges.value = []
+    loopGroups.value = []
     focusedExplanation.value = null
     sessionId.value = ''
     currentStep.value = 0
@@ -131,7 +135,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
     code, language, funcName,
     loading, error, activeTab,
     insightResult, analyzeResult, dsVizResult, explainResult,
-    stepExplanations, focusedExplanation, focusLoading, explainMode,
+    stepExplanations, controlEdges, loopGroups,
+    focusedExplanation, focusLoading, explainMode,
     sessionId, showAllSteps, importantSteps,
     currentStep, isPlaying, playSpeed,
     history,

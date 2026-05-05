@@ -141,6 +141,96 @@ def _write_temp_code(code: str, language: str) -> str:
     return tmp.name
 
 
+def _compute_control_edges(steps_data: list) -> list:
+    """Compute control flow edges from the timeline.
+
+    For each if/for/while step, find the steps inside its body
+    (deeper indentation, consecutive) and create control edges.
+    """
+    import ast as _ast
+    edges = []
+    stack = []  # (step_index, indent_level)
+
+    for i, step in enumerate(steps_data):
+        code = step.get("code", "").rstrip()
+        if not code:
+            continue
+
+        indent = len(code) - len(code.lstrip())
+        code_stripped = code.lstrip()
+
+        # Pop stack when indentation decreases
+        while stack and stack[-1][1] >= indent:
+            stack.pop()
+
+        # If we're inside a control structure, add edge from that structure to us
+        if stack:
+            parent_idx = stack[-1][0]
+            # Only add if not already a data edge (avoid duplicates later)
+            edges.append({"from": parent_idx, "to": step["index"], "type": "control"})
+
+        # Detect control structures
+        is_control = False
+        for prefix in ("if ", "elif ", "for ", "while ", "try:", "except ", "else:"):
+            if code_stripped.startswith(prefix):
+                is_control = True
+                break
+
+        if is_control:
+            stack.append((step["index"], indent))
+
+    return edges
+
+
+def _compute_loop_groups(steps_data: list) -> list:
+    """Detect loop iteration groups — consecutive steps from the same source line.
+
+    Returns list of {line, steps: [step_indices], label: "iteration N"}.
+    """
+    if not steps_data:
+        return []
+
+    groups = []
+    current_line = None
+    current_steps = []
+    iteration = 0
+
+    for step in steps_data:
+        line = step.get("line", 0)
+        code = step.get("code", "").lstrip()
+
+        # Detect loop headers
+        is_loop_header = any(code.startswith(p) for p in ("for ", "while "))
+
+        if line == current_line and not is_loop_header:
+            # Same source line — part of same iteration group
+            current_steps.append(step["index"])
+        else:
+            # New line or loop header
+            if current_steps and len(current_steps) >= 3:
+                # Only group if 3+ steps from same line (actual loop body)
+                groups.append({
+                    "line": current_line,
+                    "steps": current_steps,
+                    "label": f"iteration {iteration}",
+                })
+                iteration += 1
+            elif current_steps:
+                iteration = 0
+            current_line = line
+            current_steps = [step["index"]]
+
+    # Final group
+    if current_steps and len(current_steps) >= 3:
+        groups.append({
+            "line": current_line,
+            "steps": current_steps,
+            "label": f"iteration {iteration}",
+        })
+
+    return groups
+
+
 def _extract_func_name(code: str, func_name: str) -> str:
     """Extract function name from code if not provided."""
     if func_name:
@@ -585,6 +675,7 @@ async def explain_steps(req: ExplainStepsRequest):
                 "importance_score": hybrid["score"],
                 "importance_reasons": hybrid["reasons"],
                 "importance_explanation": hybrid.get("explanation", ""),
+                "affects": hybrid.get("affects", []),
                 "signals": hybrid["signals"],
                 "turning_point": llm.get("turning_point", False),
             })
@@ -598,9 +689,15 @@ async def explain_steps(req: ExplainStepsRequest):
                     sum(1 for s in scores if s <= e["importance_score"]) / n, 3
                 )
 
+        # Control flow edges + loop folding
+        cf_edges = _compute_control_edges(steps_data)
+        loop_groups = _compute_loop_groups(steps_data)
+
         return {
             "success": True,
             "explanations": enriched,
+            "control_edges": cf_edges,
+            "loop_groups": loop_groups,
             "total_steps": len(steps_data),
         }
     except Exception as e:
@@ -682,6 +779,7 @@ async def explain_step_focus(req: ExplainStepFocusRequest):
         explanation["importance_score"] = hybrid["score"]
         explanation["importance_reasons"] = hybrid["reasons"]
         explanation["importance_explanation"] = hybrid.get("explanation", "")
+        explanation["affects"] = hybrid.get("affects", [])
         explanation["signals"] = hybrid["signals"]
         explanation["importance"] = hybrid["label"]
 
