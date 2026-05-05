@@ -1359,40 +1359,88 @@ def _build_subproblem_dag(root):
     return dag_nodes, dag_edges, len(all_nodes), total_count[0]
 
 
-def _derive_complexity_from_dag(dag_nodes, dag_edges, total_count, unique_count):
-    """Symbolic recurrence engine: extract parameter deltas from DAG edges,
-    build the actual recurrence relation, and derive exact complexity.
+def _infer_problem_size(args):
+    """Infer problem size from function arguments (State Abstraction Layer).
 
-    Returns: {
-        'recurrence': str,
-        'recurrence_terms': list[str],
-        'branching_factor': float,
-        'depth': int,
-        'without_cache': str,
-        'with_cache': str,
-        'speedup': str,
-        'explanation': str,
-    }
+    Maps raw args to a single numeric state representing the "problem size"
+    that the recurrence operates on.
+
+    Rules:
+    - Single numeric arg -> that value (fib(n) -> n)
+    - Two numeric args -> absolute difference (binary_search lo,hi -> hi-lo)
+    - List arg -> length (merge_sort(arr) -> len(arr))
+    - 3+ numeric args -> largest range pair
+    """
+    numeric_args = [a for a in args if isinstance(a, (int, float))]
+
+    # Check for list arguments (actual lists or string representations)
+    # Only use list length when there are NO numeric args (e.g., merge_sort(arr))
+    # When numeric args exist, they represent the recursion parameters (e.g., bs(arr, lo, hi))
+    for a in args:
+        if isinstance(a, (list, tuple)):
+            if len(numeric_args) == 0:
+                return len(a)
+        if isinstance(a, str) and a.startswith('[') and a.endswith(']'):
+            if len(numeric_args) == 0:
+                inner = a[1:-1].strip()
+                if not inner:
+                    return 0
+                return inner.count(',') + 1
+
+    if len(numeric_args) == 0:
+        return None
+
+    if len(numeric_args) == 1:
+        return numeric_args[0]
+
+    if len(numeric_args) == 2:
+        a, b = numeric_args
+        if a < b:
+            return b - a
+        return max(a, b)
+
+    if len(numeric_args) >= 3:
+        # For functions like bs(arr, target, lo, hi) or partition(arr, lo, hi),
+        # the last two args are typically the bounds that define problem size.
+        lo, hi = numeric_args[-2], numeric_args[-1]
+        last_pair_range = abs(hi - lo)
+        if last_pair_range > 0:
+            return last_pair_range
+        return max(numeric_args)
+
+    return None
+
+
+def _derive_complexity_from_dag(dag_nodes, dag_edges, total_count, unique_count):
+    """State-based symbolic recurrence engine.
+
+    Instead of analyzing raw arg deltas, this:
+    1. Infers "problem size" (state) from each node's arguments
+    2. Computes state transitions (delta and ratio) along DAG edges
+    3. Constructs the recurrence from state transitions (not statistics)
+    4. Derives complexity from the recurrence structure
+
+    Returns dict with recurrence, terms, state_size, complexity, explanation.
     """
     import re as _re
+    import statistics
 
     if not dag_nodes:
-        return {'recurrence': 'T(n) = O(1)', 'without_cache': 'O(1)', 'with_cache': 'O(1)', 'speedup': 'none',
-                'explanation': 'Constant work.', 'recurrence_terms': []}
+        return {"recurrence": "T(n) = O(1)", "without_cache": "O(1)", "with_cache": "O(1)",
+                "speedup": "none", "explanation": "Constant work.", "recurrence_terms": [],
+                "state_size": "none"}
 
-    # Find root
-    targets = set(e['to'] for e in dag_edges)
-    roots = [n for n in dag_nodes if n['id'] not in targets]
+    targets = set(e["to"] for e in dag_edges)
+    roots = [n for n in dag_nodes if n["id"] not in targets]
     root = roots[0] if roots else dag_nodes[0]
 
     children_map = {}
     for e in dag_edges:
-        children_map.setdefault(e['from'], []).append(e['to'])
+        children_map.setdefault(e["from"], []).append(e["to"])
 
-    # Compute depth
     max_depth = 0
-    node_depths = {root['id']: 0}
-    queue = [root['id']]
+    node_depths = {root["id"]: 0}
+    queue = [root["id"]]
     while queue:
         current = queue.pop(0)
         d = node_depths[current]
@@ -1402,252 +1450,523 @@ def _derive_complexity_from_dag(dag_nodes, dag_edges, total_count, unique_count)
                 node_depths[child] = d + 1
                 queue.append(child)
 
-    shared_nodes = [n for n in dag_nodes if n['call_count'] > 1]
+    shared_nodes = [n for n in dag_nodes if n["call_count"] > 1]
     has_reuse = len(shared_nodes) > 0
 
-    # ── Step 1: Parse arguments from node IDs ─────────────────────────
-    # "fib(5)" → [5], "binary_search(arr, 15, 0, 20)" → [15, 0, 20]
-    node_args = {}  # node_id → list of int args
-    func_name = root['id'].split('(')[0] if '(' in root['id'] else ''
+    # Step 1: Parse arguments from node IDs
+    node_args = {}
+    func_name = root["id"].split("(")[0] if "(" in root["id"] else ""
 
     for node in dag_nodes:
-        nid = node['id']
-        match = _re.search(r'\(([^)]*)\)\s*$', nid)
+        nid = node["id"]
+        match = _re.search(r"\((.+)\)\s*$", nid)
         if match:
             args_str = match.group(1)
             args = []
-            for part in args_str.split(','):
+            # Bracket-aware splitting: don't split commas inside [...] or (...)
+            tokens = []
+            depth = 0
+            current = ""
+            for ch in args_str:
+                if ch in '([':
+                    depth += 1
+                    current += ch
+                elif ch in ')]':
+                    depth -= 1
+                    current += ch
+                elif ch == ',' and depth == 0:
+                    tokens.append(current)
+                    current = ""
+                else:
+                    current += ch
+            if current:
+                tokens.append(current)
+            for part in tokens:
                 part = part.strip()
+                if not part:
+                    continue
+                if part.startswith('[') and part.endswith(']'):
+                    args.append(part)
+                    continue
                 try:
                     args.append(int(part))
                 except ValueError:
                     try:
                         args.append(float(part))
                     except ValueError:
-                        pass  # non-numeric arg (e.g. list), skip
+                        args.append(part)
             if args:
                 node_args[nid] = args
 
-    # ── Step 2: Extract parameter deltas from DAG edges ───────────────
-    # For each edge parent→child, compute delta = child_args - parent_args
-    # Also detect range patterns (binary search) and list splitting (merge sort)
+    # Step 2: Infer problem size (state) for each node
+    node_state = {}
+    state_inference = "none"
 
-    parent_children_deltas = {}  # parent_id → { arg_pos → [deltas] }
-    arg_deltas = {}  # arg_position → list of all deltas
-    proportional_deltas = {}  # arg_position → list of (child/parent) ratios
+    for nid, args in node_args.items():
+        size = _infer_problem_size(args)
+        if size is not None:
+            node_state[nid] = size
 
-    # Range pattern detection: for each parent, look at pairs of args that form ranges
-    # e.g., (lo, hi) → detect if children get (lo, mid) and (mid+1, hi)
-    range_split_evidence = []  # list of (parent_range, child_ranges)
+    if node_state:
+        root_state = node_state.get(root["id"])
+        root_args = node_args.get(root["id"], [])
+        numeric_args = [a for a in root_args if isinstance(a, (int, float))]
+        if len(numeric_args) == 1:
+            state_inference = f"single arg ({numeric_args[0]})"
+        elif len(numeric_args) == 2 and root_state == abs(numeric_args[1] - numeric_args[0]):
+            state_inference = f"range: |{numeric_args[1]} - {numeric_args[0]}| = {root_state}"
+        elif len(numeric_args) >= 3:
+            state_inference = f"last pair range: |{numeric_args[-1]} - {numeric_args[-2]}| = {root_state}"
+        else:
+            state_inference = f"inferred = {root_state}"
+
+    # Step 3: Compute state transitions along DAG edges
+    state_deltas = []
 
     for edge in dag_edges:
-        parent_id, child_id = edge['from'], edge['to']
-        p_args = node_args.get(parent_id)
-        c_args = node_args.get(child_id)
-        if not p_args or not c_args:
-            continue
+        parent_id, child_id = edge["from"], edge["to"]
+        ps = node_state.get(parent_id)
+        cs = node_state.get(child_id)
+        if ps is not None and cs is not None:
+            delta = cs - ps
+            ratio = cs / ps if ps != 0 else None
+            state_deltas.append((ps, cs, delta, ratio))
 
-        num_args = min(len(p_args), len(c_args))
-        for i in range(num_args):
-            pa, ca = p_args[i], c_args[i]
-            if isinstance(pa, (int, float)) and isinstance(ca, (int, float)):
-                delta = ca - pa
-                arg_deltas.setdefault(i, []).append(delta)
-                parent_children_deltas.setdefault(parent_id, {}).setdefault(i, []).append(delta)
-                if pa != 0:
-                    proportional_deltas.setdefault(i, []).append(ca / pa)
-
-        # Detect range splitting: check if (arg[i], arg[j]) pair is being split
-        for i in range(num_args):
-            for j in range(i + 1, num_args):
-                pa_i, pa_j = p_args[i], p_args[j]
-                ca_i, ca_j = c_args[i], c_args[j]
-                if isinstance(pa_i, (int, float)) and isinstance(pa_j, (int, float)):
-                    parent_range = pa_j - pa_i
-                    child_range = ca_j - ca_i
-                    if parent_range > 0 and 0 < child_range < parent_range:
-                        ratio = child_range / parent_range
-                        range_split_evidence.append({
-                            'parent_id': parent_id, 'child_id': child_id,
-                            'parent_range': parent_range, 'child_range': child_range,
-                            'ratio': ratio, 'arg_pair': (i, j),
-                        })
-
-    # ── Step 3: Build symbolic recurrence from deltas ─────────────────
-    # Strategy: for each arg position, look at what deltas each parent produces.
-    # If most parents produce the SAME set of deltas, those are the recurrence terms.
-    # Example: fib(8)→{fib(7): delta=-1, fib(6): delta=-2} → terms T(n-1) + T(n-2)
-
+    # Step 4: Construct recurrence from state transitions
     from collections import Counter
 
+    parent_transitions = {}
+    for ps, cs, delta, ratio in state_deltas:
+        parent_transitions.setdefault(ps, set()).add((delta, round(ratio, 4) if ratio else None))
+
     recurrence_terms = []
-    delta_summary = {}
+    state_size_desc = state_inference
+    recursion_pattern = "unknown"
+    shrink_class = "none"
+    execution_type = "unknown"
 
-    # First check for range splitting patterns (binary search, etc.)
-    if range_split_evidence:
-        ratios = [e['ratio'] for e in range_split_evidence]
-        ratio_counts = Counter(round(r, 2) for r in ratios)
-        most_common_ratio, ratio_count = ratio_counts.most_common(1)[0]
-        ratio_freq = ratio_count / len(ratios)
-
-        if ratio_freq >= 0.5 and 0.3 < most_common_ratio < 0.7:
-            # Halving pattern: each call reduces the range by ~50%
-            recurrence_terms.append("T(n/2)")
-
-    # Then check for simple delta patterns (fibonacci, countdown, etc.)
-    # Skip if we already found a range split (avoid noise from non-size args like lo/hi)
-    has_range_split = len(recurrence_terms) > 0
-
-    if not has_range_split:
-      for pos in arg_deltas:
-        if not arg_deltas[pos]:
-          continue
-
-        # Collect the SET of unique deltas each parent produces for this arg position
-        parent_delta_sets = []
-        for pid, pos_deltas in parent_children_deltas.items():
-          if pos in pos_deltas:
-            parent_delta_sets.append(tuple(sorted(set(pos_deltas[pos]))))
-
-        if not parent_delta_sets:
-          continue
-
-        # Find the most common delta SET (what most parents produce)
-        set_counts = Counter(parent_delta_sets)
-        most_common_set, set_count = set_counts.most_common(1)[0]
-        set_freq = set_count / len(parent_delta_sets)
-
-        # If the same delta set appears in most parents, use it as recurrence terms
-        if set_freq >= 0.5:
-          for delta in most_common_set:
-            if delta == -1:
-              term = "T(n-1)"
-            elif delta == -2:
-              term = "T(n-2)"
-            elif delta < 0:
-              term = f"T(n{delta:+g})".replace("+", "")
-            elif delta > 0:
-              term = f"T(n+{delta:g})"
-            else:
-              term = "T(n)"
-            if term not in recurrence_terms:
-              recurrence_terms.append(term)
+    # Step 3.5: Detect AND vs OR recursion via call tree structure
+    # AND = both children execute (merge sort), OR = choose one (binary search)
+    # Heuristic: in AND recursion, most internal nodes have >1 child (branching)
+    # In OR recursion, many nodes have only 1 child (linear path with dead branches)
+    root_node = roots[0] if roots else dag_nodes[0]
+    root_children = children_map.get(root_node["id"], [])
+    non_leaf_nodes = [n for n in dag_nodes if children_map.get(n["id"])]
+    multi_child_nodes = [n for n in non_leaf_nodes if len(children_map.get(n["id"], [])) > 1]
+    if non_leaf_nodes:
+        multi_child_ratio = len(multi_child_nodes) / len(non_leaf_nodes)
+        avg_children_count = sum(len(children_map.get(n["id"], [])) for n in non_leaf_nodes) / len(non_leaf_nodes)
+        # AND: most nodes branch (merge sort: every level splits)
+        # OR: few nodes branch (binary search: only root + some intermediates)
+        if multi_child_ratio >= 0.5 and avg_children_count >= 1.8:
+            execution_type = "AND"
         else:
-          # Fallback: use individual delta frequencies
-          delta_counts = Counter(arg_deltas[pos])
-          for delta, count in delta_counts.most_common(2):
-            freq = count / len(arg_deltas[pos])
-            if freq >= 0.4:
-              if delta == -1:
-                term = "T(n-1)"
-              elif delta == -2:
-                term = "T(n-2)"
-              elif delta < 0:
-                term = f"T(n{delta:+g})".replace("+", "")
-              elif delta > 0:
-                term = f"T(n+{delta:g})"
-              else:
-                term = "T(n)"
-              if term not in recurrence_terms:
-                recurrence_terms.append(term)
+            execution_type = "OR"
+
+    if parent_transitions:
+        # Collect all child deltas and ratios across all transitions
+        all_deltas = []
+        all_ratios = []
+        for ps, transitions in parent_transitions.items():
+            for d, r in transitions:
+                all_deltas.append(d)
+                if r is not None and 0 < r < 1:
+                    all_ratios.append(r)
+
+        unique_deltas = set(all_deltas)
+        has_delta_minus_1 = -1 in unique_deltas
+        has_delta_minus_2 = -2 in unique_deltas
+
+        # 1. Identify shrink class via median ratio (transfer function family)
+        if all_ratios:
+            median_r = statistics.median(all_ratios)
+
+            if 0.4 <= median_r <= 0.6:
+                shrink_class = "n/2"
+            elif 0.2 <= median_r < 0.4:
+                shrink_class = "n/3"
+
+        # 2. Build recurrence terms from shrink class + execution type
+        if shrink_class == "n/2":
+            if execution_type == "AND":
+                # Merge sort pattern: both branches execute
+                child_count = len(root_children) if root_children else 2
+                recurrence_terms.append(f"{child_count}T(n/2)")
+                recursion_pattern = "divide_and_conquer"
+            else:
+                recurrence_terms.append("T(n/2)")
+                recursion_pattern = "binary_search"
+        elif shrink_class == "n/3":
+            if execution_type == "AND":
+                child_count = len(root_children) if root_children else 3
+                recurrence_terms.append(f"{child_count}T(n/3)")
+                recursion_pattern = "divide_and_conquer"
+            else:
+                recurrence_terms.append("T(n/3)")
+                recursion_pattern = "binary_search"
+
+        # 3. Check delta-based patterns (Fibonacci, countdown, constant decrement)
+        if not recurrence_terms:
+            if has_delta_minus_1 and has_delta_minus_2:
+                recurrence_terms.append("T(n-1)")
+                recurrence_terms.append("T(n-2)")
+                recursion_pattern = "tree_recursion"
+            elif has_delta_minus_1 and len(unique_deltas) == 1:
+                recurrence_terms.append("T(n-1)")
+                recursion_pattern = "linear_recursion"
+            elif any(d < -1 for d in unique_deltas):
+                for d in sorted(unique_deltas):
+                    if d < 0:
+                        recurrence_terms.append(f"T(n{d:+g})".replace("+", ""))
+                recursion_pattern = "linear_recursion"
+
+        # If no ratio pattern, use delta-based terms
+        if not recurrence_terms:
+            delta_signature = Counter()
+            for ps, transitions in parent_transitions.items():
+                deltas = tuple(sorted(set(d for d, r in transitions)))
+                delta_signature[deltas] += 1
+
+            most_common_deltas, count = delta_signature.most_common(1)[0]
+            for delta in most_common_deltas:
+                if delta == -1:
+                    recurrence_terms.append("T(n-1)")
+                elif delta == -2:
+                    recurrence_terms.append("T(n-2)")
+                elif delta < 0:
+                    recurrence_terms.append(f"T(n{delta:+g})".replace("+", ""))
+                elif delta > 0:
+                    recurrence_terms.append(f"T(n+{delta:g})")
+            recursion_pattern = "linear_recursion"
+
+    # Filter out T(n) self-loops when other terms exist
+    if "T(n)" in recurrence_terms and len(recurrence_terms) > 1:
+        recurrence_terms = [t for t in recurrence_terms if t != "T(n)"]
 
     unique_terms = recurrence_terms
 
-    # ── Step 4: Classify complexity ───────────────────────────────────
-    has_t_n_minus_1 = any('n-1' in t for t in unique_terms)
-    has_t_n_minus_2 = any('n-2' in t for t in unique_terms)
-    has_t_n_div_2 = any('n/2' in t for t in unique_terms)
-    has_t_rn = any('·n)' in t for t in unique_terms)
+    # Step 5: Classify complexity from recurrence structure
+    has_t_n_minus_1 = any("n-1" in t for t in unique_terms)
+    has_t_n_minus_2 = any("n-2" in t for t in unique_terms)
+    has_t_n_div_2 = any("n/2" in t for t in unique_terms)
+    has_t_n_div_3 = any("n/3" in t for t in unique_terms)
 
-    # Average branching factor for the recurrence RHS
-    non_leaf = [n for n in dag_nodes if children_map.get(n['id'])]
-    avg_branch = sum(len(children_map.get(n['id'], [])) for n in non_leaf) / max(len(non_leaf), 1)
+    # Extract coefficient from terms like "2T(n/2)"
+    dc_coeff = 1
+    for t in unique_terms:
+        m = _re.match(r"(\d+)T\(n/\d+\)", t)
+        if m:
+            dc_coeff = int(m.group(1))
+            break
 
-    # Build recurrence string
+    non_leaf = [n for n in dag_nodes if children_map.get(n["id"])]
+    avg_branch = sum(len(children_map.get(n["id"], [])) for n in non_leaf) / max(len(non_leaf), 1)
+
     if unique_terms:
-        rhs = ' + '.join(unique_terms)
+        rhs = " + ".join(unique_terms)
         recurrence = f"T(n) = {rhs}"
-    elif avg_branch > 0:
-        recurrence = f"T(n) = O(1) per step ({avg_branch:.1f} avg children)"
     else:
         recurrence = "T(n) = O(1)"
 
-    # Classify without-cache complexity
     if has_t_n_minus_1 and has_t_n_minus_2:
-        # Fibonacci-like: T(n) = T(n-1) + T(n-2) → O(φ^n) ≈ O(1.618^n)
-        complexity_class = f"O(phi^n) ~ O(1.618^n)"
+        complexity_class = "O(phi^n) ~ O(1.618^n)"
         explanation = (
-            f"T(n) = T(n-1) + T(n-2) is the Fibonacci recurrence. "
-            f"Its characteristic equation x^2 = x + 1 has root phi ~ 1.618, "
-            f"so the solution grows as O(phi^n) -- exponential."
+            "T(n) = T(n-1) + T(n-2) defines the Fibonacci recurrence. "
+            "The characteristic equation is x^2 = x + 1, with dominant root "
+            "phi = (1+sqrt(5))/2 ~ 1.618. The solution grows as O(phi^n)."
         )
-    elif unique_terms and has_t_n_div_2:
-        # Binary search: T(n) = T(n/2) → O(log n)
-        complexity_class = "O(log n)"
-        explanation = (
-            f"Each recursive call halves the problem size. "
-            f"After k calls the size is n/2^k. Setting n/2^k = 1 gives k = log₂(n), "
-            f"so T(n) = O(log n)."
-        )
-    elif unique_terms and has_t_rn:
-        # Proportional reduction
-        ratio = list(delta_summary.values())[0].get('ratio', 0.5)
-        complexity_class = f"O(log_{1/ratio:.1f}(n)) = O(log n)"
-        explanation = f"Each call reduces the problem by factor {ratio:.2f}, giving logarithmic depth."
+    elif has_t_n_div_2:
+        if dc_coeff > 1:
+            # Master Theorem: aT(n/b) with a > 1
+            import math
+            exponent = math.log(dc_coeff) / math.log(2)
+            if abs(exponent - round(exponent)) < 0.01:
+                exponent = round(exponent)
+            if exponent == 1:
+                complexity_class = "O(n log n)"
+                explanation = (
+                    f"T(n) = {dc_coeff}T(n/2) splits into {dc_coeff} subproblems of size n/2. "
+                    f"By the Master Theorem, a=b=2, so T(n) = O(n log n)."
+                )
+            else:
+                complexity_class = f"O(n^{exponent:.2f})"
+                explanation = (
+                    f"T(n) = {dc_coeff}T(n/2) splits into {dc_coeff} subproblems of size n/2. "
+                    f"By the Master Theorem, T(n) = O(n^(log_2({dc_coeff}))) = O(n^{exponent:.2f})."
+                )
+        else:
+            complexity_class = "O(log n)"
+            explanation = (
+                "T(n) = T(n/2) means each call halves the problem size. "
+                "After k levels, size is n/2^k = 1 when k = log_2(n), so T(n) = O(log n)."
+            )
+    elif has_t_n_div_3:
+        if dc_coeff > 1:
+            import math
+            exponent = math.log(dc_coeff) / math.log(3)
+            complexity_class = f"O(n^{exponent:.2f})"
+            explanation = (
+                f"T(n) = {dc_coeff}T(n/3) splits into {dc_coeff} subproblems of size n/3. "
+                f"By the Master Theorem, T(n) = O(n^(log_3({dc_coeff}))) = O(n^{exponent:.2f})."
+            )
+        else:
+            complexity_class = "O(log n)"
+            explanation = (
+                "T(n) = T(n/3) means each call thirds the problem size. "
+                "After k levels, size is n/3^k = 1 when k = log_3(n), so T(n) = O(log n)."
+            )
     elif has_t_n_minus_1 and len(unique_terms) == 1:
-        # Linear recursion: T(n) = T(n-1) + O(1) → O(n)
         complexity_class = "O(n)"
-        explanation = f"Each call reduces n by 1, making exactly n recursive calls — linear."
-    elif len(unique_terms) >= 2 and has_t_n_minus_1:
-        # Multiple branches from T(n-1)-like terms
-        complexity_class = f"O({len(unique_terms)}^n)"
         explanation = (
-            f"Each call spawns {len(unique_terms)} subcalls, each reducing n by a constant. "
-            f"The call tree has branching factor {len(unique_terms)}, giving exponential growth."
+            "T(n) = T(n-1) + c reduces n by 1 each call. "
+            "The recursion makes n calls, each O(1), giving T(n) = O(n)."
         )
-    elif avg_branch >= 1.5:
-        complexity_class = f"O({avg_branch:.0f}^n)"
+    elif len(unique_terms) >= 2:
+        num_terms = len(unique_terms)
+        complexity_class = f"O({num_terms}^n)"
         explanation = (
-            f"Average branching factor is {avg_branch:.1f}. "
-            f"Without memoization, the call tree grows exponentially."
+            f"T(n) = {' + '.join(unique_terms)} has {num_terms} recursive branches. "
+            f"The call tree grows as {num_terms}^n, which is exponential."
         )
     else:
-        complexity_class = f"O(n)"
-        explanation = "Linear recursion with constant work per call."
+        complexity_class = "O(n)"
+        explanation = "The recurrence reduces the problem by a constant each call."
 
-    # With-cache complexity
     if has_reuse:
-        with_cache = f"O(n) — only {unique_count} unique subproblems solved once"
+        with_cache = f"O(n) -- {unique_count} unique subproblems solved once"
         speedup = f"{total_count / max(unique_count, 1):.1f}x fewer computations with caching"
     elif total_count > unique_count:
-        with_cache = f"O(n) — {unique_count} unique subproblems"
+        with_cache = f"O(n) -- {unique_count} unique subproblems"
         speedup = "some reuse detected"
     else:
-        with_cache = f"O(n) — already optimal"
+        with_cache = "O(n) -- already optimal"
         speedup = "no overlapping subproblems"
 
+    # Step 6: Generate semantic explanation (the "why" narrative)
+    semantic_lines = []
+    if recursion_pattern == "divide_and_conquer":
+        b = 2 if has_t_n_div_2 else 3
+        semantic_lines.append(f"This is a divide-and-conquer algorithm.")
+        semantic_lines.append(f"Each call splits into {dc_coeff} subproblem(s) of size n/{b}.")
+        if execution_type == "AND":
+            semantic_lines.append(f"Execution: AND — all {dc_coeff} branches execute independently.")
+        else:
+            semantic_lines.append(f"Execution: OR — only one branch is explored per call.")
+        semantic_lines.append(f"Therefore: T(n) = {recurrence.split(' = ')[1]}")
+        semantic_lines.append(f"By the Master Theorem → {complexity_class}")
+    elif recursion_pattern == "binary_search":
+        semantic_lines.append(f"This is a search algorithm with halving.")
+        semantic_lines.append(f"Each call halves the search space (n → n/2).")
+        semantic_lines.append(f"Execution: OR — only one branch is explored per call.")
+        semantic_lines.append(f"Therefore: T(n) = T(n/2)")
+        semantic_lines.append(f"After log_2(n) levels, the search space is exhausted → O(log n)")
+    elif recursion_pattern == "tree_recursion":
+        semantic_lines.append(f"This is tree recursion with multiple recursive branches.")
+        terms_desc = " + ".join(unique_terms)
+        semantic_lines.append(f"Each call spawns: {terms_desc}")
+        semantic_lines.append(f"Execution: AND — all branches execute, then results combine.")
+        semantic_lines.append(f"The call tree grows exponentially → {complexity_class}")
+    elif recursion_pattern == "linear_recursion":
+        semantic_lines.append(f"This is linear recursion.")
+        semantic_lines.append(f"Each call reduces the problem by a constant step.")
+        semantic_lines.append(f"Execution: OR — single chain of calls, no branching.")
+        semantic_lines.append(f"Therefore: {recurrence}, which makes {total_count} calls → {complexity_class}")
+    else:
+        semantic_lines.append(explanation)
+
+    semantic_explanation = "\n".join(semantic_lines)
+
     return {
-        'recurrence': recurrence,
-        'recurrence_terms': unique_terms,
-        'branching_factor': round(avg_branch, 1),
-        'depth': max_depth,
-        'without_cache': complexity_class + f" — {total_count} calls for {unique_count} unique subproblems",
-        'with_cache': with_cache,
-        'speedup': speedup,
-        'total_calls': total_count,
-        'unique_calls': unique_count,
-        'shared_subproblems': [{'id': n['id'], 'called': n['call_count']} for n in shared_nodes[:10]],
-        'explanation': explanation,
+        "recurrence": recurrence,
+        "recurrence_terms": unique_terms,
+        "state_size": state_size_desc,
+        "depth": max_depth,
+        "without_cache": complexity_class + f" -- {total_count} calls for {unique_count} unique subproblems",
+        "with_cache": with_cache,
+        "speedup": speedup,
+        "total_calls": total_count,
+        "unique_calls": unique_count,
+        "shared_subproblems": [{"id": n["id"], "called": n["call_count"]} for n in shared_nodes[:10]],
+        "explanation": explanation,
+        "semantic_explanation": semantic_explanation,
+        # Semantic output
+        "pattern": recursion_pattern,
+        "shrink": shrink_class,
+        "execution": execution_type,
+        "branching_factor": round(avg_branch, 1),
+        "median_ratio": round(statistics.median(all_ratios), 3) if all_ratios else None,
     }
+
+
+def _detect_combine_operation(code: str, func_name: str) -> dict:
+    """Detect how child results are combined in a recursive function.
+
+    Returns dict with:
+      - operation: "add" | "subtract" | "multiply" | "max" | "min" | "concat" | "merge" | "unknown"
+      - operation_label: human-readable label for UI
+      - pattern_hint: detected algorithm pattern (fibonacci, merge_sort, etc.)
+      - pattern_description: one-line description
+    """
+    import ast as _ast
+
+    result = {
+        "operation": "unknown",
+        "operation_label": "Combine",
+        "pattern_hint": None,
+        "pattern_description": None,
+    }
+
+    try:
+        tree = _ast.parse(code)
+    except SyntaxError:
+        return result
+
+    # Find the function
+    func_node = None
+    for node in _ast.walk(tree):
+        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            if node.name == func_name:
+                func_node = node
+                break
+    if not func_node:
+        return result
+
+    # Find return statements
+    returns = []
+    for node in _ast.walk(func_node):
+        if isinstance(node, _ast.Return) and node.value:
+            returns.append(node.value)
+
+    if not returns:
+        return result
+
+    # Analyze the most complex return expression
+    def _classify_expr(node):
+        """Recursively classify a return expression."""
+        if isinstance(node, _ast.BinOp):
+            if isinstance(node.op, _ast.Add):
+                return "add"
+            if isinstance(node.op, _ast.Sub):
+                return "subtract"
+            if isinstance(node.op, _ast.Mult):
+                return "multiply"
+            if isinstance(node.op, _ast.Div):
+                return "divide"
+            if isinstance(node.op, _ast.FloorDiv):
+                return "divide"
+        if isinstance(node, _ast.Call):
+            if isinstance(node.func, _ast.Attribute):
+                method = node.func.attr
+                if method in ('extend', 'append', 'insert'):
+                    return "concat"
+                if method in ('update', 'add'):
+                    return "merge"
+            # max(a, b) / min(a, b)
+            if isinstance(node.func, _ast.Name):
+                if node.func.id == 'max':
+                    return "max"
+                if node.func.id == 'min':
+                    return "min"
+                if node.func.id == 'sorted':
+                    return "merge"
+                if node.func.id in ('zip', 'map', 'filter'):
+                    return "concat"
+        if isinstance(node, _ast.ListComp):
+            return "concat"
+        if isinstance(node, _ast.BoolOp):
+            if isinstance(node.op, _ast.And):
+                return "and"
+            if isinstance(node.op, _ast.Or):
+                return "or"
+        return None
+
+    # Check all returns, pick the one with recursive calls
+    best_op = None
+    for ret_node in returns:
+        op = _classify_expr(ret_node)
+        if op:
+            best_op = op
+            break
+        # Check children (e.g., return f(x) + g(y))
+        for child in _ast.walk(ret_node):
+            if child is ret_node:
+                continue
+            op = _classify_expr(child)
+            if op:
+                best_op = op
+                break
+        if best_op:
+            break
+
+    if not best_op:
+        # Heuristic: check code patterns
+        code_lower = code.lower()
+        if '+' in code and func_name.lower() in code_lower:
+            best_op = "add"
+        elif 'merge' in code_lower or 'extend' in code_lower:
+            best_op = "merge"
+        elif 'max(' in code_lower:
+            best_op = "max"
+        elif 'min(' in code_lower:
+            best_op = "min"
+        elif 'sorted(' in code_lower:
+            best_op = "merge"
+
+    operation_labels = {
+        "add": "ADD",
+        "subtract": "SUBTRACT",
+        "multiply": "MULTIPLY",
+        "divide": "DIVIDE",
+        "max": "MAX",
+        "min": "MIN",
+        "concat": "CONCAT",
+        "merge": "MERGE",
+        "and": "AND",
+        "or": "OR",
+    }
+
+    result["operation"] = best_op or "unknown"
+    result["operation_label"] = operation_labels.get(best_op, "COMBINE")
+
+    # Pattern detection from operation + code hints
+    code_lower = code.lower()
+    func_lower = func_name.lower()
+
+    if best_op == "add" and ('fib' in func_lower or 'fibonacci' in code_lower):
+        result["pattern_hint"] = "fibonacci"
+        result["pattern_description"] = "Fibonacci recurrence: each call splits into two smaller calls, results sum"
+    elif best_op == "merge" or (best_op == "concat" and 'sort' in code_lower):
+        result["pattern_hint"] = "merge_sort"
+        result["pattern_description"] = "Divide & Conquer: split problem, solve both halves, merge results"
+    elif ('binary' in code_lower or 'bisect' in code_lower or ('mid' in code_lower and 'return' in code_lower)):
+        result["pattern_hint"] = "binary_search"
+        result["pattern_description"] = "Binary Search: halve search space each step"
+    elif best_op == "max" and ('rob' in func_lower or 'knapsack' in code_lower):
+        result["pattern_hint"] = "dp_decision"
+        result["pattern_description"] = "Decision DP: choose max between include/exclude"
+    elif best_op == "min" and ('coin' in code_lower or 'distance' in code_lower or 'edit' in code_lower):
+        result["pattern_hint"] = "dp_optimization"
+        result["pattern_description"] = "Optimization DP: find minimum cost path"
+    elif best_op == "add" and any(x in code_lower for x in ['range(', 'for i in']):
+        result["pattern_hint"] = "accumulation"
+        result["pattern_description"] = "Accumulation: recursive sum over a range"
+    elif best_op in ("concat", "merge"):
+        result["pattern_hint"] = "divide_and_conquer"
+        result["pattern_description"] = "Divide & Conquer: split, solve, combine"
+    elif best_op == "add":
+        result["pattern_hint"] = "linear_recursion"
+        result["pattern_description"] = "Linear recursion with additive combination"
+
+    return result
 
 
 def _dag_to_tree_layout(dag_nodes, dag_edges, max_display=50):
     """Layout the call tree for frontend visualization.
 
-    Returns: { 'nodes': [...], 'edges': [...], 'width': int, 'height': int }
+    Returns: { 'nodes': [...], 'edges': [...], 'level_info': [...], 'width': int, 'height': int }
     """
     if not dag_nodes:
-        return {'nodes': [], 'edges': [], 'width': 0, 'height': 0}
+        return {'nodes': [], 'edges': [], 'level_info': [], 'width': 0, 'height': 0}
 
     # Find root
     targets = set(e['to'] for e in dag_edges)
@@ -1659,9 +1978,10 @@ def _dag_to_tree_layout(dag_nodes, dag_edges, max_display=50):
     for e in dag_edges:
         children_map.setdefault(e['from'], []).append(e['to'])
 
-    # Assign positions
+    # Assign positions and track levels
     positions = {}
     levels = {}  # depth → [node_ids]
+    node_depths = {}
     queue = [(root_id, 0)]
     visited = set()
     while queue:
@@ -1670,10 +1990,60 @@ def _dag_to_tree_layout(dag_nodes, dag_edges, max_display=50):
             continue
         visited.add(node_id)
         positions[node_id] = depth
+        node_depths[node_id] = depth
         levels.setdefault(depth, []).append(node_id)
         for child in children_map.get(node_id, []):
             if child not in visited:
                 queue.append((child, depth + 1))
+
+    # Compute state size per node (reuse _infer_problem_size logic inline)
+    def _quick_state(nid):
+        import re as _re
+        m = _re.search(r"\((.+)\)\s*$", nid)
+        if not m:
+            return None
+        args_str = m.group(1)
+        tokens, depth_p, cur = [], 0, ""
+        for ch in args_str:
+            if ch in "([":
+                depth_p += 1; cur += ch
+            elif ch in ")]":
+                depth_p -= 1; cur += ch
+            elif ch == ',' and depth_p == 0:
+                tokens.append(cur); cur = ""
+            else:
+                cur += ch
+        if cur:
+            tokens.append(cur)
+        nums = []
+        has_list = False
+        for t in tokens:
+            t = t.strip()
+            if t.startswith('[') and t.endswith(']'):
+                has_list = True; continue
+            try:
+                nums.append(int(t))
+            except ValueError:
+                try:
+                    nums.append(float(t))
+                except ValueError:
+                    pass
+        if has_list and not nums:
+            inner = t[1:-1].strip()
+            return inner.count(',') + 1 if inner else 0
+        if len(nums) >= 3:
+            return abs(nums[-1] - nums[-2])
+        if len(nums) == 2:
+            return abs(nums[1] - nums[0]) if nums[0] < nums[1] else max(nums)
+        if len(nums) == 1:
+            return nums[0]
+        return None
+
+    node_states = {}
+    for nid in visited:
+        s = _quick_state(nid)
+        if s is not None:
+            node_states[nid] = s
 
     # Build layout nodes
     node_w, node_h, gap_x, gap_y = 120, 36, 20, 12
@@ -1694,18 +2064,57 @@ def _dag_to_tree_layout(dag_nodes, dag_edges, max_display=50):
                 'result': ndata.get('result'),
                 'call_count': ndata.get('call_count', 1),
                 'is_reused': ndata.get('call_count', 1) > 1,
+                'depth': depth,
+                'state_size': node_states.get(nid),
             })
 
-    # Layout edges
+    # Layout edges with annotation (branch label, size label)
     layout_edges = []
     for e in dag_edges:
         if e['from'] in node_positions and e['to'] in node_positions:
+            parent_size = node_states.get(e['from'])
+            child_size = node_states.get(e['to'])
+            edge_label = ""
+            size_label = ""
+            if parent_size is not None and child_size is not None and parent_size > 0:
+                ratio = child_size / parent_size
+                if 0.4 <= ratio <= 0.6:
+                    size_label = f"n/2"
+                elif 0.2 < ratio < 0.4:
+                    size_label = f"n/3"
+                elif ratio < 1:
+                    size_label = f"n-{parent_size - child_size}"
             layout_edges.append({
                 'from': e['from'],
                 'to': e['to'],
                 'from_pos': node_positions[e['from']],
                 'to_pos': node_positions[e['to']],
+                'label': edge_label,
+                'size_label': size_label,
             })
+
+    # Compute level info for recursion level view
+    # level_cost = node_count × avg_problem_size → total work at this level
+    level_info = []
+    for depth in sorted(levels.keys()):
+        ids_at_level = levels[depth]
+        node_count = len(ids_at_level)
+        sizes_at_level = [node_states.get(nid) for nid in ids_at_level if node_states.get(nid) is not None]
+        avg_size = sum(sizes_at_level) / len(sizes_at_level) if sizes_at_level else None
+        total_calls_at_level = sum(
+            next((n.get("call_count", 1) for n in dag_nodes if n["id"] == nid), 1)
+            for nid in ids_at_level
+        )
+        # Total cost at this level = number of nodes × average problem size
+        level_cost = node_count * avg_size if avg_size else None
+        level_info.append({
+            'depth': depth,
+            'node_count': node_count,
+            'total_calls': total_calls_at_level,
+            'avg_problem_size': round(avg_size, 1) if avg_size else None,
+            'level_cost': round(level_cost, 1) if level_cost else None,
+            'node_ids': ids_at_level[:10],
+        })
 
     # Compute dimensions
     max_x = max((p['x'] for p in node_positions.values()), default=0) + node_w + 20
@@ -1721,6 +2130,7 @@ def _dag_to_tree_layout(dag_nodes, dag_edges, max_display=50):
     return {
         'nodes': layout_nodes,
         'edges': layout_edges,
+        'level_info': level_info,
         'width': max_x,
         'height': max_y,
         'nodeW': node_w,
@@ -1772,6 +2182,29 @@ async def subproblem_graph(req: ExplainStepsRequest):
 
         # Derive complexity
         complexity = _derive_complexity_from_dag(dag_nodes, dag_edges, total_count, unique_count)
+
+        # Detect combine operation + pattern from code
+        op_info = _detect_combine_operation(req.code, func_name)
+        complexity["combine_operation"] = op_info["operation"]
+        complexity["combine_operation_label"] = op_info["operation_label"]
+        if op_info["pattern_hint"]:
+            complexity["pattern_hint"] = op_info["pattern_hint"]
+            complexity["pattern_description"] = op_info["pattern_description"]
+
+        # Auto summary
+        complexity["auto_summary"] = {
+            "total_calls": total_count,
+            "unique_subproblems": unique_count,
+            "repeated_calls": total_count - unique_count,
+            "depth": complexity.get("depth", 0),
+            "branching_factor": complexity.get("branching_factor", 0),
+            "complexity": complexity.get("without_cache", "").split(" --")[0],
+            "optimized_complexity": complexity.get("with_cache", ""),
+            "speedup": complexity.get("speedup", ""),
+            "operation": op_info["operation_label"],
+            "pattern": op_info.get("pattern_description") or complexity.get("pattern", ""),
+            "has_memoization_benefit": total_count > unique_count * 1.5,
+        }
 
         # Layout for visualization
         layout = _dag_to_tree_layout(dag_nodes, dag_edges)

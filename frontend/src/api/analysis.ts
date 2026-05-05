@@ -247,8 +247,9 @@ export interface SubproblemGraphEdge {
 }
 
 export interface SubproblemGraphLayout {
-  nodes: { id: string; x: number; y: number; label: string; result: any; call_count: number; is_reused: boolean }[]
-  edges: { from: string; to: string; from_pos: { x: number; y: number }; to_pos: { x: number; y: number } }[]
+  nodes: { id: string; x: number; y: number; label: string; result: any; call_count: number; is_reused: boolean; depth?: number; state_size?: number }[]
+  edges: { from: string; to: string; from_pos: { x: number; y: number }; to_pos: { x: number; y: number }; label?: string; size_label?: string }[]
+  level_info?: { depth: number; node_count: number; total_calls: number; avg_problem_size: number | null; level_cost: number | null; node_ids: string[] }[]
   width: number
   height: number
   nodeW: number
@@ -277,6 +278,29 @@ export interface SubproblemGraphResponse {
     total_calls: number
     unique_calls: number
     shared_subproblems: { id: string; called: number }[]
+    pattern?: string
+    shrink?: string
+    execution?: string
+    median_ratio?: number
+    explanation?: string
+    semantic_explanation?: string
+    combine_operation?: string
+    combine_operation_label?: string
+    pattern_hint?: string
+    pattern_description?: string
+    auto_summary?: {
+      total_calls: number
+      unique_subproblems: number
+      repeated_calls: number
+      depth: number
+      branching_factor: number
+      complexity: string
+      optimized_complexity: string
+      speedup: string
+      operation: string
+      pattern: string
+      has_memoization_benefit: boolean
+    }
   }
   narrative?: string
 }

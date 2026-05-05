@@ -195,6 +195,454 @@ const criticalPathOrdered = computed(() => {
   return path
 })
 
+const maxCostPerLevel = computed(() => {
+  const levels = store.subproblemGraph?.layout?.level_info
+  if (!levels?.length) return 1
+  const costs = levels.map(l => l.level_cost ?? l.node_count)
+  return Math.max(1, ...costs)
+})
+
+const levelCosts = computed(() => {
+  const levels = store.subproblemGraph?.layout?.level_info
+  if (!levels) return []
+  return levels.filter(l => l.level_cost != null).map(l => l.level_cost!)
+})
+
+const isCostBalanced = computed(() => {
+  if (levelCosts.value.length < 2) return false
+  const avg = levelCosts.value.reduce((a, b) => a + b, 0) / levelCosts.value.length
+  return levelCosts.value.every(c => Math.abs(c - avg) / avg < 0.15)
+})
+
+const isCostDecreasing = computed(() => {
+  if (levelCosts.value.length < 2) return false
+  // Check if each level is <= previous level (with some tolerance)
+  for (let i = 1; i < levelCosts.value.length; i++) {
+    if (levelCosts.value[i] > levelCosts.value[i - 1] * 1.1) return false
+  }
+  return true
+})
+
+const avgLevelCost = computed(() => {
+  if (!levelCosts.value.length) return '?'
+  const avg = levelCosts.value.reduce((a, b) => a + b, 0) / levelCosts.value.length
+  return Math.round(avg)
+})
+
+const levelCostSummary = computed(() => {
+  if (!levelCosts.value.length) return ''
+  const first = levelCosts.value[0]
+  const last = levelCosts.value[levelCosts.value.length - 1]
+  return `${first} → ... → ${last}`
+})
+
+// Pattern Sandbox
+const sandboxPatterns = [
+  { key: 'balanced', label: 'Balanced (merge sort)' },
+  { key: 'decreasing', label: 'Decreasing (binary search)' },
+  { key: 'tree', label: 'Tree (fibonacci)' },
+]
+const sandboxPattern = ref('balanced')
+const sandboxBranching = ref(2)
+const sandboxDepth = ref(4)
+
+const sandboxLevels = computed(() => {
+  const levels = []
+  const n = Math.pow(sandboxBranching.value, sandboxDepth.value) // root problem size
+  for (let d = 0; d <= sandboxDepth.value; d++) {
+    let nodes, size, cost
+    if (sandboxPattern.value === 'balanced') {
+      nodes = Math.pow(sandboxBranching.value, d)
+      size = Math.max(1, Math.round(n / nodes))
+      cost = nodes * size
+    } else if (sandboxPattern.value === 'decreasing') {
+      nodes = Math.min(Math.pow(2, d), sandboxBranching.value)
+      size = Math.max(1, Math.round(n / Math.pow(sandboxBranching.value, d)))
+      cost = Math.max(1, Math.round(n / Math.pow(sandboxBranching.value, d)))
+    } else { // tree
+      nodes = Math.pow(sandboxBranching.value, d)
+      size = Math.max(1, sandboxDepth.value - d)
+      cost = nodes
+    }
+    levels.push({ depth: d, nodes, size, cost })
+  }
+  const maxCost = Math.max(1, ...levels.map(l => l.cost))
+  return levels.map(l => ({ ...l, barWidth: Math.max(8, (l.cost / maxCost) * 100) }))
+})
+
+const sandboxCalculation = computed(() => {
+  const levels = sandboxLevels.value
+  if (!levels.length) return ''
+  if (sandboxPattern.value === 'balanced') {
+    const cost = levels[0].cost || 1
+    return `${cost} × ${sandboxDepth.value} levels`
+  }
+  if (sandboxPattern.value === 'decreasing') {
+    return `1 + ${sandboxBranching.value} + ${sandboxBranching.value}² + ... ÷ ${sandboxBranching.value}`
+  }
+  // tree
+  const b = sandboxBranching.value
+  return `${b}⁰ + ${b}¹ + ${b}² + ... + ${b}^${sandboxDepth.value}`
+})
+
+const sandboxComplexity = computed(() => {
+  if (sandboxPattern.value === 'balanced') return 'O(n log n)'
+  if (sandboxPattern.value === 'decreasing') return 'O(log n)'
+  const b = sandboxBranching.value
+  return `O(${b}^n)`
+})
+
+const sandboxHint = computed(() => {
+  const p = sandboxPattern.value
+  const b = sandboxBranching.value
+  const d = sandboxDepth.value
+
+  // Questions only — never answers
+  if (p === 'balanced' && b === 2) {
+    return 'What happens to the bars if you increase branching to 3?'
+  }
+  if (p === 'balanced' && b >= 3) {
+    return 'The bars stay equal. What does this tell you about the cost at each level?'
+  }
+  if (p === 'tree' && b === 2) {
+    return 'Switch to Balanced with the same settings. What\'s different?'
+  }
+  if (p === 'tree' && b >= 3) {
+    return 'What does the shape of these bars suggest about total work?'
+  }
+  if (p === 'decreasing' && d <= 2) {
+    return 'Increase depth to 5. How much does total work change?'
+  }
+  if (p === 'decreasing' && d >= 4) {
+    return 'Compare this to Tree mode with the same depth. Which grows faster?'
+  }
+  return null
+})
+
+const sandboxExplainPrompt = computed(() => {
+  const p = sandboxPattern.value
+  const b = sandboxBranching.value
+  if (p === 'balanced' && b >= 2) return 'Can you explain in one sentence why branching doesn\'t change complexity here?'
+  if (p === 'tree') return 'Why does this pattern produce exponential complexity?'
+  if (p === 'decreasing') return 'Why is this O(log n) regardless of how large n is?'
+  return null
+})
+
+const sandboxStep = computed(() => {
+  if (sandboxPattern.value !== 'balanced') return 2
+  if (sandboxBranching.value !== 2 || sandboxDepth.value !== 4) return 1
+  return 1
+})
+
+const sandboxUserAnswer = ref('')
+const sandboxFeedback = ref<{ type: string; message: string } | null>(null)
+const showSandboxAnswer = ref(false)
+
+// Reset feedback when pattern changes
+watch(sandboxPattern, () => {
+  sandboxFeedback.value = null
+  sandboxUserAnswer.value = ''
+  showSandboxAnswer.value = false
+})
+
+const sandboxSampleAnswer = computed(() => {
+  const p = sandboxPattern.value
+  if (p === 'balanced') return 'Each level does the same amount of work (n). With log n levels, total = n × log n.'
+  if (p === 'tree') return 'Each level multiplies the number of nodes by the branching factor. The total grows exponentially.'
+  if (p === 'decreasing') return 'Each level does a fraction of the previous level\'s work. The total is dominated by the first level.'
+  return ''
+})
+
+function submitSandboxAnswer() {
+  const answer = sandboxUserAnswer.value.toLowerCase().trim()
+  if (!answer) return
+
+  const p = sandboxPattern.value
+  let feedback: { type: string; message: string }
+
+  if (p === 'balanced') {
+    const hasConstantCost = /constant|same|equal|uniform|n/.test(answer)
+    const hasLogN = /log|level|depth/.test(answer)
+    if (hasConstantCost && hasLogN) {
+      feedback = { type: 'correct', message: 'Exactly. Constant cost per level × log n levels = O(n log n). You nailed the key insight.' }
+    } else if (hasConstantCost || hasLogN) {
+      feedback = { type: 'partial', message: 'Close. You got one part — now think about the other dimension (levels vs cost).' }
+    } else {
+      feedback = { type: 'hint', message: 'Focus on two things: what happens at EACH level, and how MANY levels there are.' }
+    }
+  } else if (p === 'tree') {
+    const hasExponential = /exponential|grow|multiply|branch|2\^|explos/.test(answer)
+    const hasBranching = /branch|split|each node|each call/.test(answer)
+    if (hasExponential && hasBranching) {
+      feedback = { type: 'correct', message: 'Right. Each node spawns b children, so total = b^depth. That\'s exponential growth.' }
+    } else if (hasExponential || hasBranching) {
+      feedback = { type: 'partial', message: 'You\'re on the right track. Now connect it: how does each node\'s branching affect total count?' }
+    } else {
+      feedback = { type: 'hint', message: 'Think about what each node does: it creates more nodes. What happens to the total?' }
+    }
+  } else {
+    const hasDecrease = /shrink|decrease|smaller|half|fraction|divide/.test(answer)
+    const hasDominant = /first|top|dominate|constant|log/.test(answer)
+    if (hasDecrease && hasDominant) {
+      feedback = { type: 'correct', message: 'Yes. The geometric shrink means total ≈ first term. That\'s why it\'s O(log n).' }
+    } else if (hasDecrease || hasDominant) {
+      feedback = { type: 'partial', message: 'Good instinct. Now ask yourself: which level contributes the most to total work?' }
+    } else {
+      feedback = { type: 'hint', message: 'Look at the bar sizes. What pattern do you see? Where is most of the work?' }
+    }
+  }
+
+  sandboxFeedback.value = feedback
+}
+
+// --- Execution Mode: step through recursive calls ---
+const subMode = ref<'execution' | 'analysis'>('execution')
+const execStep = ref(0)
+const execPlaying = ref(false)
+let execPlayTimer: number | null = null
+
+interface ExecEvent {
+  nodeId: string
+  type: 'call' | 'return'
+  name: string
+  args: string
+  returnValue?: string
+  composition?: string       // e.g. "1 + 1 = 2"
+  childResults?: string[]    // child return values used
+  isBase: boolean
+  depth: number
+  parent?: string            // parent node id (for return flow)
+}
+
+const execTrace = computed<ExecEvent[]>(() => {
+  const dag = store.subproblemGraph?.dag
+  const layout = store.subproblemGraph?.layout
+  if (!dag || !layout) return []
+
+  // Build adjacency: parent → [children] sorted by node id
+  const children = new Map<string, string[]>()
+  const parentOf = new Map<string, string>()
+  for (const e of dag.edges) {
+    if (!children.has(e.from)) children.set(e.from, [])
+    children.get(e.from)!.push(e.to)
+    parentOf.set(e.to, e.from)
+  }
+  for (const [, ch] of children) ch.sort()
+
+  // Find root
+  const hasParent = new Set(dag.edges.map(e => e.to))
+  const root = dag.nodes.find(n => !hasParent.has(n.id))?.id || dag.nodes[0]?.id
+  if (!root) return []
+
+  const layoutNode = new Map(layout.nodes.map(n => [n.id, n]))
+
+  // Track results as we DFS — children finish before parent
+  const resultsMap = new Map<string, string>()
+
+  const events: ExecEvent[] = []
+  function dfs(nodeId: string, depth: number) {
+    const ln = layoutNode.get(nodeId)
+    const ch = children.get(nodeId) || []
+    const isBase = ch.length === 0
+    const parent = parentOf.get(nodeId)
+
+    events.push({
+      nodeId,
+      type: 'call',
+      name: ln?.label?.split('(')[0] || nodeId.split('(')[0],
+      args: ln?.label?.match(/\(([^)]*)\)/)?.[1] || '',
+      isBase,
+      depth,
+      parent,
+    })
+
+    for (const child of ch) {
+      dfs(child, depth + 1)
+    }
+
+    // Children are done — collect their results for composition
+    const node = dag.nodes.find(n => n.id === nodeId)
+    const resultStr = node?.result != null ? String(node.result) : undefined
+    if (resultStr != null) resultsMap.set(nodeId, resultStr)
+
+    const childResults = ch
+      .map(c => resultsMap.get(c))
+      .filter((r): r is string => r != null)
+
+    // Build composition expression
+    let composition: string | undefined
+    if (childResults.length >= 2) {
+      composition = childResults.join(' + ') + ' = ' + resultStr
+    } else if (childResults.length === 1 && !isBase) {
+      // Single child — show what operation was applied
+      composition = resultStr
+    }
+
+    events.push({
+      nodeId,
+      type: 'return',
+      name: ln?.label?.split('(')[0] || nodeId.split('(')[0],
+      args: ln?.label?.match(/\(([^)]*)\)/)?.[1] || '',
+      returnValue: resultStr,
+      composition,
+      childResults: childResults.length > 0 ? childResults : undefined,
+      isBase,
+      depth,
+      parent,
+    })
+  }
+  dfs(root, 0)
+  return events
+})
+
+const execCurrentCall = computed(() => {
+  return execTrace.value[execStep.value] || null
+})
+
+const execCurrentStack = computed(() => {
+  const events = execTrace.value
+  const step = execStep.value
+  if (!events.length) return []
+
+  // Rebuild stack up to current step
+  const stack: { name: string; args: string; returned: boolean; returnValue?: string }[] = []
+  for (let i = 0; i <= step; i++) {
+    const ev = events[i]
+    if (ev.type === 'call') {
+      stack.push({ name: ev.name, args: ev.args, returned: false })
+    } else {
+      // Return: mark top of stack as returned, then pop
+      if (stack.length > 0) {
+        stack[stack.length - 1].returned = true
+        stack[stack.length - 1].returnValue = ev.returnValue
+      }
+      // Pop after a brief moment — but since we show snapshot, pop immediately
+      stack.pop()
+    }
+  }
+  return stack
+})
+
+function isNodeActive(node: { id: string }): boolean {
+  const ev = execCurrentCall.value
+  return ev?.nodeId === node.id
+}
+
+function isNodeVisited(node: { id: string }): boolean {
+  const ev = execCurrentCall.value
+  const currentIdx = execStep.value
+  const trace = execTrace.value
+  // Check if this node has been called before current step
+  for (let i = 0; i <= currentIdx; i++) {
+    if (trace[i]?.nodeId === node.id && trace[i]?.type === 'call') return true
+  }
+  return false
+}
+
+function isEdgeActive(edge: { from: string; to: string }): boolean {
+  const ev = execCurrentCall.value
+  if (!ev) return false
+  if (ev.type === 'call') {
+    // Call flow: parent → child (downward)
+    if (ev.nodeId === edge.to) return true
+    if (ev.nodeId === edge.from) {
+      const trace = execTrace.value
+      const idx = execStep.value
+      if (idx + 1 < trace.length && trace[idx + 1]?.nodeId === edge.to) return true
+    }
+  } else {
+    // Return flow: child → parent (upward) — highlight edge from child to current returning node
+    if (ev.nodeId === edge.to) return true
+  }
+  return false
+}
+
+function isEdgeReturnFlow(edge: { from: string; to: string }): boolean {
+  const ev = execCurrentCall.value
+  if (!ev || ev.type !== 'return') return false
+  // Return flow: edge TO the returning node (child → parent)
+  return ev.nodeId === edge.to
+}
+
+function isNodeReturning(node: { id: string }): boolean {
+  const ev = execCurrentCall.value
+  return ev?.type === 'return' && ev.nodeId === node.id
+}
+
+function execStepBack() {
+  if (execStep.value > 0) execStep.value--
+}
+
+function execStepForward() {
+  if (execStep.value < execTrace.value.length - 1) execStep.value++
+}
+
+function execTogglePlay() {
+  if (execPlaying.value) {
+    execPlaying.value = false
+    if (execPlayTimer) { clearTimeout(execPlayTimer); execPlayTimer = null }
+    return
+  }
+  execPlaying.value = true
+  execPlayNext()
+}
+
+function execPlayNext() {
+  if (!execPlaying.value) return
+  if (execStep.value < execTrace.value.length - 1) {
+    execStep.value++
+    execPlayTimer = window.setTimeout(execPlayNext, 400)
+  } else {
+    execPlaying.value = false
+  }
+}
+
+const generalRule = computed(() => {
+  const pattern = store.subproblemGraph?.complexity?.pattern
+  const levels = store.subproblemGraph?.layout?.level_info?.length
+  if (!pattern || !levels) return null
+
+  if (isCostBalanced.value && levels >= 2) {
+    return {
+      pattern: 'Balanced Recursion (equal cost per level)',
+      lines: [
+        `If each level does ~${avgLevelCost.value} work`,
+        `and there are ${levels} levels`,
+        `→ total work = ${avgLevelCost.value} × ${levels}`,
+      ],
+      takeaway: `Whenever cost/level is constant, complexity = cost × depth. For divide-and-conquer splitting into k subproblems of size n/k: depth = log_k(n), cost/level = n → O(n log n).`,
+    }
+  }
+
+  if (isCostDecreasing.value && levelCosts.value.length >= 2) {
+    const first = levelCosts.value[0]
+    return {
+      pattern: 'Decreasing Work (cost shrinks each level)',
+      lines: [
+        `Work decreases: ${levelCostSummary.value}`,
+        `The first level dominates the total`,
+        `→ total ≈ first level = ${first}`,
+      ],
+      takeaway: `When work shrinks geometrically (each level ÷ constant), total ≈ first level. For T(n) = T(n/k): depth = log_k(n), cost/level = O(1) → O(log n).`,
+    }
+  }
+
+  if (levelCosts.value.length >= 2) {
+    const last = levelCosts.value[levelCosts.value.length - 1]
+    return {
+      pattern: 'Growing Work (cost increases each level)',
+      lines: [
+        `Work grows: ${levelCostSummary.value}`,
+        `The bottom levels dominate`,
+        `→ total ≈ last level × depth`,
+      ],
+      takeaway: `When work grows geometrically, the bottom levels dominate. For tree recursion like Fibonacci: depth = n, branching = 2 → total = O(2^n).`,
+    }
+  }
+
+  return null
+})
+
 // WHY Narrative: combines algorithm-level pattern with step-level causal chain
 const narrative = computed(() => {
   const path = criticalPathOrdered.value
@@ -658,6 +1106,9 @@ function patternLabel(p: string): string {
   const map: Record<string, string> = {
     memoization: 'Memoization',
     divide_and_conquer: 'Divide & Conquer',
+    binary_search: 'Binary Search',
+    tree_recursion: 'Tree Recursion',
+    linear_recursion: 'Linear Recursion',
     recursion: 'Recursion',
     search: 'Search',
     accumulation: 'Accumulation',
@@ -1179,10 +1630,207 @@ onUnmounted(() => {
         <span class="subproblem-stats" v-if="store.subproblemGraph.dag">
           {{ store.subproblemGraph.dag.unique_count }} unique / {{ store.subproblemGraph.dag.total_count }} total calls
         </span>
+        <span class="submode-tabs">
+          <button :class="['submode-btn', { active: subMode === 'execution' }]" @click="subMode = 'execution'">Execution</button>
+          <button :class="['submode-btn', { active: subMode === 'analysis' }]" @click="subMode = 'analysis'">Analysis</button>
+        </span>
       </div>
+
+      <!-- Execution Mode: call trace + stack + return flow -->
+      <div v-if="subMode === 'execution'" class="execution-mode">
+        <!-- Execution controls -->
+        <div class="exec-controls">
+          <button class="exec-btn" @click="execStepBack" :disabled="execStep <= 0">◀</button>
+          <span class="exec-step-label">Step {{ execStep }} / {{ execTrace.length - 1 }}</span>
+          <button class="exec-btn" @click="execStepForward" :disabled="execStep >= execTrace.length - 1">▶</button>
+          <button class="exec-btn exec-play" @click="execTogglePlay">{{ execPlaying ? '⏸' : '▶▶' }}</button>
+        </div>
+        <!-- Call stack -->
+        <div class="exec-stack">
+          <div class="stack-label">Call Stack</div>
+          <div class="stack-frames">
+            <div
+              v-for="(frame, i) in execCurrentStack"
+              :key="i"
+              class="stack-frame"
+              :class="{ 'stack-active': i === execCurrentStack.length - 1 }"
+            >
+              <span class="frame-name">{{ frame.name }}</span>
+              <span class="frame-args">{{ frame.args }}</span>
+              <span v-if="frame.returned" class="frame-return">→ {{ frame.returnValue }}</span>
+            </div>
+          </div>
+        </div>
+        <!-- Current call highlight -->
+        <div class="exec-current" v-if="execCurrentCall">
+          <div class="current-label">{{ execCurrentCall.type === 'call' ? '→ Calling' : execCurrentCall.type === 'return' ? '← Returning' : '· Base case' }}</div>
+          <div class="current-call">{{ execCurrentCall.name }}({{ execCurrentCall.args }})</div>
+          <div v-if="execCurrentCall.returnValue != null" class="current-return">returns {{ execCurrentCall.returnValue }}</div>
+          <!-- Operation type: what kind of combine -->
+          <div v-if="execCurrentCall.type === 'return' && store.subproblemGraph?.complexity?.combine_operation_label && store.subproblemGraph.complexity.combine_operation !== 'unknown'" class="combine-operation">
+            <span class="combine-label">Combine</span>
+            <span class="combine-type">{{ store.subproblemGraph.complexity.combine_operation_label }}</span>
+          </div>
+          <!-- Return Composition: how child results combine -->
+          <div v-if="execCurrentCall.composition" class="current-composition">
+            <span class="compose-icon">=</span>
+            <span class="compose-expr">{{ execCurrentCall.composition }}</span>
+          </div>
+          <div v-if="execCurrentCall.childResults?.length" class="current-children">
+            <span class="children-label">from</span>
+            <span v-for="(r, i) in execCurrentCall.childResults" :key="i" class="child-result">{{ execCurrentCall.name }}({{ execCurrentCall.args?.split(',')[i]?.trim() || '' }}) → {{ r }}</span>
+          </div>
+        </div>
+        <!-- DAG with current node highlighted -->
+        <div class="exec-dag">
+          <svg
+            :width="store.subproblemGraph.layout.width"
+            :height="store.subproblemGraph.layout.height"
+            class="dag-svg"
+          >
+            <defs>
+              <marker id="dag-arrow-exec" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                <polygon points="0 0, 6 2.5, 0 5" fill="rgba(167,139,250,0.5)" />
+              </marker>
+              <marker id="dag-arrow-return" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                <polygon points="0 0, 6 2.5, 0 5" fill="#34d399" />
+              </marker>
+              <filter id="return-glow">
+                <feGaussianBlur stdDeviation="2" result="blur"/>
+                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+            <!-- Base edges (faint) -->
+            <g v-for="(edge, i) in store.subproblemGraph.layout.edges" :key="'ee'+i">
+              <line
+                :x1="edge.from_pos.x + store.subproblemGraph.layout.nodeW"
+                :y1="edge.from_pos.y + store.subproblemGraph.layout.nodeH / 2"
+                :x2="edge.to_pos.x"
+                :y2="edge.to_pos.y + store.subproblemGraph.layout.nodeH / 2"
+                stroke="rgba(167,139,250,0.15)"
+                stroke-width="1"
+              />
+            </g>
+            <!-- Active call flow (parent → child, downward) -->
+            <g v-for="(edge, i) in store.subproblemGraph.layout.edges" :key="'ec'+i">
+              <line
+                v-if="isEdgeActive(edge) && !isEdgeReturnFlow(edge)"
+                :x1="edge.from_pos.x + store.subproblemGraph.layout.nodeW"
+                :y1="edge.from_pos.y + store.subproblemGraph.layout.nodeH / 2"
+                :x2="edge.to_pos.x"
+                :y2="edge.to_pos.y + store.subproblemGraph.layout.nodeH / 2"
+                stroke="var(--primary)"
+                stroke-width="2"
+                marker-end="url(#dag-arrow-exec)"
+              />
+            </g>
+            <!-- Return flow (child → parent, upward, glowing green) -->
+            <g v-for="(edge, i) in store.subproblemGraph.layout.edges" :key="'er'+i">
+              <line
+                v-if="isEdgeReturnFlow(edge)"
+                :x1="edge.from_pos.x + store.subproblemGraph.layout.nodeW"
+                :y1="edge.from_pos.y + store.subproblemGraph.layout.nodeH / 2"
+                :x2="edge.to_pos.x"
+                :y2="edge.to_pos.y + store.subproblemGraph.layout.nodeH / 2"
+                stroke="#34d399"
+                stroke-width="2.5"
+                filter="url(#return-glow)"
+                marker-end="url(#dag-arrow-return)"
+              />
+            </g>
+            <g
+              v-for="node in store.subproblemGraph.layout.nodes"
+              :key="node.id"
+              :transform="`translate(${node.x}, ${node.y})`"
+            >
+              <rect
+                :width="store.subproblemGraph.layout.nodeW"
+                :height="store.subproblemGraph.layout.nodeH"
+                rx="4"
+                :fill="isNodeReturning(node) ? 'rgba(52,211,153,0.15)' : isNodeActive(node) ? 'rgba(34,211,238,0.15)' : isNodeVisited(node) ? 'rgba(100,100,120,0.06)' : 'rgba(100,100,120,0.02)'"
+                :stroke="isNodeReturning(node) ? '#34d399' : isNodeActive(node) ? 'var(--accent)' : isNodeVisited(node) ? 'var(--border)' : 'rgba(100,100,120,0.1)'"
+                :stroke-width="isNodeReturning(node) || isNodeActive(node) ? 2 : 1"
+              />
+              <text x="6" y="14" class="dag-label" :fill="isNodeReturning(node) ? '#34d399' : isNodeActive(node) ? 'var(--accent)' : 'var(--text-dim)'">
+                {{ node.label }}
+              </text>
+              <text v-if="node.state_size != null" :x="store.subproblemGraph.layout.nodeW - 6" y="28" class="dag-state" fill="#a78bfa" text-anchor="end">
+                n={{ node.state_size }}
+              </text>
+            </g>
+          </svg>
+        </div>
+      </div>
+
+      <!-- Pattern Label -->
+      <div v-if="store.subproblemGraph?.complexity?.pattern_hint" class="pattern-label-box">
+        <span class="pattern-label-icon">🧠</span>
+        <span class="pattern-label-text">{{ store.subproblemGraph.complexity.pattern_description || patternLabel(store.subproblemGraph.complexity.pattern_hint) }}</span>
+      </div>
+
+      <!-- Auto Summary -->
+      <div v-if="store.subproblemGraph?.complexity?.auto_summary" class="auto-summary">
+        <div class="summary-header">Summary</div>
+        <div class="summary-grid">
+          <div class="summary-item">
+            <span class="summary-label">Total calls</span>
+            <span class="summary-value">{{ store.subproblemGraph.complexity.auto_summary.total_calls }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Unique subproblems</span>
+            <span class="summary-value">{{ store.subproblemGraph.complexity.auto_summary.unique_subproblems }}</span>
+          </div>
+          <div class="summary-item" v-if="store.subproblemGraph.complexity.auto_summary.repeated_calls > 0">
+            <span class="summary-label">Repeated calls</span>
+            <span class="summary-value summary-warn">{{ store.subproblemGraph.complexity.auto_summary.repeated_calls }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Recursion depth</span>
+            <span class="summary-value">{{ store.subproblemGraph.complexity.auto_summary.depth }}</span>
+          </div>
+          <div class="summary-item" v-if="store.subproblemGraph.complexity.auto_summary.branching_factor > 0">
+            <span class="summary-label">Branching factor</span>
+            <span class="summary-value">{{ store.subproblemGraph.complexity.auto_summary.branching_factor }}</span>
+          </div>
+          <div class="summary-item" v-if="store.subproblemGraph.complexity.auto_summary.operation !== 'COMBINE'">
+            <span class="summary-label">Operation</span>
+            <span class="summary-value summary-op">{{ store.subproblemGraph.complexity.auto_summary.operation }}</span>
+          </div>
+        </div>
+        <div class="summary-complexity">
+          <div class="summary-complexity-row">
+            <span class="summary-label">Without cache</span>
+            <span class="summary-value summary-bad">{{ store.subproblemGraph.complexity.auto_summary.complexity }}</span>
+          </div>
+          <div class="summary-complexity-row" v-if="store.subproblemGraph.complexity.auto_summary.optimized_complexity">
+            <span class="summary-label">With cache</span>
+            <span class="summary-value summary-good">{{ store.subproblemGraph.complexity.auto_summary.optimized_complexity.split(' --')[0] }}</span>
+          </div>
+          <div class="summary-complexity-row" v-if="store.subproblemGraph.complexity.auto_summary.speedup">
+            <span class="summary-label">Speedup</span>
+            <span class="summary-value summary-highlight">{{ store.subproblemGraph.complexity.auto_summary.speedup }}</span>
+          </div>
+        </div>
+        <div class="summary-memo" v-if="store.subproblemGraph.complexity.auto_summary.has_memoization_benefit">
+          💡 Memoization would reduce calls from {{ store.subproblemGraph.complexity.auto_summary.total_calls }} to {{ store.subproblemGraph.complexity.auto_summary.unique_subproblems }}
+        </div>
+      </div>
+
+      <!-- Analysis Mode: complexity + DAG + sandbox -->
+      <div v-if="subMode === 'analysis'">
 
       <!-- Complexity Analysis -->
       <div class="complexity-card" v-if="store.subproblemGraph.complexity">
+        <div class="complexity-row" v-if="store.subproblemGraph.complexity.pattern">
+          <span class="complexity-label">Pattern</span>
+          <span class="complexity-value complexity-highlight">{{ patternLabel(store.subproblemGraph.complexity.pattern) }}</span>
+          <span v-if="store.subproblemGraph.complexity.execution" class="execution-tag" :class="store.subproblemGraph.complexity.execution.toLowerCase()">
+            {{ store.subproblemGraph.complexity.execution }}
+          </span>
+          <span v-if="store.subproblemGraph.complexity.shrink && store.subproblemGraph.complexity.shrink !== 'none'" class="shrink-tag">
+            {{ store.subproblemGraph.complexity.shrink }}
+          </span>
+        </div>
         <div class="complexity-row">
           <span class="complexity-label">Recurrence</span>
           <span class="complexity-value">{{ store.subproblemGraph.complexity.recurrence }}</span>
@@ -1201,6 +1849,19 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <!-- Semantic Explanation -->
+      <div v-if="store.subproblemGraph.complexity?.semantic_explanation" class="semantic-explanation">
+        <div class="semantic-header">Why this complexity?</div>
+        <div class="semantic-lines">
+          <div
+            v-for="(line, i) in store.subproblemGraph.complexity.semantic_explanation.split('\n')"
+            :key="i"
+            class="semantic-line"
+            :class="{ 'semantic-conclusion': line.includes('→') || line.includes('Therefore') }"
+          >{{ line }}</div>
+        </div>
+      </div>
+
       <!-- DAG Visualization -->
       <div class="dag-container">
         <svg
@@ -1214,17 +1875,26 @@ onUnmounted(() => {
             </marker>
           </defs>
           <!-- Edges -->
-          <line
-            v-for="(edge, i) in store.subproblemGraph.layout.edges"
-            :key="'de'+i"
-            :x1="edge.from_pos.x + store.subproblemGraph.layout.nodeW"
-            :y1="edge.from_pos.y + store.subproblemGraph.layout.nodeH / 2"
-            :x2="edge.to_pos.x"
-            :y2="edge.to_pos.y + store.subproblemGraph.layout.nodeH / 2"
-            stroke="rgba(167,139,250,0.35)"
-            stroke-width="1.5"
-            marker-end="url(#dag-arrow)"
-          />
+          <g v-for="(edge, i) in store.subproblemGraph.layout.edges" :key="'de'+i">
+            <line
+              :x1="edge.from_pos.x + store.subproblemGraph.layout.nodeW"
+              :y1="edge.from_pos.y + store.subproblemGraph.layout.nodeH / 2"
+              :x2="edge.to_pos.x"
+              :y2="edge.to_pos.y + store.subproblemGraph.layout.nodeH / 2"
+              stroke="rgba(167,139,250,0.35)"
+              stroke-width="1.5"
+              marker-end="url(#dag-arrow)"
+            />
+            <!-- Edge label: subproblem size -->
+            <text
+              v-if="edge.size_label"
+              :x="(edge.from_pos.x + store.subproblemGraph.layout.nodeW + edge.to_pos.x) / 2"
+              :y="(edge.from_pos.y + store.subproblemGraph.layout.nodeH / 2 + edge.to_pos.y + store.subproblemGraph.layout.nodeH / 2) / 2 - 4"
+              class="edge-label"
+              fill="#a78bfa"
+              text-anchor="middle"
+            >{{ edge.size_label }}</text>
+          </g>
           <!-- Nodes -->
           <g
             v-for="node in store.subproblemGraph.layout.nodes"
@@ -1244,7 +1914,10 @@ onUnmounted(() => {
             <text x="6" y="14" class="dag-label" :fill="node.is_reused ? 'var(--primary)' : 'var(--text-dim)'">
               {{ node.label }}
             </text>
-            <text v-if="node.result != null" x="6" y="28" class="dag-result" fill="var(--text-muted)">
+            <text v-if="node.state_size != null" :x="store.subproblemGraph.layout.nodeW - 6" y="28" class="dag-state" fill="#a78bfa" text-anchor="end">
+              n={{ node.state_size }}
+            </text>
+            <text v-else-if="node.result != null" x="6" y="28" class="dag-result" fill="var(--text-muted)">
               → {{ String(node.result).slice(0, 12) }}
             </text>
             <!-- Reuse count badge -->
@@ -1256,6 +1929,170 @@ onUnmounted(() => {
             </g>
           </g>
         </svg>
+      </div>
+
+      <!-- Recursion Level View -->
+      <div v-if="store.subproblemGraph.layout?.level_info?.length" class="level-view">
+        <div class="level-header">Cost per Level</div>
+        <div class="level-rows">
+          <div
+            v-for="lvl in store.subproblemGraph.layout.level_info"
+            :key="lvl.depth"
+            class="level-row"
+          >
+            <span class="level-depth">L{{ lvl.depth }}</span>
+            <div class="level-bar-container">
+              <div
+                class="level-bar"
+                :class="{ 'level-bar-balanced': isCostBalanced }"
+                :style="{ width: Math.max(8, ((lvl.level_cost ?? lvl.node_count) / maxCostPerLevel) * 100) + '%' }"
+              />
+              <span class="level-bar-label" v-if="lvl.level_cost != null">cost = {{ lvl.level_cost }}</span>
+              <span class="level-bar-label" v-else>{{ lvl.node_count }} node{{ lvl.node_count > 1 ? 's' : '' }}</span>
+            </div>
+            <span class="level-size" v-if="lvl.avg_problem_size !== null">{{ lvl.node_count }}×{{ lvl.avg_problem_size }}</span>
+          </div>
+        </div>
+        <!-- Visual Proof: explicit reasoning chain -->
+        <div class="level-proof" v-if="store.subproblemGraph.complexity">
+          <template v-if="isCostBalanced">
+            <div class="proof-line">
+              <span class="proof-icon">→</span>
+              <span>Each level costs ~{{ avgLevelCost }}</span>
+            </div>
+            <div class="proof-line">
+              <span class="proof-icon">→</span>
+              <span>{{ store.subproblemGraph.layout.level_info.length }} levels total</span>
+            </div>
+            <div class="proof-line proof-conclusion">
+              <span class="proof-icon">∴</span>
+              <span>{{ avgLevelCost }} × {{ store.subproblemGraph.layout.level_info.length }} = </span>
+              <span class="proof-result">{{ store.subproblemGraph.complexity.without_cache?.split(' --')[0] }}</span>
+            </div>
+          </template>
+          <template v-else-if="isCostDecreasing">
+            <div class="proof-line">
+              <span class="proof-icon">→</span>
+              <span>Work decreases each level ({{ levelCostSummary }})</span>
+            </div>
+            <div class="proof-line">
+              <span class="proof-icon">→</span>
+              <span>Dominated by top levels</span>
+            </div>
+            <div class="proof-line proof-conclusion">
+              <span class="proof-icon">∴</span>
+              <span>Total = </span>
+              <span class="proof-result">{{ store.subproblemGraph.complexity.without_cache?.split(' --')[0] }}</span>
+            </div>
+          </template>
+          <template v-else>
+            <div class="proof-line">
+              <span class="proof-icon">→</span>
+              <span>Cost grows each level ({{ levelCostSummary }})</span>
+            </div>
+            <div class="proof-line proof-conclusion">
+              <span class="proof-icon">∴</span>
+              <span>Total = </span>
+              <span class="proof-result">{{ store.subproblemGraph.complexity.without_cache?.split(' --')[0] }}</span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- General Rule: teaches transferable analysis -->
+      <div v-if="generalRule" class="general-rule">
+        <div class="rule-header">General Rule</div>
+        <div class="rule-pattern">{{ generalRule.pattern }}</div>
+        <div class="rule-body">
+          <div v-for="(line, i) in generalRule.lines" :key="i" class="rule-line">{{ line }}</div>
+        </div>
+        <div class="rule-takeaway">{{ generalRule.takeaway }}</div>
+      </div>
+
+      <!-- Pattern Sandbox: interactive experimentation -->
+      <div class="sandbox-section">
+        <div class="sandbox-header">
+          <span class="sandbox-title">Pattern Sandbox</span>
+          <span class="sandbox-steps">
+            <span :class="['step-tag', { active: sandboxStep >= 1 }]">Explore</span>
+            <span class="step-arrow">→</span>
+            <span :class="['step-tag', { active: sandboxStep >= 2 }]">Compare</span>
+            <span class="step-arrow">→</span>
+            <span :class="['step-tag', { active: sandboxStep >= 3 }]">Explain</span>
+          </span>
+        </div>
+        <div class="sandbox-controls">
+          <div class="sandbox-patterns">
+            <button
+              v-for="p in sandboxPatterns"
+              :key="p.key"
+              :class="['sandbox-btn', { active: sandboxPattern === p.key }]"
+              @click="sandboxPattern = p.key"
+            >{{ p.label }}</button>
+          </div>
+          <div class="sandbox-sliders">
+            <div class="slider-group">
+              <label>Branching: {{ sandboxBranching }}</label>
+              <input type="range" v-model.number="sandboxBranching" min="1" max="4" step="1" />
+            </div>
+            <div class="slider-group">
+              <label>Depth: {{ sandboxDepth }}</label>
+              <input type="range" v-model.number="sandboxDepth" min="1" max="6" step="1" />
+            </div>
+          </div>
+        </div>
+        <div class="sandbox-result">
+          <div class="sandbox-levels">
+            <div
+              v-for="lvl in sandboxLevels"
+              :key="lvl.depth"
+              class="sandbox-level-row"
+            >
+              <span class="sandbox-level-label">L{{ lvl.depth }}</span>
+              <div class="sandbox-bar-wrap">
+                <div class="sandbox-bar" :style="{ width: lvl.barWidth + '%' }" />
+                <span class="sandbox-bar-text">{{ lvl.cost }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="sandbox-complexity">
+            <div class="sandbox-calc">{{ sandboxCalculation }}</div>
+            <div class="sandbox-answer">{{ sandboxComplexity }}</div>
+          </div>
+        </div>
+        <!-- Guided Discovery -->
+        <div class="sandbox-hint" v-if="sandboxHint">
+          <span class="hint-icon">?</span>
+          <span class="hint-text">{{ sandboxHint }}</span>
+        </div>
+        <!-- Explain prompt: force articulation -->
+        <div class="sandbox-explain" v-if="sandboxExplainPrompt">
+          <span class="explain-icon">→</span>
+          <span class="explain-text">{{ sandboxExplainPrompt }}</span>
+        </div>
+        <!-- Input + Feedback -->
+        <div class="sandbox-input-area" v-if="sandboxExplainPrompt">
+          <div class="input-row" v-if="!sandboxFeedback">
+            <input
+              v-model="sandboxUserAnswer"
+              class="sandbox-input"
+              placeholder="Type your explanation..."
+              @keydown.enter="submitSandboxAnswer"
+            />
+            <button class="sandbox-submit" @click="submitSandboxAnswer">→</button>
+          </div>
+          <div class="sandbox-feedback" v-if="sandboxFeedback" :class="sandboxFeedback.type">
+            <span class="feedback-icon">{{ sandboxFeedback.type === 'correct' ? '✓' : sandboxFeedback.type === 'partial' ? '~' : '✗' }}</span>
+            <span class="feedback-text">{{ sandboxFeedback.message }}</span>
+            <button class="feedback-reset" @click="sandboxFeedback = null; sandboxUserAnswer = ''">try again</button>
+          </div>
+          <button class="show-answer-btn" v-if="!sandboxFeedback" @click="showSandboxAnswer = !showSandboxAnswer">
+            {{ showSandboxAnswer ? 'hide' : 'show answer' }}
+          </button>
+          <div class="sample-answer" v-if="showSandboxAnswer">
+            {{ sandboxSampleAnswer }}
+          </div>
+        </div>
       </div>
 
       <!-- Shared subproblems detail -->
@@ -1275,6 +2112,8 @@ onUnmounted(() => {
       <div v-if="store.subproblemGraph.narrative" class="perf-narrative">
         {{ store.subproblemGraph.narrative }}
       </div>
+
+      </div><!-- end analysis mode -->
     </div>
   </div>
 </template>
@@ -1840,6 +2679,74 @@ onUnmounted(() => {
   color: var(--highlight); font-weight: 700;
 }
 
+.execution-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-left: 6px;
+}
+.execution-tag.and {
+  background: rgba(251,114,153,0.15);
+  color: var(--primary);
+}
+.execution-tag.or {
+  background: rgba(34,211,238,0.15);
+  color: var(--accent);
+}
+
+.shrink-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(167,139,250,0.12);
+  color: #a78bfa;
+  margin-left: 4px;
+}
+
+.semantic-explanation {
+  background: rgba(167,139,250,0.04);
+  border: 1px solid rgba(167,139,250,0.12);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.semantic-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.semantic-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.semantic-line {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+  padding-left: 8px;
+  border-left: 2px solid transparent;
+}
+.semantic-line.semantic-conclusion {
+  color: var(--highlight);
+  font-weight: 600;
+  border-left-color: var(--highlight);
+}
+
+.edge-label {
+  font-size: 9px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
 .dag-container {
   overflow-x: auto; overflow-y: hidden;
   padding: 4px 0;
@@ -1850,6 +2757,463 @@ onUnmounted(() => {
 .dag-label { font-size: 9px; font-family: monospace; }
 .dag-result { font-size: 8px; font-family: monospace; }
 .dag-count { font-size: 8px; font-weight: 800; }
+.dag-state { font-size: 9px; font-weight: 700; }
+
+/* Recursion Level View */
+.level-view {
+  background: rgba(34,211,238,0.03);
+  border: 1px solid rgba(34,211,238,0.12);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.level-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+.level-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.level-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.level-depth {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  width: 24px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.level-bar-container {
+  flex: 1;
+  height: 16px;
+  background: rgba(34,211,238,0.06);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+.level-bar {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(34,211,238,0.25), rgba(34,211,238,0.45));
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.level-bar-balanced {
+  background: linear-gradient(90deg, rgba(34,211,238,0.35), rgba(34,211,238,0.6)) !important;
+}
+.level-bar-label {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text);
+}
+.level-size {
+  font-size: 10px;
+  color: var(--text-dim);
+  width: 50px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.level-proof {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(34,211,238,0.1);
+  font-size: 12px;
+}
+.proof-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  line-height: 1.6;
+}
+.proof-icon {
+  color: var(--accent);
+  font-weight: 700;
+  width: 14px;
+  flex-shrink: 0;
+}
+.proof-conclusion {
+  margin-top: 2px;
+  font-weight: 700;
+}
+.proof-result {
+  color: var(--highlight);
+  font-weight: 800;
+  font-size: 13px;
+}
+
+/* General Rule: transferable analysis pattern */
+.general-rule {
+  background: rgba(251,114,153,0.04);
+  border: 1px solid rgba(251,114,153,0.15);
+  border-left: 3px solid var(--primary);
+  border-radius: 0 6px 6px 0;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.rule-header {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 4px;
+}
+.rule-pattern {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.rule-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.rule-line {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  padding-left: 8px;
+}
+.rule-takeaway {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(251,114,153,0.1);
+  line-height: 1.5;
+  font-style: italic;
+}
+
+/* Pattern Sandbox */
+.sandbox-section {
+  background: rgba(251,114,153,0.03);
+  border: 1px solid rgba(251,114,153,0.12);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.sandbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.sandbox-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.sandbox-steps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.step-tag {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(100,100,120,0.06);
+  transition: all 0.2s;
+}
+.step-tag.active {
+  color: var(--primary);
+  background: rgba(251,114,153,0.1);
+}
+.step-arrow {
+  font-size: 8px;
+  color: var(--text-muted);
+}
+.sandbox-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.sandbox-patterns {
+  display: flex;
+  gap: 4px;
+}
+.sandbox-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sandbox-btn:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+.sandbox-btn.active {
+  background: rgba(251,114,153,0.12);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.sandbox-sliders {
+  display: flex;
+  gap: 16px;
+}
+.slider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.slider-group label {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.slider-group input[type="range"] {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+}
+.slider-group input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: pointer;
+}
+.sandbox-result {
+  display: flex;
+  gap: 12px;
+}
+.sandbox-levels {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sandbox-level-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sandbox-level-label {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--accent);
+  width: 16px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.sandbox-bar-wrap {
+  flex: 1;
+  height: 14px;
+  background: rgba(251,114,153,0.06);
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+.sandbox-bar {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(251,114,153,0.3), rgba(251,114,153,0.5));
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+.sandbox-bar-text {
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--text);
+}
+.sandbox-complexity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 80px;
+  gap: 2px;
+}
+.sandbox-calc {
+  font-size: 9px;
+  color: var(--text-dim);
+  text-align: center;
+}
+.sandbox-answer {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--highlight);
+}
+.sandbox-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: rgba(251,114,153,0.06);
+  border-radius: 4px;
+  border-left: 2px solid var(--primary);
+}
+.hint-icon {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--primary);
+  flex-shrink: 0;
+}
+.hint-text {
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.5;
+  font-style: italic;
+}
+.sandbox-explain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(34,211,238,0.06);
+  border-radius: 4px;
+  border-left: 2px solid var(--accent);
+}
+.explain-icon {
+  font-size: 11px;
+  color: var(--accent);
+  flex-shrink: 0;
+  font-weight: 800;
+}
+.explain-text {
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.sandbox-input-area {
+  margin-top: 6px;
+}
+.input-row {
+  display: flex;
+  gap: 4px;
+}
+.sandbox-input {
+  flex: 1;
+  padding: 5px 8px;
+  background: rgba(100,100,120,0.06);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 11px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.sandbox-input:focus {
+  border-color: var(--primary);
+}
+.sandbox-input::placeholder {
+  color: var(--text-muted);
+}
+.sandbox-submit {
+  padding: 4px 10px;
+  background: rgba(251,114,153,0.12);
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sandbox-submit:hover {
+  background: rgba(251,114,153,0.2);
+}
+.sandbox-feedback {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.sandbox-feedback.correct {
+  background: rgba(34,197,94,0.08);
+  border-left: 2px solid #22c55e;
+}
+.sandbox-feedback.partial {
+  background: rgba(234,179,8,0.08);
+  border-left: 2px solid #eab308;
+}
+.sandbox-feedback.hint {
+  background: rgba(100,100,120,0.06);
+  border-left: 2px solid var(--text-muted);
+}
+.feedback-icon {
+  font-size: 12px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.sandbox-feedback.correct .feedback-icon { color: #22c55e; }
+.sandbox-feedback.partial .feedback-icon { color: #eab308; }
+.sandbox-feedback.hint .feedback-icon { color: var(--text-muted); }
+.feedback-text {
+  flex: 1;
+  color: var(--text);
+}
+.feedback-reset {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 10px;
+  cursor: pointer;
+  text-decoration: underline;
+  flex-shrink: 0;
+}
+.show-answer-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  margin-top: 4px;
+  text-decoration: underline;
+}
+.sample-answer {
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: rgba(34,211,238,0.06);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.5;
+  border-left: 2px solid var(--accent);
+}
 
 .shared-subs {
   background: rgba(251,114,153,0.04);
@@ -1878,5 +3242,347 @@ onUnmounted(() => {
   background: rgba(167,139,250,0.04);
   border-left: 3px solid rgba(167,139,250,0.3);
   border-radius: 0 6px 6px 0;
+}
+
+/* Submode tabs: Execution / Analysis */
+.submode-tabs {
+  display: flex;
+  gap: 0;
+  margin-left: auto;
+}
+.submode-btn {
+  padding: 3px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 0.3px;
+}
+.submode-btn:first-child {
+  border-radius: 4px 0 0 4px;
+  border-right: none;
+}
+.submode-btn:last-child {
+  border-radius: 0 4px 4px 0;
+}
+.submode-btn:hover {
+  color: var(--text);
+  background: rgba(100,100,120,0.06);
+}
+.submode-btn.active {
+  background: rgba(34,211,238,0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Execution Mode */
+.execution-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 0;
+}
+.exec-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.exec-btn {
+  padding: 4px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.exec-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.exec-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.exec-play {
+  background: rgba(34,211,238,0.08);
+  border-color: rgba(34,211,238,0.3);
+  color: var(--accent);
+  font-weight: 700;
+}
+.exec-step-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: monospace;
+  flex: 1;
+  text-align: center;
+}
+
+/* Call Stack */
+.exec-stack {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.stack-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.stack-frames {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.stack-frame {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(100,100,120,0.04);
+  border-radius: 4px;
+  border-left: 2px solid var(--border);
+  font-size: 11px;
+  transition: all 0.2s;
+}
+.stack-frame.stack-active {
+  background: rgba(34,211,238,0.08);
+  border-left-color: var(--accent);
+}
+.frame-name {
+  font-weight: 700;
+  color: var(--highlight);
+  font-family: monospace;
+}
+.frame-args {
+  color: var(--text-dim);
+  font-family: monospace;
+  font-size: 10px;
+}
+.frame-return {
+  margin-left: auto;
+  color: var(--accent);
+  font-family: monospace;
+  font-size: 10px;
+}
+
+/* Current call highlight */
+.exec-current {
+  background: linear-gradient(135deg, rgba(34,211,238,0.06), rgba(167,139,250,0.06));
+  border: 1px solid rgba(34,211,238,0.2);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  padding: 8px 10px;
+}
+.current-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.current-call {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: monospace;
+}
+.current-return {
+  font-size: 11px;
+  color: var(--highlight);
+  font-family: monospace;
+  margin-top: 2px;
+}
+
+/* DAG in execution mode */
+.exec-dag {
+  overflow-x: auto;
+  padding: 4px 0;
+}
+
+/* Return Composition */
+.current-composition {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 5px 8px;
+  background: rgba(52,211,153,0.08);
+  border: 1px solid rgba(52,211,153,0.2);
+  border-radius: 4px;
+}
+.compose-icon {
+  font-size: 12px;
+  font-weight: 800;
+  color: #34d399;
+  flex-shrink: 0;
+}
+.compose-expr {
+  font-size: 13px;
+  font-weight: 700;
+  color: #34d399;
+  font-family: monospace;
+  letter-spacing: 0.5px;
+}
+.current-children {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.children-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.child-result {
+  font-size: 10px;
+  font-family: monospace;
+  color: var(--text-dim);
+  padding: 2px 6px;
+  background: rgba(167,139,250,0.06);
+  border: 1px solid rgba(167,139,250,0.12);
+  border-radius: 3px;
+}
+
+/* Combine operation type */
+.combine-operation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.combine-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.combine-type {
+  font-size: 11px;
+  font-weight: 800;
+  color: #a78bfa;
+  padding: 1px 8px;
+  background: rgba(167,139,250,0.12);
+  border: 1px solid rgba(167,139,250,0.25);
+  border-radius: 4px;
+  letter-spacing: 1px;
+}
+
+/* Pattern label */
+.pattern-label-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(251,114,153,0.06);
+  border: 1px solid rgba(251,114,153,0.15);
+  border-radius: 6px;
+}
+.pattern-label-icon {
+  font-size: 14px;
+}
+.pattern-label-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+/* Auto Summary */
+.auto-summary {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.summary-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px;
+  background: rgba(100,100,120,0.04);
+  border-radius: 4px;
+}
+.summary-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.summary-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: monospace;
+}
+.summary-warn {
+  color: #fb923c;
+}
+.summary-op {
+  color: #a78bfa;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+.summary-complexity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.summary-complexity-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.summary-bad {
+  color: #f87171;
+  font-weight: 800;
+}
+.summary-good {
+  color: #34d399;
+  font-weight: 800;
+}
+.summary-highlight {
+  color: var(--highlight);
+  font-weight: 800;
+}
+.summary-memo {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: rgba(52,211,153,0.06);
+  border-left: 2px solid #34d399;
+  border-radius: 0 4px 4px 0;
+  font-size: 11px;
+  color: var(--text);
 }
 </style>
