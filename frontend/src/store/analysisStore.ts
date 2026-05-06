@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { InsightResponse, AnalyzeResponse, DSVizResponse, ExplainResponse, StepExplanation, FocusedExplanation, StepData, ControlEdge, LoopGroup, PatternNarrativeResponse, SubproblemGraphResponse } from '../api/analysis'
 
 interface HistoryEntry {
@@ -62,6 +62,14 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const isPlaying = ref(false)
   const playSpeed = ref(500)
   const explainMode = ref(false)
+  const highlightedLine = ref(0)
+
+  // Clear editor highlight when leaving timeline/dsviz tabs
+  watch(activeTab, (tab) => {
+    if (tab !== 'timeline' && tab !== 'dsviz') {
+      highlightedLine.value = 0
+    }
+  })
 
   // History
   const history = ref<HistoryEntry[]>(loadHistory())
@@ -333,6 +341,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     focusedExplanation, focusLoading, patternResult, subproblemGraph, explainMode,
     sessionId, showAllSteps, importantSteps,
     currentStep, isPlaying, playSpeed,
+    highlightedLine,
     history,
     hasResults, timeline, totalSteps, safeStep, currentStepData, currentStepExplanation, dsVizTimeline,
     stepDependency, causalEdges,

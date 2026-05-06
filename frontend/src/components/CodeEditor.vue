@@ -5,9 +5,11 @@ import { useAnalysisStore } from '../store/analysisStore'
 const store = useAnalysisStore()
 const editorContainer = ref<HTMLElement>()
 let editor: any = null
+let monaco: any = null
+let lineHighlight: any = null
 
 onMounted(async () => {
-  const monaco = await import('monaco-editor')
+  monaco = await import('monaco-editor')
 
   editor = monaco.editor.create(editorContainer.value!, {
     value: store.code,
@@ -23,6 +25,7 @@ onMounted(async () => {
     renderLineHighlight: 'all',
     bracketPairColorization: { enabled: true },
     tabSize: 4,
+    glyphMargin: true,
   })
 
   editor.onDidChangeModelContent(() => {
@@ -34,6 +37,18 @@ watch(() => store.code, (newCode) => {
   if (editor && editor.getValue() !== newCode) {
     editor.setValue(newCode)
   }
+})
+
+watch(() => store.highlightedLine, (line) => {
+  if (!editor || !monaco) return
+  lineHighlight = editor.deltaDecorations(lineHighlight || [], line > 0 ? [{
+    range: new monaco.Range(line, 1, line, 1),
+    options: {
+      isWholeLine: true,
+      className: 'debugger-line',
+      glyphMarginClassName: 'debugger-glyph',
+    },
+  }] : [])
 })
 </script>
 
@@ -90,5 +105,18 @@ watch(() => store.code, (newCode) => {
 .editor-container {
   flex: 1;
   min-height: 0;
+}
+</style>
+
+<style>
+.debugger-line {
+  background: rgba(239, 68, 68, 0.18) !important;
+  border-left: 3px solid #ef4444 !important;
+}
+.debugger-glyph {
+  background: #ef4444 !important;
+  width: 4px !important;
+  border-radius: 2px;
+  margin-left: 4px;
 }
 </style>

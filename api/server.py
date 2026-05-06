@@ -32,6 +32,7 @@ from query.root_cause import RootCauseQuery
 from visualization.graph_ui import GraphVisualizer
 from visualization.ds_viz import render_ds_timeline
 from api.sandbox import run_sandboxed
+from api.input_inference import infer_args
 from reasoning.llm_reasoner import LLMReasoner
 from reasoning.importance import compute_importance
 
@@ -244,12 +245,12 @@ def _extract_func_name(code: str, func_name: str) -> str:
 
 
 def _import_code_as_module(code: str, module_name: str = "_user_code"):
-    """Import user code as a module."""
+    """Import user code as a module. Temp file is NOT deleted here —
+    the caller must clean it up because tracing reads code lines from it."""
     tmp_path = _write_temp_code(code, "python")
     spec = importlib.util.spec_from_file_location(module_name, tmp_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    os.unlink(tmp_path)
     return module
 
 
@@ -310,7 +311,7 @@ async def analyze(req: AnalyzeRequest):
 @app.post("/api/insight")
 async def get_insight(req: InsightRequest):
     """Get cognitive-level insight for code."""
-    tmp_path = None
+    func_file = None
     try:
         func_name = _extract_func_name(req.code, req.func_name)
         if not func_name:
@@ -319,12 +320,14 @@ async def get_insight(req: InsightRequest):
         module = _import_code_as_module(req.code)
         func = getattr(module, func_name)
 
-        # Use the function's compiled file path for tracing (the temp file used during import)
+        # The function's compiled file path IS the temp file we just wrote
         func_file = os.path.abspath(func.__code__.co_filename)
-        tmp_path = _write_temp_code(req.code, req.language)
 
-        # Record execution — trace the file the function was actually compiled from
-        result, timeline = record_function(func, target_files={func_file})
+        # Infer input arguments from function signature + AST hints
+        inferred_args, arg_meta = infer_args(func, req.code)
+
+        # Record execution — trace with inferred args
+        result, timeline = record_function(func, *inferred_args, target_files={func_file})
 
         # Generate insight
         insight = summarize_insight(timeline, result, func_name)
@@ -379,6 +382,7 @@ async def get_insight(req: InsightRequest):
             "session_id": session_id,
             "result": result,
             "func_name": func_name,
+            "input_inference": arg_meta,
             "insight": {
                 "one_liner": insight.one_liner,
                 "algorithm_type": insight.algorithm_type,
@@ -395,9 +399,9 @@ async def get_insight(req: InsightRequest):
     except Exception as e:
         return {"success": False, "error": str(e), "error_type": type(e).__name__}
     finally:
-        if tmp_path:
+        if func_file:
             try:
-                os.unlink(tmp_path)
+                os.unlink(func_file)
             except OSError:
                 pass
 
@@ -405,7 +409,7 @@ async def get_insight(req: InsightRequest):
 @app.post("/api/ds-viz")
 async def get_ds_viz(req: DSVizRequest):
     """Data structure visualization."""
-    tmp_path = None
+    func_file = None
     try:
         func_name = _extract_func_name(req.code, req.func_name)
         if not func_name:
@@ -414,9 +418,11 @@ async def get_ds_viz(req: DSVizRequest):
         module = _import_code_as_module(req.code)
         func = getattr(module, func_name)
 
-        tmp_path = _write_temp_code(req.code, req.language)
+        func_file = os.path.abspath(func.__code__.co_filename)
 
-        result, timeline = trace_ds_function(func, target_files={os.path.abspath(tmp_path)})
+        inferred_args, arg_meta = infer_args(func, req.code)
+
+        result, timeline = trace_ds_function(func, *inferred_args, target_files={func_file})
 
         # Render
         html_path = render_ds_timeline(
@@ -480,9 +486,9 @@ async def get_ds_viz(req: DSVizRequest):
     except Exception as e:
         return {"success": False, "error": str(e), "error_type": type(e).__name__}
     finally:
-        if tmp_path:
+        if func_file:
             try:
-                os.unlink(tmp_path)
+                os.unlink(func_file)
             except OSError:
                 pass
 
@@ -526,8 +532,10 @@ async def explain_code(req: ExplainRequest):
         func_file = os.path.abspath(func.__code__.co_filename)
         tmp_path = _write_temp_code(req.code, req.language)
 
+        inferred_args, _ = infer_args(func, req.code)
+
         # Record execution
-        result, timeline = record_function(func, target_files={func_file})
+        result, timeline = record_function(func, *inferred_args, target_files={func_file})
 
         # Generate insight data
         insight = summarize_insight(timeline, result, func_name)
@@ -621,9 +629,11 @@ async def explain_steps(req: ExplainStepsRequest):
             func = getattr(module, func_name)
             func_file = os.path.abspath(func.__code__.co_filename)
             tmp_path = _write_temp_code(req.code, req.language)
-            result, timeline = record_function(func, target_files={func_file})
+            inferred_args, _ = infer_args(func, req.code)
+            result, timeline = record_function(func, *inferred_args, target_files={func_file})
             insight = summarize_insight(timeline, result, func_name)
             os.unlink(tmp_path)
+            os.unlink(func_file)
 
             steps_data = []
             for step in timeline.steps:
@@ -730,9 +740,11 @@ async def explain_step_focus(req: ExplainStepFocusRequest):
             func = getattr(module, func_name)
             func_file = os.path.abspath(func.__code__.co_filename)
             tmp_path = _write_temp_code(req.code, req.language)
-            result, timeline = record_function(func, target_files={func_file})
+            inferred_args, _ = infer_args(func, req.code)
+            result, timeline = record_function(func, *inferred_args, target_files={func_file})
             insight = summarize_insight(timeline, result, func_name)
             os.unlink(tmp_path)
+            os.unlink(func_file)
 
             steps_data = []
             for step in timeline.steps:
@@ -1189,8 +1201,10 @@ async def pattern_narrative(req: ExplainStepsRequest):
             func = getattr(module, func_name)
             func_file = os.path.abspath(func.__code__.co_filename)
             tmp_path = _write_temp_code(req.code, req.language)
-            result, timeline = record_function(func, target_files={func_file})
+            inferred_args, _ = infer_args(func, req.code)
+            result, timeline = record_function(func, *inferred_args, target_files={func_file})
             os.unlink(tmp_path)
+            os.unlink(func_file)
             steps_data = []
             for step in timeline.steps:
                 var_states = {}
@@ -2158,20 +2172,11 @@ async def subproblem_graph(req: ExplainStepsRequest):
         module = _import_code_as_module(req.code)
         func = getattr(module, func_name)
 
-        # Determine sensible default args from function signature
-        import inspect
-        sig = inspect.signature(func)
-        default_args = []
-        for param_name, param in sig.parameters.items():
-            if param.default is not inspect.Parameter.empty:
-                continue  # has default, skip
-            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                continue
-            # Try common test values
-            default_args.append(8)  # default test input
+        # Infer args from function signature + AST hints
+        inferred_args, _ = infer_args(func, req.code)
 
-        # Trace execution — call with inferred args, or no args if all have defaults
-        result, tree = _trace_recursive_calls(func, tuple(default_args))
+        # Trace execution
+        result, tree = _trace_recursive_calls(func, list(inferred_args))
 
         if tree is None:
             return {

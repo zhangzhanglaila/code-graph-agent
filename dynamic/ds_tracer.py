@@ -56,6 +56,21 @@ def _safe_repr(val: Any, max_len: int = 100) -> str:
         return f"<{type(val).__name__}>"
 
 
+def _extract_local_val(obj: Any) -> str:
+    """Extract the local/immediate value of a data-structure node.
+
+    Linked list / tree nodes carry a .val attribute whose repr() prints
+    the whole chain — we want only the current node's payload so the
+    graph shows head = 1, not head = 1 -> 2 -> 3 -> None.
+    """
+    if hasattr(obj, "val") and not callable(obj.val) and obj.val is not None:
+        v = obj.val
+        if isinstance(v, (int, float, str, bool)):
+            return str(v)
+        return _safe_repr(v, max_len=60)
+    return _safe_repr(obj, max_len=60)
+
+
 def _get_ref_ids(obj: Any, visited: Optional[Set[int]] = None) -> Dict[str, int]:
     """Get object ids that this object references via attributes."""
     if visited is None:
@@ -181,8 +196,8 @@ class DSTracer:
             obj_snapshots[obj_id] = ObjectSnapshot(
                 obj_id=obj_id,
                 type_name=type(obj).__name__,
-                val_repr=_safe_repr(obj),
-                attributes={k: _safe_repr(v) for k, v in (obj.__dict__.items() if hasattr(obj, "__dict__") else {})},
+                val_repr=_extract_local_val(obj),
+                attributes={k: _safe_repr(v, max_len=60) for k, v in (obj.__dict__.items() if hasattr(obj, "__dict__") else {})},
                 ref_ids=refs,
             )
 

@@ -15,6 +15,13 @@ const steps = computed(() => {
 const totalSteps = computed(() => steps.value?.length || 0)
 const currentData = computed(() => steps.value[dsStep.value] || null)
 
+// Highlight current line in code editor (debugger-style)
+watch(currentData, (d) => {
+  if (d && store.activeTab === 'dsviz') {
+    store.highlightedLine = d.line || 0
+  }
+})
+
 // Auto-play state
 const isPlaying = ref(true)
 const isInternal = ref(false)
@@ -30,11 +37,10 @@ function startAutoPlay() {
   timer = setInterval(() => {
     if (!isPlaying.value) return
     if (dsStep.value >= totalSteps.value - 1) {
-      isPlaying.value = false
-      stopAutoPlay()
-      return
+      dsStep.value = 0
+    } else {
+      dsStep.value++
     }
-    dsStep.value++
     isInternal.value = true
     store.currentStep = dsStep.value
     nextTick(() => { isInternal.value = false })
@@ -150,7 +156,7 @@ const varDiff = computed(() => {
 // Force-directed layout
 interface LayoutNode {
   id: number; x: number; y: number; vx: number; vy: number
-  type: string; val: string; attrs: Record<string, string>
+  type: string; val: string; fullVal: string; attrs: Record<string, string>
   refs: Record<string, number>; changed: boolean; varNames: string[]
 }
 
@@ -166,10 +172,14 @@ function computeLayout(data: any): LayoutNode[] {
 
   for (const [, node] of Object.entries(data.nodes || {})) {
     const n = node as any
+    const attrs = n.attrs || {}
+    // Build full-chain string for tooltip: e.g. "1 → 2 → 3 → None"
+    const parts: string[] = [n.val]
+    if (attrs.next && !attrs.next.startsWith('<')) parts.push(attrs.next)
     nodes.push({
       id: n.id, x: 0, y: 0, vx: 0, vy: 0,
-      type: n.type, val: n.val, attrs: n.attrs || {},
-      refs: n.refs || {}, changed: n.changed, varNames: varByObj[n.id] || [],
+      type: n.type, val: n.val, fullVal: parts.join(' → '),
+      attrs, refs: n.refs || {}, changed: n.changed, varNames: varByObj[n.id] || [],
     })
   }
 
@@ -301,13 +311,12 @@ const selectedNode = computed(() => {
           v-for="node in layoutNodes" :key="node.id"
           class="ds-node"
           :class="{ changed: node.changed, selected: selectedObj === node.id }"
-          :style="{ left: node.x - 28 + 'px', top: node.y - 28 + 'px' }"
+          :style="{ left: node.x - 36 + 'px', top: node.y - 36 + 'px' }"
           @click.stop="selectObj(node.id)"
         >
-          <div class="node-vars" v-if="node.varNames.length">
-            <span v-for="v in node.varNames" :key="v" class="var-tag">{{ v }}</span>
-          </div>
-          <div class="node-circle">
+          <div class="node-circle" :title="(node.varNames.length ? node.varNames[0] + ' = ' + node.fullVal : node.fullVal) || ''">
+            <span class="node-var-name" v-if="node.varNames.length">{{ node.varNames[0] }}</span>
+            <span class="node-eq" v-if="node.varNames.length">=</span>
             <span class="node-val">{{ node.val.length > 6 ? node.val.slice(0, 6) + '..' : node.val }}</span>
           </div>
           <div class="node-type">{{ node.type }}</div>
@@ -401,11 +410,13 @@ const selectedNode = computed(() => {
 .ds-node:hover { transform: scale(1.12); }
 
 .node-circle {
-  width: 56px; height: 56px; border-radius: 14px;
+  min-width: 48px; height: 36px; border-radius: 10px;
+  padding: 0 10px;
   background: var(--bg-card); border: 2px solid var(--border);
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: center; justify-content: center; gap: 3px;
   transition: all 0.2s ease;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  white-space: nowrap;
 }
 
 .ds-node.changed .node-circle {
@@ -419,15 +430,10 @@ const selectedNode = computed(() => {
   box-shadow: 0 4px 16px rgba(0,161,214,0.25);
 }
 
-.node-val { font-size: 11px; color: var(--text); font-weight: 600; font-family: monospace; }
-.node-type { font-size: 9px; color: var(--text-muted); margin-top: 2px; }
-
-.node-vars { display: flex; gap: 3px; margin-bottom: 4px; }
-.var-tag {
-  font-size: 9px; background: rgba(0,161,214,0.1);
-  color: var(--highlight); padding: 1px 6px; border-radius: 4px;
-  font-weight: 600;
-}
+.node-var-name { font-size: 10px; color: var(--highlight); font-weight: 600; font-family: monospace; }
+.node-eq { font-size: 10px; color: var(--text-muted); }
+.node-val { font-size: 12px; color: var(--text); font-weight: 700; font-family: monospace; }
+.node-type { font-size: 9px; color: var(--text-muted); margin-top: 3px; }
 
 .ds-diff {
   display: flex; flex-wrap: wrap; gap: 6px;

@@ -1754,7 +1754,7 @@ const causalGraph = computed(() => {
     columns.get(col)!.push(id)
   }
 
-  const nodeW = 160, nodeH = 48, gapY = 16, colGap = 200
+  const nodeW = 200, nodeH = 60, gapY = 20, colGap = 240
   const maxCol = Math.max(...columns.keys(), 0)
   const minCol = Math.min(...columns.keys(), 0)
 
@@ -1971,10 +1971,10 @@ function playNext() {
   if (!store.isPlaying) return
   if ((store?.currentStep ?? 0) < (store?.totalSteps ?? 0) - 1) {
     store.nextStep()
-    playTimer.value = window.setTimeout(playNext, store.playSpeed)
   } else {
-    store.isPlaying = false
+    store.goToStep(0)
   }
+  playTimer.value = window.setTimeout(playNext, store.playSpeed)
 }
 
 // Explain Mode — auto-play with AI narration + importance-based pause
@@ -2013,8 +2013,8 @@ function explainPlayNext() {
 
     playTimer.value = window.setTimeout(explainPlayNext, delay)
   } else {
-    explainPlaying.value = false
-    store.isPlaying = false
+    store.goToStep(0)
+    playTimer.value = window.setTimeout(explainPlayNext, 1200)
   }
 }
 
@@ -2030,6 +2030,21 @@ function goToStepWithFocus(idx: number) {
     causalSource.value = null
   }
 }
+
+// Auto-play when timeline tab is opened with data
+watch(() => store.activeTab, (tab) => {
+  if (tab === 'timeline' && store.timeline.length > 0 && !store.isPlaying) {
+    store.isPlaying = true
+    playNext()
+  }
+}, { immediate: true })
+
+// Highlight current line in code editor (debugger-style)
+watch(() => store.currentStepData, (d) => {
+  if (d && store.activeTab === 'timeline') {
+    store.highlightedLine = d.line || 0
+  }
+})
 
 onUnmounted(() => {
   if (playTimer.value) clearTimeout(playTimer.value)
