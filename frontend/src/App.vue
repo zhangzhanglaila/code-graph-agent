@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, onErrorCaptured, ref } from 'vue'
 import TopBar from './components/TopBar.vue'
 import CodeEditor from './components/CodeEditor.vue'
 import InsightPanel from './components/InsightPanel.vue'
@@ -11,6 +11,13 @@ import { useAnalysisStore } from './store/analysisStore'
 import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps, getPatternNarrative, getSubproblemGraph } from './api/analysis'
 
 const store = useAnalysisStore()
+const componentError = ref('')
+
+onErrorCaptured((err, instance, info) => {
+  componentError.value = `${err.message} [${info}]`
+  console.error('[Vue Error Captured]', err, info)
+  return false // prevent propagation
+})
 
 const DEMOS: Record<string, string> = {
   fibonacci: `def fibonacci(n=8):
@@ -151,6 +158,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
     <!-- Right: Results -->
     <div class="right-panel">
+      <!-- Debug info (temporary) -->
+      <div class="debug-bar" v-if="store.hasResults || componentError">
+        Tab: {{ store.activeTab }} |
+        Timeline: {{ store.timeline.length }} steps |
+        Graph: {{ store.analyzeResult ? 'yes' : 'no' }} |
+        DSViz: {{ store.dsVizResult?.steps?.length ?? 'null' }} steps |
+        ExplainSteps: {{ store.stepExplanations.length }} |
+        Subproblem: {{ store.subproblemGraph ? 'yes' : 'no' }}
+        <span v-if="componentError" style="color:var(--error)"> | ERROR: {{ componentError }}</span>
+      </div>
+
       <!-- Loading -->
       <div v-if="store.loading" class="loading-overlay">
         <div class="loading-spinner"></div>
@@ -206,7 +224,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 .loading-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(15,23,42,0.9);
+  background: rgba(240,242,245,0.92);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -264,5 +282,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   flex: 1;
   overflow-y: auto;
   padding: 12px;
+}
+
+.debug-bar {
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--warning);
+  background: rgba(251,191,36,0.08);
+  border-bottom: 1px solid rgba(251,191,36,0.2);
+  padding: 4px 12px;
+  flex-shrink: 0;
 }
 </style>

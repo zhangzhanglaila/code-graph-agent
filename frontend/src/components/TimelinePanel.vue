@@ -4,6 +4,7 @@ import { useAnalysisStore } from '../store/analysisStore'
 import { getExplainStepFocus } from '../api/analysis'
 
 const store = useAnalysisStore()
+
 const playTimer = ref<number | null>(null)
 const explainPlaying = ref(false)
 const causalSource = ref<number | null>(null)  // step whose causal links are shown
@@ -434,6 +435,7 @@ interface ExecEvent {
 // ── DAG execution trace: scheduler-aware topological order (Kahn's algorithm) ──
 // Tracks the READY QUEUE at each step — shows why this node was picked
 const dagExecTrace = computed<ExecEvent[]>(() => {
+  try {
   const serverTree = store.subproblemGraph?.call_tree
   const dag = store.subproblemGraph?.dag
   if (!serverTree || !dag) return []
@@ -574,6 +576,7 @@ const dagExecTrace = computed<ExecEvent[]>(() => {
     }
   }
   return events
+  } catch (e) { console.error('[dagExecTrace]', e); return [] }
 })
 
 // Current ready queue at the execution step (DAG mode only)
@@ -605,6 +608,7 @@ const dagReadyAnalysis = computed(() => {
 })
 
 const execTrace = computed<ExecEvent[]>(() => {
+  try {
   // In memo mode, use DAG execution trace (each subproblem computed once)
   if (showMemoMode.value && dagExecTrace.value.length > 0) {
     return dagExecTrace.value
@@ -668,6 +672,7 @@ const execTrace = computed<ExecEvent[]>(() => {
 
   dfs(serverTree, 0)
   return events
+  } catch (e) { console.error('[execTrace]', e); return [] }
 })
 
 const execCurrentCall = computed(() => {
@@ -834,6 +839,7 @@ interface TreeNode {
 }
 
 const callTree = computed<TreeNode | null>(() => {
+  try {
   const serverTree = store.subproblemGraph?.call_tree
   const dag = store.subproblemGraph?.dag
   if (!serverTree) return null
@@ -932,6 +938,7 @@ const callTree = computed<TreeNode | null>(() => {
   layoutNode_(tree, 0, 0)
 
   return tree
+  } catch (e) { console.error('[callTree]', e); return null }
 })
 
 // Flatten tree for rendering
@@ -2033,8 +2040,13 @@ onUnmounted(() => {
 
 <template>
   <div class="timeline-panel animate-slide-up">
+    <!-- No-data guard: prevents slider with max=-1 from corrupting currentStep -->
+    <div v-if="store.totalSteps === 0" class="empty-state">
+      <p>No timeline data available. Run analysis first.</p>
+    </div>
+
     <!-- Controls -->
-    <div class="controls">
+    <div class="controls" v-if="store.totalSteps > 0">
       <button class="btn btn-secondary btn-sm" @click="goToStepWithFocus(store.currentStep - 1)">&#9664;</button>
       <button class="btn btn-sm" :class="store.isPlaying && !explainPlaying ? 'btn-primary' : 'btn-secondary'" @click="togglePlay">
         {{ store.isPlaying && !explainPlaying ? '&#9632;' : '&#9654;' }}
@@ -2044,11 +2056,11 @@ onUnmounted(() => {
         type="range"
         class="slider"
         :min="0"
-        :max="store.totalSteps - 1"
+        :max="Math.max(0, store.totalSteps - 1)"
         :value="store.currentStep"
         @input="goToStepWithFocus(+($event.target as HTMLInputElement).value)"
       />
-      <span class="step-display">{{ store.currentStep }} / {{ store.totalSteps - 1 }}</span>
+      <span class="step-display">{{ store.currentStep }} / {{ Math.max(0, store.totalSteps - 1) }}</span>
       <input type="number" class="speed-input" v-model.number="store.playSpeed" min="100" max="3000" step="100" />
       <span class="speed-label">ms</span>
 
@@ -3227,6 +3239,15 @@ onUnmounted(() => {
 
 <style scoped>
 .timeline-panel { display: flex; flex-direction: column; gap: 12px; }
+
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
 
 .controls {
   display: flex;

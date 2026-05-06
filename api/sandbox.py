@@ -57,7 +57,7 @@ def run_sandboxed(
 
     try:
         proc = subprocess.run(
-            [sys.executable, tmp.path],
+            [sys.executable, tmp.name],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -120,7 +120,7 @@ def run_sandboxed(
         }
     finally:
         try:
-            os.unlink(tmp.path)
+            os.unlink(tmp.name)
         except OSError:
             pass
 

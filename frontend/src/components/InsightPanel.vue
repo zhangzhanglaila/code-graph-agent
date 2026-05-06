@@ -233,9 +233,7 @@ function formatResult(result: any): string {
 .welcome h2 {
   font-size: 22px;
   margin-bottom: 8px;
-  background: linear-gradient(135deg, var(--primary), var(--highlight));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--text);
 }
 
 .welcome p { color: var(--text-dim); margin-bottom: 24px; font-size: 14px; }
@@ -359,8 +357,8 @@ function formatResult(result: any): string {
 .results { padding: 0; }
 
 .insight-hero {
-  background: linear-gradient(135deg, rgba(251,114,153,0.1), rgba(34,211,238,0.1));
-  border: 1px solid rgba(251,114,153,0.2);
+  background: linear-gradient(135deg, rgba(251,114,153,0.08), rgba(0,161,214,0.08));
+  border: 1px solid rgba(251,114,153,0.15);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 16px;
@@ -398,8 +396,8 @@ function formatResult(result: any): string {
 
 /* AI Explanation */
 .ai-explain {
-  background: linear-gradient(135deg, rgba(34,211,238,0.05), rgba(167,139,250,0.05));
-  border: 1px solid rgba(34,211,238,0.2);
+  background: linear-gradient(135deg, rgba(0,161,214,0.05), rgba(167,139,250,0.05));
+  border: 1px solid rgba(0,161,214,0.15);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 16px;
@@ -413,8 +411,8 @@ function formatResult(result: any): string {
 }
 
 .ai-icon {
-  background: linear-gradient(135deg, #22d3ee, #a78bfa);
-  color: #0f172a;
+  background: linear-gradient(135deg, var(--highlight), var(--accent));
+  color: #1e293b;
   font-size: 10px;
   font-weight: 800;
   padding: 3px 8px;
@@ -457,7 +455,7 @@ function formatResult(result: any): string {
   font-size: 12px;
   font-family: monospace;
   background: rgba(167,139,250,0.1);
-  color: #a78bfa;
+  color: var(--accent);
   padding: 4px 10px;
   border-radius: 6px;
   border: 1px solid rgba(167,139,250,0.2);

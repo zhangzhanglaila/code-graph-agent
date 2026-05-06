@@ -12,7 +12,7 @@ onMounted(async () => {
   editor = monaco.editor.create(editorContainer.value!, {
     value: store.code,
     language: 'python',
-    theme: 'vs-dark',
+    theme: 'vs',
     fontSize: 14,
     fontFamily: "'Consolas', 'Monaco', monospace",
     lineNumbers: 'on',

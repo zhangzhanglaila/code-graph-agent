@@ -7,9 +7,77 @@ const canvasRef = ref<HTMLElement>()
 const dsStep = ref(0)
 const selectedObj = ref<number | null>(null)
 
-const steps = computed(() => store.dsVizResult?.steps || [])
+const steps = computed(() => store.dsVizTimeline)
 const totalSteps = computed(() => steps.value.length)
 const currentData = computed(() => steps.value[dsStep.value] || null)
+
+// Variable diff: compare current vs previous step (with structural detail)
+function tryParse(raw: string): any {
+  if (!raw || typeof raw !== 'string') return null
+  if (raw.startsWith('[') || raw.startsWith('{')) {
+    try { return JSON.parse(raw) } catch {}
+  }
+  if (raw.startsWith("{'") || raw.startsWith('{"')) {
+    try { return JSON.parse(raw.replace(/'/g, '"')) } catch {}
+  }
+  return null
+}
+
+const varDiff = computed(() => {
+  const timeline = store.timeline
+  const idx = dsStep.value
+  const curr = timeline[idx]
+  const prev = idx > 0 ? timeline[idx - 1] : null
+  if (!curr) return { added: [] as string[], modified: [] as string[], removed: [] as string[], details: {} as Record<string, string> }
+
+  const currVars = curr.vars || {}
+  const prevVars = prev?.vars || {}
+  const added: string[] = []
+  const modified: string[] = []
+  const removed: string[] = []
+  const details: Record<string, string> = {}
+
+  for (const name of Object.keys(currVars)) {
+    if (!(name in prevVars)) {
+      added.push(name)
+    } else if (currVars[name].value !== prevVars[name].value) {
+      modified.push(name)
+      // Structural diff for arrays and dicts
+      const prevParsed = tryParse(prevVars[name].value)
+      const currParsed = tryParse(currVars[name].value)
+
+      if (Array.isArray(prevParsed) && Array.isArray(currParsed)) {
+        const lenDiff = currParsed.length - prevParsed.length
+        const changedIdx: number[] = []
+        for (let i = 0; i < Math.min(prevParsed.length, currParsed.length); i++) {
+          if (JSON.stringify(prevParsed[i]) !== JSON.stringify(currParsed[i])) changedIdx.push(i)
+        }
+        const parts: string[] = []
+        if (lenDiff > 0) parts.push(`+${lenDiff} at end`)
+        if (lenDiff < 0) parts.push(`${lenDiff} removed`)
+        if (changedIdx.length) parts.push(`changed [${changedIdx.join(',')}]`)
+        details[name] = parts.join(', ') || 'modified'
+      } else if (prevParsed && currParsed && typeof prevParsed === 'object' && typeof currParsed === 'object' && !Array.isArray(prevParsed)) {
+        const prevKeys = new Set(Object.keys(prevParsed))
+        const currKeys = new Set(Object.keys(currParsed))
+        const addedKeys = [...currKeys].filter(k => !prevKeys.has(k))
+        const removedKeys = [...prevKeys].filter(k => !currKeys.has(k))
+        const changedKeys = [...currKeys].filter(k => prevKeys.has(k) && JSON.stringify(prevParsed[k]) !== JSON.stringify(currParsed[k]))
+        const parts: string[] = []
+        if (addedKeys.length) parts.push(`+${addedKeys.join(',')}`)
+        if (removedKeys.length) parts.push(`-${removedKeys.join(',')}`)
+        if (changedKeys.length) parts.push(`~${changedKeys.join(',')}`)
+        details[name] = parts.join(', ') || 'modified'
+      } else {
+        details[name] = `${String(prevVars[name].value).slice(0, 15)} → ${String(currVars[name].value).slice(0, 15)}`
+      }
+    }
+  }
+  for (const name of Object.keys(prevVars)) {
+    if (!(name in currVars)) removed.push(name)
+  }
+  return { added, modified, removed, details }
+})
 
 // Sync with timeline step when on ds-viz tab
 watch(() => store.currentStep, (s) => {
@@ -145,6 +213,16 @@ function selectObj(id: number) {
   selectedObj.value = selectedObj.value === id ? null : id
 }
 
+function getPrevVal(name: string): string {
+  const prev = dsStep.value > 0 ? store.timeline[dsStep.value - 1] : null
+  return String(prev?.vars?.[name]?.value ?? '').slice(0, 20)
+}
+
+function getCurrVal(name: string): string {
+  const curr = store.timeline[dsStep.value]
+  return String(curr?.vars?.[name]?.value ?? '').slice(0, 20)
+}
+
 const selectedNode = computed(() => {
   if (selectedObj.value === null) return null
   return layoutNodes.value.find(n => n.id === selectedObj.value) || null
@@ -170,6 +248,15 @@ const selectedNode = computed(() => {
       <div class="ds-code" v-if="currentData">
         <span class="ds-code-file">line {{ currentData.line }}</span>
         <code>{{ currentData.code }}</code>
+      </div>
+
+      <!-- Variable diff -->
+      <div class="ds-diff" v-if="varDiff.added.length || varDiff.modified.length || varDiff.removed.length">
+        <span v-for="name in varDiff.added" :key="'a'+name" class="diff-tag diff-added">{{ name }}: new</span>
+        <span v-for="name in varDiff.modified" :key="'m'+name" class="diff-tag diff-modified">
+          {{ name }}: {{ varDiff.details[name] || (getPrevVal(name) + ' → ' + getCurrVal(name)) }}
+        </span>
+        <span v-for="name in varDiff.removed" :key="'r'+name" class="diff-tag diff-removed">{{ name }}: removed</span>
       </div>
 
       <!-- Canvas area -->
@@ -302,24 +389,25 @@ const selectedNode = computed(() => {
   align-items: center; cursor: pointer; z-index: 2;
   transition: transform 0.15s;
 }
-.ds-node:hover { transform: scale(1.1); }
+.ds-node:hover { transform: scale(1.12); }
 
 .node-circle {
-  width: 56px; height: 56px; border-radius: 50%;
-  background: #1e293b; border: 2px solid #475569;
+  width: 56px; height: 56px; border-radius: 14px;
+  background: var(--bg-card); border: 2px solid var(--border);
   display: flex; align-items: center; justify-content: center;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
 
 .ds-node.changed .node-circle {
-  border-color: #fb7299;
+  border-color: var(--primary);
   background: rgba(251,114,153,0.1);
-  box-shadow: 0 0 12px rgba(251,114,153,0.3);
+  box-shadow: 0 4px 16px rgba(251,114,153,0.25);
 }
 
 .ds-node.selected .node-circle {
-  border-color: #60a5fa;
-  box-shadow: 0 0 12px rgba(96,165,250,0.4);
+  border-color: var(--highlight);
+  box-shadow: 0 4px 16px rgba(0,161,214,0.25);
 }
 
 .node-val { font-size: 11px; color: var(--text); font-weight: 600; font-family: monospace; }
@@ -329,9 +417,45 @@ const selectedNode = computed(() => {
   display: flex; gap: 3px; margin-bottom: 4px;
 }
 .var-tag {
-  font-size: 9px; background: rgba(96,165,250,0.15);
-  color: #60a5fa; padding: 1px 6px; border-radius: 4px;
+  font-size: 9px; background: rgba(0,161,214,0.1);
+  color: var(--highlight); padding: 1px 6px; border-radius: 4px;
   font-weight: 600;
+}
+
+.ds-diff {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+
+.diff-tag {
+  font-size: 11px;
+  font-family: monospace;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.diff-added {
+  background: rgba(34,197,94,0.1);
+  color: #16a34a;
+  border: 1px solid rgba(34,197,94,0.2);
+}
+
+.diff-modified {
+  background: rgba(234,179,8,0.1);
+  color: #ca8a04;
+  border: 1px solid rgba(234,179,8,0.2);
+}
+
+.diff-removed {
+  background: rgba(239,68,68,0.1);
+  color: #dc2626;
+  border: 1px solid rgba(239,68,68,0.2);
 }
 
 .ds-detail {
@@ -355,9 +479,9 @@ const selectedNode = computed(() => {
   display: flex; align-items: center; gap: 6px;
   font-size: 12px; padding: 2px 0;
 }
-.attr-name { color: #a78bfa; font-family: monospace; }
+.attr-name { color: var(--accent); font-family: monospace; }
 .attr-type { color: var(--text-muted); font-size: 10px; }
-.ref-attr { color: #a78bfa; font-family: monospace; }
+.ref-attr { color: var(--accent); font-family: monospace; }
 .ref-arrow { color: var(--text-muted); }
-.ref-target { color: #60a5fa; }
+.ref-target { color: var(--highlight); }
 </style>

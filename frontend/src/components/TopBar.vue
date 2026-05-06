@@ -61,9 +61,7 @@ const emit = defineEmits<{
 .logo-text {
   font-size: 18px;
   font-weight: 700;
-  background: linear-gradient(135deg, var(--primary), var(--highlight));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--primary);
 }
 
 .logo-tag {

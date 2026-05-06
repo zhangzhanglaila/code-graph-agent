@@ -319,10 +319,12 @@ async def get_insight(req: InsightRequest):
         module = _import_code_as_module(req.code)
         func = getattr(module, func_name)
 
+        # Use the function's compiled file path for tracing (the temp file used during import)
+        func_file = os.path.abspath(func.__code__.co_filename)
         tmp_path = _write_temp_code(req.code, req.language)
 
-        # Record execution
-        result, timeline = record_function(func, target_files={os.path.abspath(tmp_path)})
+        # Record execution — trace the file the function was actually compiled from
+        result, timeline = record_function(func, target_files={func_file})
 
         # Generate insight
         insight = summarize_insight(timeline, result, func_name)
@@ -521,10 +523,11 @@ async def explain_code(req: ExplainRequest):
 
         module = _import_code_as_module(req.code)
         func = getattr(module, func_name)
+        func_file = os.path.abspath(func.__code__.co_filename)
         tmp_path = _write_temp_code(req.code, req.language)
 
         # Record execution
-        result, timeline = record_function(func, target_files={os.path.abspath(tmp_path)})
+        result, timeline = record_function(func, target_files={func_file})
 
         # Generate insight data
         insight = summarize_insight(timeline, result, func_name)
@@ -616,8 +619,9 @@ async def explain_steps(req: ExplainStepsRequest):
 
             module = _import_code_as_module(req.code)
             func = getattr(module, func_name)
+            func_file = os.path.abspath(func.__code__.co_filename)
             tmp_path = _write_temp_code(req.code, req.language)
-            result, timeline = record_function(func, target_files={os.path.abspath(tmp_path)})
+            result, timeline = record_function(func, target_files={func_file})
             insight = summarize_insight(timeline, result, func_name)
             os.unlink(tmp_path)
 
@@ -724,8 +728,9 @@ async def explain_step_focus(req: ExplainStepFocusRequest):
 
             module = _import_code_as_module(req.code)
             func = getattr(module, func_name)
+            func_file = os.path.abspath(func.__code__.co_filename)
             tmp_path = _write_temp_code(req.code, req.language)
-            result, timeline = record_function(func, target_files={os.path.abspath(tmp_path)})
+            result, timeline = record_function(func, target_files={func_file})
             insight = summarize_insight(timeline, result, func_name)
             os.unlink(tmp_path)
 
@@ -1182,8 +1187,9 @@ async def pattern_narrative(req: ExplainStepsRequest):
                 return {"success": False, "error": "No function found in code."}
             module = _import_code_as_module(req.code)
             func = getattr(module, func_name)
+            func_file = os.path.abspath(func.__code__.co_filename)
             tmp_path = _write_temp_code(req.code, req.language)
-            result, timeline = record_function(func, target_files={os.path.abspath(tmp_path)})
+            result, timeline = record_function(func, target_files={func_file})
             os.unlink(tmp_path)
             steps_data = []
             for step in timeline.steps:
@@ -2164,10 +2170,7 @@ async def subproblem_graph(req: ExplainStepsRequest):
             # Try common test values
             default_args.append(8)  # default test input
 
-        if not default_args:
-            default_args = [8]
-
-        # Trace execution
+        # Trace execution — call with inferred args, or no args if all have defaults
         result, tree = _trace_recursive_calls(func, tuple(default_args))
 
         if tree is None:

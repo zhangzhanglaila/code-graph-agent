@@ -31,7 +31,12 @@
       "Bash(python3 -c ' *)",
       "Bash(python3)",
       "Bash(python3 fix_template.py)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(curl -s http://localhost:8000/api/run -X POST -H \"Content-Type: application/json\" -d '{\"code\":\"print\\(1+1\\)\"}')",
+      "Bash(netstat -ano)",
+      "Bash(taskkill *)",
+      "Bash(curl *)",
+      "Bash(awk '{print $5}')"
     ]
   }
 }
