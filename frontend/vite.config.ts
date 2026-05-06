@@ -10,4 +10,14 @@ export default defineConfig({
       '/output': 'http://localhost:8000',
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'cytoscape': ['cytoscape', 'cytoscape-dagre'],
+          'monaco-editor': ['monaco-editor'],
+        },
+      },
+    },
+  },
 })

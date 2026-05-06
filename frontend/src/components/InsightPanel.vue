@@ -37,43 +37,43 @@ async function loadHistory(entry: any) {
 <template>
   <div class="insight-panel">
     <!-- Welcome state -->
-    <div v-if="!store.hasResults" class="welcome">
+    <div v-if="!(store?.hasResults ?? false)" class="welcome">
       <div class="welcome-icon">&#x1F9E0;</div>
-      <h2>Paste code, understand everything</h2>
-      <p>Why-Code-Agent analyzes your code and explains:</p>
+      <h2>粘贴代码，理解一切</h2>
+      <p>Why-Code-Agent 分析你的代码并解释：</p>
       <div class="feature-grid">
         <div class="feature-card">
           <div class="feature-icon">&#x1F50D;</div>
-          <div class="feature-title">WHY this result</div>
-          <div class="feature-desc">Variable lineage and critical path</div>
+          <div class="feature-title">为什么是这个结果</div>
+          <div class="feature-desc">变量谱系与关键路径追踪</div>
         </div>
         <div class="feature-card">
           <div class="feature-icon">&#x1F4CA;</div>
-          <div class="feature-title">Algorithm structure</div>
-          <div class="feature-desc">Pattern detection and phase compression</div>
+          <div class="feature-title">算法结构</div>
+          <div class="feature-desc">模式检测与阶段压缩</div>
         </div>
         <div class="feature-card">
           <div class="feature-icon">&#x1F4A1;</div>
-          <div class="feature-title">One-line insight</div>
-          <div class="feature-desc">Cognitive-level explanation</div>
+          <div class="feature-title">一句话洞察</div>
+          <div class="feature-desc">认知级解释生成</div>
         </div>
         <div class="feature-card">
           <div class="feature-icon">&#x1F9EC;</div>
-          <div class="feature-title">Data structures</div>
-          <div class="feature-desc">Pointer animation and traversal</div>
+          <div class="feature-title">数据结构</div>
+          <div class="feature-desc">指针动画与遍历可视化</div>
         </div>
       </div>
-      <p class="hint">Paste code above and click <strong>Analyze</strong>, or try a demo</p>
+      <p class="hint">在上方粘贴代码并点击 <strong>分析</strong>，或尝试示例</p>
 
       <!-- History -->
-      <div v-if="store.history.length" class="history-section">
+      <div v-if="(store?.history ?? []).length" class="history-section">
         <div class="history-header">
-          <span class="history-title">Recent Analyses</span>
-          <button class="history-clear" @click="store.clearHistory()">Clear</button>
+          <span class="history-title">最近分析</span>
+          <button class="history-clear" @click="store?.clearHistory()">清空</button>
         </div>
         <div class="history-list">
           <div
-            v-for="entry in store.history.slice(0, 5)" :key="entry.id"
+            v-for="entry in (store?.history ?? []).slice(0, 5)" :key="entry.id"
             class="history-item"
             @click="loadHistory(entry)"
           >
@@ -92,60 +92,60 @@ async function loadHistory(entry: any) {
     <div v-else class="results animate-slide-up">
       <!-- One-liner insight -->
       <div class="insight-hero">
-        <div class="insight-label">INSIGHT</div>
-        <div class="insight-text">{{ store.insightResult!.insight.one_liner }}</div>
+        <div class="insight-label">分析洞察</div>
+        <div class="insight-text">{{ store?.insightResult?.insight.one_liner }}</div>
         <div class="insight-meta">
-          <span class="tag tag-confidence">{{ store.insightResult!.insight.algorithm_type }}</span>
-          <span class="tag tag-confidence">{{ Math.round(store.insightResult!.insight.confidence * 100) }}% confidence</span>
-          <span class="tag tag-pattern">{{ store.insightResult!.total_steps }} steps</span>
+          <span class="tag tag-confidence">{{ store?.insightResult?.insight.algorithm_type }}</span>
+          <span class="tag tag-confidence">{{ Math.round((store?.insightResult?.insight.confidence ?? 0) * 100) }}% 置信度</span>
+          <span class="tag tag-pattern">{{ store?.insightResult?.total_steps ?? 0 }} 步</span>
         </div>
       </div>
 
       <!-- AI Explanation (LLM-powered) -->
-      <div v-if="store.explainResult?.llm_explanation" class="ai-explain">
+      <div v-if="store?.explainResult?.llm_explanation" class="ai-explain">
         <div class="ai-header">
           <span class="ai-icon">AI</span>
-          <span class="ai-title">Execution-Aware Explanation</span>
+          <span class="ai-title">执行感知解释</span>
         </div>
 
-        <div class="ai-section" v-if="store.explainResult.llm_explanation.what_it_does">
-          <div class="ai-label">What it does</div>
-          <div class="ai-text">{{ store.explainResult.llm_explanation.what_it_does }}</div>
+        <div class="ai-section" v-if="store?.explainResult.llm_explanation.what_it_does">
+          <div class="ai-label">做了什么</div>
+          <div class="ai-text">{{ store?.explainResult.llm_explanation.what_it_does }}</div>
         </div>
 
-        <div class="ai-section" v-if="store.explainResult.llm_explanation.how_it_works">
-          <div class="ai-label">How it works</div>
-          <div class="ai-text">{{ store.explainResult.llm_explanation.how_it_works }}</div>
+        <div class="ai-section" v-if="store?.explainResult.llm_explanation.how_it_works">
+          <div class="ai-label">如何运作</div>
+          <div class="ai-text">{{ store?.explainResult.llm_explanation.how_it_works }}</div>
         </div>
 
-        <div class="ai-section" v-if="store.explainResult.llm_explanation.why_it_works">
-          <div class="ai-label">Why it works</div>
-          <div class="ai-text">{{ store.explainResult.llm_explanation.why_it_works }}</div>
+        <div class="ai-section" v-if="store?.explainResult.llm_explanation.why_it_works">
+          <div class="ai-label">为什么有效</div>
+          <div class="ai-text">{{ store?.explainResult.llm_explanation.why_it_works }}</div>
         </div>
 
-        <div class="ai-complexity" v-if="store.explainResult.llm_explanation.complexity">
-          <span v-if="store.explainResult.llm_explanation.complexity.time" class="complexity-tag">
-            Time: {{ store.explainResult.llm_explanation.complexity.time }}
+        <div class="ai-complexity" v-if="store?.explainResult.llm_explanation.complexity">
+          <span v-if="store?.explainResult.llm_explanation.complexity.time" class="complexity-tag">
+            时间: {{ store?.explainResult.llm_explanation.complexity.time }}
           </span>
-          <span v-if="store.explainResult.llm_explanation.complexity.space" class="complexity-tag">
-            Space: {{ store.explainResult.llm_explanation.complexity.space }}
+          <span v-if="store?.explainResult.llm_explanation.complexity.space" class="complexity-tag">
+            空间: {{ store?.explainResult.llm_explanation.complexity.space }}
           </span>
         </div>
 
-        <div class="ai-section" v-if="store.explainResult.llm_explanation.aha_insight">
-          <div class="ai-label aha-label">Aha!</div>
-          <div class="ai-text aha-text">{{ store.explainResult.llm_explanation.aha_insight }}</div>
+        <div class="ai-section" v-if="store?.explainResult.llm_explanation.aha_insight">
+          <div class="ai-label aha-label">顿悟</div>
+          <div class="ai-text aha-text">{{ store?.explainResult.llm_explanation.aha_insight }}</div>
         </div>
 
-        <div class="ai-section" v-if="store.explainResult.llm_explanation.teaching_example">
-          <div class="ai-label">Analogy</div>
-          <div class="ai-text">{{ store.explainResult.llm_explanation.teaching_example }}</div>
+        <div class="ai-section" v-if="store?.explainResult.llm_explanation.teaching_example">
+          <div class="ai-label">类比</div>
+          <div class="ai-text">{{ store?.explainResult.llm_explanation.teaching_example }}</div>
         </div>
 
-        <div class="ai-moments" v-if="store.explainResult.llm_explanation.key_moments?.length">
-          <div class="ai-label">Key Moments</div>
-          <div v-for="m in store.explainResult.llm_explanation.key_moments" :key="m.step" class="moment-card">
-            <span class="moment-step">Step {{ m.step }}</span>
+        <div class="ai-moments" v-if="store?.explainResult.llm_explanation.key_moments?.length">
+          <div class="ai-label">关键时刻</div>
+          <div v-for="m in store?.explainResult.llm_explanation.key_moments" :key="m.step" class="moment-card">
+            <span class="moment-step">步骤 {{ m.step }}</span>
             <div class="moment-info">
               <div class="moment-what">{{ m.what_happened }}</div>
               <div class="moment-why">{{ m.why_it_matters }}</div>
@@ -156,15 +156,15 @@ async function loadHistory(entry: any) {
 
       <!-- Result -->
       <div class="result-box">
-        <div class="result-label">Result</div>
-        <div class="result-value">{{ formatResult(store.insightResult!.result) }}</div>
+        <div class="result-label">结果</div>
+        <div class="result-value">{{ formatResult(store?.insightResult?.result) }}</div>
       </div>
 
       <!-- Patterns -->
-      <div class="section" v-if="store.insightResult!.insight.patterns.length">
-        <div class="section-title">Patterns Detected</div>
+      <div class="section" v-if="store?.insightResult?.insight.patterns.length">
+        <div class="section-title">检测到的模式</div>
         <div class="patterns">
-          <div v-for="p in store.insightResult!.insight.patterns" :key="p.name" class="pattern-card">
+          <div v-for="p in store?.insightResult?.insight.patterns" :key="p.name" class="pattern-card">
             <div class="pattern-name">{{ p.name }}</div>
             <div class="pattern-desc">{{ p.description }}</div>
             <div class="pattern-conf">{{ Math.round(p.confidence * 100) }}%</div>
@@ -173,16 +173,16 @@ async function loadHistory(entry: any) {
       </div>
 
       <!-- Phases -->
-      <div class="section" v-if="store.insightResult!.insight.phases.length">
-        <div class="section-title">Execution Phases</div>
+      <div class="section" v-if="store?.insightResult?.insight.phases.length">
+        <div class="section-title">执行阶段</div>
         <div class="phases">
-          <div v-for="(phase, i) in store.insightResult!.insight.phases" :key="i" class="phase-card">
+          <div v-for="(phase, i) in store?.insightResult?.insight.phases" :key="i" class="phase-card">
             <div class="phase-num">{{ i + 1 }}</div>
             <div class="phase-info">
               <div class="phase-name">{{ phase.name }}</div>
               <div class="phase-desc">{{ phase.description }}</div>
               <div class="phase-meta">
-                Steps {{ phase.start_step }}-{{ phase.end_step }} ({{ phase.step_count }} steps)
+                步骤 {{ phase.start_step }}-{{ phase.end_step }} ({{ phase.step_count }} 步)
                 <span v-if="phase.key_variables.length"> | {{ phase.key_variables.join(', ') }}</span>
               </div>
             </div>
@@ -192,9 +192,9 @@ async function loadHistory(entry: any) {
 
       <!-- Explanation levels -->
       <div class="section">
-        <div class="section-title">Explanation Levels</div>
+        <div class="section-title">解释层级</div>
         <div class="levels">
-          <div v-for="(val, key) in store.insightResult!.insight.explanation_levels" :key="key" class="level-block">
+          <div v-for="(val, key) in store?.insightResult?.insight.explanation_levels" :key="key" class="level-block">
             <div class="level-label">{{ key }}</div>
             <pre class="level-content">{{ val }}</pre>
           </div>

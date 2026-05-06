@@ -13,12 +13,12 @@ const emit = defineEmits<{
     <div class="logo">
       <span class="logo-icon">&#x1F9E0;</span>
       <span class="logo-text">Why-Code-Agent</span>
-      <span class="logo-tag">Program Understanding Engine</span>
+      <span class="logo-tag">程序理解引擎</span>
     </div>
 
     <div class="actions">
       <div class="demo-group">
-        <span class="demo-label">Try:</span>
+        <span class="demo-label">试试：</span>
         <button class="btn btn-secondary btn-sm" @click="emit('demo', 'fibonacci')">Fibonacci</button>
         <button class="btn btn-secondary btn-sm" @click="emit('demo', 'linked_list')">Linked List</button>
         <button class="btn btn-secondary btn-sm" @click="emit('demo', 'filter_sort')">Filter+Sort</button>
@@ -26,12 +26,12 @@ const emit = defineEmits<{
 
       <button
         class="btn btn-primary"
-        :disabled="store.loading || !store.code.trim()"
-        title="Ctrl+Enter"
+        :disabled="(store?.loading ?? false) || !(store?.code ?? '').trim()"
+        title="Ctrl+回车"
         @click="emit('analyze')"
       >
-        <span v-if="store.loading" class="animate-pulse">Analyzing...</span>
-        <span v-else>Analyze</span>
+        <span v-if="(store?.loading ?? false)" class="animate-pulse">分析中...</span>
+        <span v-else>分析</span>
       </button>
     </div>
   </div>

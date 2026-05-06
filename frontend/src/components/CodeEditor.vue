@@ -40,7 +40,7 @@ watch(() => store.code, (newCode) => {
 <template>
   <div class="editor-wrapper">
     <div class="editor-header">
-      <span class="editor-title">Code Input</span>
+      <span class="editor-title">代码输入</span>
       <select v-model="store.language" class="lang-select">
         <option value="python">Python</option>
         <option value="javascript">JavaScript</option>

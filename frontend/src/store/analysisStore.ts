@@ -76,7 +76,19 @@ export const useAnalysisStore = defineStore('analysis', () => {
     return []
   })
   const totalSteps = computed(() => timeline.value.length)
-  const currentStepData = computed(() => timeline.value[currentStep.value] || null)
+  const safeStep = computed(() => {
+    const len = timeline.value.length
+    if (!len) return 0
+    return Math.min(Math.max(currentStep.value, 0), len - 1)
+  })
+  const currentStepData = computed(() => {
+    const t = timeline.value
+    const idx = safeStep.value
+    if (!t || t.length === 0 || idx < 0 || idx >= t.length) {
+      return { index: 0, file: '', line: 0, code: '', changed: [] as string[], new_vars: [] as string[], vars: {} as Record<string, any> }
+    }
+    return t[idx]
+  })
 
   // DSViz: unified data source — use real heap data if available, else derive from timeline vars
   function tryParseValue(raw: string): any {
@@ -96,6 +108,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
 
   function buildGraphFromVars(vars: Record<string, any>, changed: string[]): { nodes: Record<string, any>, edges: any[], bindings: Record<string, number>, changedIds: number[] } {
+    if (!vars || typeof vars !== 'object' || Array.isArray(vars)) {
+      return { nodes: {}, edges: [], bindings: {}, changedIds: [] }
+    }
     const nodes: Record<string, any> = {}
     const edges: any[] = []
     const bindings: Record<string, number> = {}
@@ -163,19 +178,23 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
 
   const dsVizTimeline = computed(() => {
-    if (dsVizResult.value?.steps?.length) return dsVizResult.value.steps
-    return timeline.value.map((step: any, i: number) => {
-      const { nodes, edges, bindings, changedIds } = buildGraphFromVars(step.vars || {}, step.changed || [])
-      return {
-        index: step.index ?? i,
-        line: step.line ?? 0,
-        code: step.code ?? '',
-        nodes,
-        edges,
-        var_bindings: bindings,
-        changed_objects: changedIds,
-      }
-    })
+    try {
+      if (dsVizResult.value?.steps?.length) return dsVizResult.value.steps
+      return timeline.value.map((step: any, i: number) => {
+        const { nodes, edges, bindings, changedIds } = buildGraphFromVars(step.vars || {}, step.changed || [])
+        return {
+          index: step.index ?? i,
+          line: step.line ?? 0,
+          code: step.code ?? '',
+          nodes,
+          edges,
+          var_bindings: bindings,
+          changed_objects: changedIds,
+        }
+      })
+    } catch {
+      return []
+    }
   })
 
   // Reads/Writes: causal dependency per step
@@ -315,7 +334,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     sessionId, showAllSteps, importantSteps,
     currentStep, isPlaying, playSpeed,
     history,
-    hasResults, timeline, totalSteps, currentStepData, currentStepExplanation, dsVizTimeline,
+    hasResults, timeline, totalSteps, safeStep, currentStepData, currentStepExplanation, dsVizTimeline,
     stepDependency, causalEdges,
     setCode, goToStep, nextStep, prevStep, reset,
     saveToHistory, loadFromHistory, clearHistory,

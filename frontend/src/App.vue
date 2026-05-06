@@ -14,8 +14,11 @@ const store = useAnalysisStore()
 const componentError = ref('')
 
 onErrorCaptured((err, instance, info) => {
-  componentError.value = `${err.message} [${info}]`
-  console.error('[Vue Error Captured]', err, info)
+  const stack = (err as Error)?.stack || String(err)
+  // Show first 2 lines (message + first frame) to keep debug bar readable
+  const short = stack.split('\n').slice(0, 3).join(' | ')
+  componentError.value = short
+  console.error('[Vue Error Captured]', err, '\nComponent:', instance?.$options?.name || instance?.type?.name || 'unknown', '\nInfo:', info, '\nStack:', stack)
   return false // prevent propagation
 })
 
@@ -161,9 +164,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <!-- Debug info (temporary) -->
       <div class="debug-bar" v-if="store.hasResults || componentError">
         Tab: {{ store.activeTab }} |
-        Timeline: {{ store.timeline.length }} steps |
+        Timeline: {{ store?.timeline?.length ?? 0 }} steps |
         Graph: {{ store.analyzeResult ? 'yes' : 'no' }} |
-        DSViz: {{ store.dsVizResult?.steps?.length ?? 'null' }} steps |
+        DSViz(raw): {{ store.dsVizResult?.steps?.length ?? 'null' }} | DSViz(eff): {{ store.dsVizTimeline?.length ?? 0 }} |
         ExplainSteps: {{ store.stepExplanations.length }} |
         Subproblem: {{ store.subproblemGraph ? 'yes' : 'no' }}
         <span v-if="componentError" style="color:var(--error)"> | ERROR: {{ componentError }}</span>
@@ -172,18 +175,18 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <!-- Loading -->
       <div v-if="store.loading" class="loading-overlay">
         <div class="loading-spinner"></div>
-        <div class="loading-text">Analyzing code...</div>
+        <div class="loading-text">正在分析代码...</div>
       </div>
 
       <!-- Tab bar -->
       <div class="tab-bar" v-if="store.hasResults">
         <button
-          v-for="tab in (['insight', 'timeline', 'graph', 'dsviz'] as const)"
+          v-for="tab in (['insight', 'dsviz', 'graph', 'timeline'] as const)"
           :key="tab"
           :class="['tab-btn', { active: store.activeTab === tab }]"
           @click="store.activeTab = tab"
         >
-          {{ tab === 'dsviz' ? 'Data Structure' : tab.charAt(0).toUpperCase() + tab.slice(1) }}
+          {{ tab === 'insight' ? '分析洞察' : tab === 'dsviz' ? '数据结构' : tab === 'graph' ? '执行图' : '时间线' }}
         </button>
       </div>
 
@@ -191,9 +194,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <div class="panels">
         <InsightPanel v-if="!store.hasResults && !store.loading" />
         <InsightPanel v-if="store.activeTab === 'insight' && store.hasResults" />
-        <TimelinePanel v-if="store.activeTab === 'timeline' && store.hasResults" />
         <GraphPanel v-if="store.activeTab === 'graph' && store.hasResults" />
         <DSVizPanel v-if="store.activeTab === 'dsviz' && store.hasResults" />
+        <TimelinePanel v-if="store.activeTab === 'timeline' && store.hasResults" />
       </div>
     </div>
   </div>

@@ -26,9 +26,9 @@ function dismiss() {
 
 <template>
   <Transition name="toast">
-    <div v-if="visible && store.error" :class="['toast', { dismissing }]">
+    <div v-if="visible && store?.error" :class="['toast', { dismissing }]">
       <div class="toast-icon">!</div>
-      <div class="toast-msg">{{ store.error }}</div>
+      <div class="toast-msg">{{ store?.error }}</div>
       <button class="toast-close" @click="dismiss">&times;</button>
     </div>
   </Transition>

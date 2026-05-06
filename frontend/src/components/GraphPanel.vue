@@ -4,6 +4,7 @@ import { useAnalysisStore } from '../store/analysisStore'
 
 const store = useAnalysisStore()
 const graphContainer = ref<HTMLElement>()
+const cyInstance = ref<any>(null) // cached cytoscape instance
 
 // Unified data source: store.timeline
 const steps = computed(() => store.timeline)
@@ -175,14 +176,18 @@ const pathExplanation = computed(() => {
       return { text: `${fromCode} produces \`${s.varName}\` → used by ${toCode}`, type: 'causal' }
     }
     if (s.type === 'unlock') {
-      return { text: `${fromCode} unlocks → ${toCode}`, type: 'unlock' }
+      return { text: `${fromCode} 解锁 → ${toCode}`, type: 'unlock' }
     }
     return { text: `${fromCode} → ${toCode}`, type: 'sequential' }
   })
 })
 
-// Summary hover: which segment the user is pointing at
-const summaryHover = ref<number | null>(null)
+// Summary hover: which segment the user is pointing at (hover preview)
+const summaryHoverRaw = ref<number | null>(null)
+// Summary lock: click to pin a segment (persists until click again or background)
+const summaryLocked = ref<number | null>(null)
+// Effective highlight: locked takes precedence over hover
+const summaryHover = computed(() => summaryLocked.value ?? summaryHoverRaw.value)
 
 // Structured summary segments: each segment has text + optional step index for highlighting
 interface SummarySegment { text: string; step?: number }
@@ -204,7 +209,7 @@ const pathSummary = computed<{ label: string; segments: SummarySegment[] } | nul
       if (i > 0) segments.push({ text: ' → ' })
       segments.push({ text: causalEdges[i].varName, step: causalEdges[i].from })
     }
-    segments.push({ text: ' → result', step: goalIdx })
+    segments.push({ text: ' → 结果', step: goalIdx })
     return { label: 'Data flows:', segments }
   }
   if (causalEdges.length === 1) {
@@ -212,13 +217,13 @@ const pathSummary = computed<{ label: string; segments: SummarySegment[] } | nul
       label: 'Key variable:',
       segments: [
         { text: causalEdges[0].varName, step: causalEdges[0].from },
-        { text: ' drives the result', step: goalIdx },
+        { text: ' 导向最终结果', step: goalIdx },
       ],
     }
   }
   return {
     label: '',
-    segments: [{ text: `Sequential execution (${p.steps.length} steps)`, step: goalIdx }],
+    segments: [{ text: `顺序执行 (${p.steps.length} 步)`, step: goalIdx }],
   }
 })
 
@@ -251,11 +256,22 @@ onMounted(() => {
 })
 
 watch(steps, () => {
-  if (steps.value.length) renderGraph()
+  if (steps.value.length) {
+    cyInstance.value = null // force full rebuild
+    renderGraph()
+  }
 })
 
-watch([() => store.currentStep, focusNode, summaryHover], () => {
-  if (steps.value.length) renderGraph()
+watch([() => store.currentStep, focusNode], () => {
+  if (steps.value.length) {
+    cyInstance.value = null
+    renderGraph()
+  }
+})
+
+// summaryHover only updates styles — no full rebuild
+watch(summaryHover, () => {
+  if (cyInstance.value) refreshHighlightStyles()
 })
 
 async function renderGraph() {
@@ -407,12 +423,12 @@ async function renderGraph() {
           },
           'border-width': (ele: any) => ele.data('isSummaryHover') || ele.data('isActive') || ele.data('isOnPath') || ele.data('isRecommended') || ele.data('isUnlock') || ele.data('isGoal') ? 2.5 : 1.5,
           'label': 'data(label)',
-          'font-size': '10px',
+          'font-size': '14px',
           'color': '#1e293b',
           'text-outline-color': '#ffffff',
           'text-outline-width': 2,
-          'width': (ele: any) => ele.data('isSummaryHover') ? 42 : ele.data('isOnPath') ? 36 : ele.data('isRecommended') ? 40 : ele.data('isUnlock') || ele.data('isGoal') ? 38 : 30,
-          'height': (ele: any) => ele.data('isSummaryHover') ? 42 : ele.data('isOnPath') ? 36 : ele.data('isRecommended') ? 40 : ele.data('isUnlock') || ele.data('isGoal') ? 38 : 30,
+          'width': (ele: any) => ele.data('isSummaryHover') ? 84 : ele.data('isOnPath') ? 72 : ele.data('isRecommended') ? 80 : ele.data('isUnlock') || ele.data('isGoal') ? 76 : 60,
+          'height': (ele: any) => ele.data('isSummaryHover') ? 84 : ele.data('isOnPath') ? 72 : ele.data('isRecommended') ? 80 : ele.data('isUnlock') || ele.data('isGoal') ? 76 : 60,
           'text-valign': 'bottom',
           'text-margin-y': 5,
         } as any,
@@ -460,6 +476,8 @@ async function renderGraph() {
     userPanningEnabled: true,
   })
 
+  cyInstance.value = cy
+
   // Click node → show detail card
   cy.on('tap', 'node', (evt: any) => {
     const idx = parseInt(evt.target.id())
@@ -468,7 +486,44 @@ async function renderGraph() {
 
   // Click background → deselect
   cy.on('tap', (evt: any) => {
-    if (evt.target === cy) selectedNode.value = null
+    if (evt.target === cy) {
+      selectedNode.value = null
+      summaryLocked.value = null
+    }
+  })
+}
+
+// Partial update: only refresh summary-hover highlight styles (no full rebuild)
+function refreshHighlightStyles() {
+  const cy = cyInstance.value
+  if (!cy) return
+  const hover = summaryHover.value
+  const path = bestPath.value
+  const goals = goalSteps.value
+  const rec = recommended.value
+  const unlocks = directUnlocks.value
+  const cascade = cascadeNodes.value
+  const focus = focusNode.value
+
+  cy.batch(() => {
+    cy.nodes().forEach((ele: any) => {
+      const idx = parseInt(ele.id())
+      const isSummaryHover = hover === idx
+      const isActive = idx === store.currentStep
+      const isOnPath = path.nodes.has(idx) && !isActive
+      const isGoal = goals.has(idx)
+      const isRecommended = idx === rec
+      const isUnlock = unlocks.has(idx)
+      const isCascade = cascade.has(idx) && showCascade.value
+
+      ele.style({
+        'background-color': isSummaryHover ? '#f59e0b' : isActive ? '#10b981' : isOnPath ? '#3b82f6' : isRecommended ? '#0284c7' : isGoal ? '#d97706' : isUnlock ? '#fb7185' : isCascade ? '#9a3412' : '#e2e8f0',
+        'border-color': isSummaryHover ? '#d97706' : isActive ? '#059669' : isOnPath ? '#2563eb' : isRecommended ? '#0369a1' : isGoal ? '#b45309' : isUnlock ? '#e11d48' : isCascade ? '#7c2d12' : '#94a3b8',
+        'border-width': isSummaryHover || isActive || isOnPath || isRecommended || isUnlock || isGoal ? 2.5 : 1.5,
+        'width': isSummaryHover ? 84 : isOnPath ? 72 : isRecommended ? 80 : isUnlock || isGoal ? 76 : 60,
+        'height': isSummaryHover ? 84 : isOnPath ? 72 : isRecommended ? 80 : isUnlock || isGoal ? 76 : 60,
+      })
+    })
   })
 }
 
@@ -487,14 +542,14 @@ function onNodeLeave() {
     <div class="graph-controls">
       <label class="toggle-label">
         <input type="checkbox" v-model="showDependency" />
-        <span>Show Dependency</span>
+        <span>显示依赖</span>
       </label>
       <label class="toggle-label">
         <input type="checkbox" v-model="showCascade" />
-        <span>Show Cascade</span>
+        <span>显示级联</span>
       </label>
       <span v-if="bestPath.nodes.size > 1" class="path-info">
-        Path to goal: {{ bestPath.nodes.size }} steps
+        目标路径: {{ bestPath.nodes.size }} 步
       </span>
     </div>
 
@@ -502,39 +557,47 @@ function onNodeLeave() {
     <div class="legend">
       <span class="legend-item">
         <span class="legend-dot" style="background:#10b981"></span>
-        computing now
+        当前计算
       </span>
       <span class="legend-item">
         <span class="legend-dot" style="background:#3b82f6"></span>
-        path to goal
+        目标路径
       </span>
       <span class="legend-item">
         <span class="legend-dot" style="background:#0284c7"></span>
-        recommended
+        推荐
       </span>
       <span class="legend-item">
         <span class="legend-dot" style="background:#d97706"></span>
-        goal
+        目标
       </span>
       <span class="legend-item">
         <span class="legend-dot" style="background:#fb7185"></span>
-        unlocks if picked
+        选中后解锁
       </span>
       <span class="legend-item">
         <span class="legend-dot" style="background:#9a3412"></span>
-        cascade effect
+        级联效应
+      </span>
+      <span class="legend-item">
+        <span class="legend-dot" style="background:#f59e0b"></span>
+        摘要悬停
+      </span>
+      <span class="legend-item">
+        <span class="legend-line" style="background:#3b82f6; height:3px"></span>
+        路径边
       </span>
       <span class="legend-item">
         <span class="legend-line" style="background:#fb7185"></span>
-        direct unlock
+        直接解锁
       </span>
       <span class="legend-item">
         <span class="legend-line" style="background:rgba(154,52,18,0.6)"></span>
-        cascade chain
+        级联链
       </span>
       <span class="legend-item">
         <span class="legend-line" style="background:#7c3aed; border-top: 2px dotted #7c3aed"></span>
-        data dependency
+        数据依赖
       </span>
     </div>
 
@@ -543,27 +606,28 @@ function onNodeLeave() {
 
     <!-- Stats -->
     <div v-if="steps.length" class="stats">
-      {{ steps.length }} steps | {{ goalSteps.size }} goal{{ goalSteps.size > 1 ? 's' : '' }}
+      {{ steps.length }} 步 | {{ goalSteps.size }} 目标
       <template v-if="focusNode != null">
-        | Step {{ focusNode }} unlocks {{ directUnlocks.size }}
-        <template v-if="cascadeNodes.size > 0"> → cascades to {{ cascadeNodes.size }}</template>
-        | impact {{ directUnlocks.size + cascadeNodes.size }}
+        | 步骤 {{ focusNode }} 解锁 {{ directUnlocks.size }}
+        <template v-if="cascadeNodes.size > 0"> → 级联 {{ cascadeNodes.size }}</template>
+        | 影响 {{ directUnlocks.size + cascadeNodes.size }}
       </template>
     </div>
 
     <!-- Path explanation -->
     <div v-if="pathExplanation.length" class="path-explain animate-slide-up">
-      <div class="path-title">Why this path?</div>
-      <div v-if="pathSummary" class="path-summary" @mouseleave="summaryHover = null">
+      <div class="path-title">为什么是这条路径？</div>
+      <div v-if="pathSummary" :class="['path-summary', { 'path-summary-muted': !pathSummary.label }]" @mouseleave="summaryHoverRaw = null">
         <span class="summary-label">{{ pathSummary.label }}</span>
         <span
           v-for="(seg, i) in pathSummary.segments"
           :key="i"
-          :class="['summary-seg', { 'summary-link': seg.step != null, 'summary-active': seg.step != null && summaryHover === seg.step }]"
-          @mouseenter="seg.step != null ? summaryHover = seg.step : null"
+          :class="['summary-seg', { 'summary-link': seg.step != null, 'summary-active': seg.step != null && summaryHover === seg.step, 'summary-locked': seg.step != null && summaryLocked === seg.step }]"
+          @mouseenter="seg.step != null ? summaryHoverRaw = seg.step : null"
+          @click="seg.step != null ? (summaryLocked = summaryLocked === seg.step ? null : seg.step) : null"
         >{{ seg.text }}</span>
       </div>
-      <div class="path-desc">This path follows how data flows to the final result:</div>
+      <div class="path-desc">以下路径展示了数据如何流向最终结果：</div>
       <div class="path-steps">
         <div v-for="(step, i) in pathExplanation" :key="i" :class="['path-step', `path-${step.type}`]">
           <span class="path-num">{{ i + 1 }}</span>
@@ -578,28 +642,28 @@ function onNodeLeave() {
     <div v-if="selectedNodeInfo" class="node-detail animate-slide-up">
       <div class="detail-top">
         <span class="detail-step">Step {{ selectedNodeInfo.step }}</span>
-        <span v-if="selectedNodeInfo.isRecommended" class="detail-badge rec">RECOMMENDED</span>
-        <span v-if="selectedNodeInfo.isGoal" class="detail-badge goal">GOAL</span>
+        <span v-if="selectedNodeInfo.isRecommended" class="detail-badge rec">推荐</span>
+        <span v-if="selectedNodeInfo.isGoal" class="detail-badge goal">目标</span>
         <button class="detail-close" @click="selectedNode = null">&times;</button>
       </div>
       <code class="detail-code">{{ selectedNodeInfo.code }}</code>
       <div v-if="selectedNodeInfo.changed.length" class="detail-changed">
-        changed: {{ selectedNodeInfo.changed.join(', ') }}
+        已变更: {{ selectedNodeInfo.changed.join(', ') }}
       </div>
       <div class="detail-impact">
-        <span class="impact-item"><b>{{ selectedNodeInfo.unlock }}</b> direct unlock</span>
+        <span class="impact-item"><b>{{ selectedNodeInfo.unlock }}</b> 直接解锁</span>
         <span class="impact-sep">→</span>
-        <span class="impact-item"><b>{{ selectedNodeInfo.cascade }}</b> cascade</span>
+        <span class="impact-item"><b>{{ selectedNodeInfo.cascade }}</b> 级联</span>
         <span class="impact-sep">|</span>
-        <span class="impact-item"><b>{{ selectedNodeInfo.total }}</b> total impact</span>
+        <span class="impact-item"><b>{{ selectedNodeInfo.total }}</b> 总影响</span>
       </div>
       <div v-if="selectedNodeInfo.isRecommended && recommendedReason" class="detail-why">
-        <div class="why-title">Why recommended:</div>
+        <div class="why-title">推荐原因：</div>
         <div class="why-line">
-          <span v-if="recommendedReason.unlock">Unlocks {{ recommendedReason.unlock }} direct steps</span>
+          <span v-if="recommendedReason.unlock">解锁 {{ recommendedReason.unlock }} 个直接步骤</span>
           <span v-if="recommendedReason.unlock && recommendedReason.cascade">, </span>
-          <span v-if="recommendedReason.cascade">cascades to {{ recommendedReason.cascade }} more</span>
-          <span v-if="recommendedReason.isGoal">, leads to goal</span>
+          <span v-if="recommendedReason.cascade">级联影响 {{ recommendedReason.cascade }} 更多</span>
+          <span v-if="recommendedReason.isGoal">，导向目标</span>
         </div>
       </div>
     </div>
@@ -794,6 +858,14 @@ function onNodeLeave() {
   margin-bottom: 4px;
 }
 
+.path-summary-muted {
+  border-left-color: #94a3b8;
+  background: rgba(148,163,184,0.06);
+}
+.path-summary-muted .summary-seg {
+  color: var(--text-muted);
+}
+
 .path-summary {
   font-size: 13px;
   color: var(--text);
@@ -828,6 +900,14 @@ function onNodeLeave() {
   border-bottom-color: #d97706;
   background: rgba(245,158,11,0.08);
   border-radius: 2px;
+}
+
+.summary-locked {
+  color: #d97706;
+  background: rgba(245,158,11,0.15);
+  border-bottom: 2px solid #d97706;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(245,158,11,0.3);
 }
 
 .path-desc {

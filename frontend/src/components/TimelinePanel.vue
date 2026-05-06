@@ -13,7 +13,7 @@ const hoveredStep = ref<number | null>(null)    // step hovered in timeline
 // Execution path: steps visited up to current position
 const executedSteps = computed(() => {
   const set = new Set<number>()
-  for (let i = 0; i <= store.currentStep; i++) {
+  for (let i = 0; i <= (store?.currentStep ?? 0); i++) {
     set.add(i)
   }
   return set
@@ -197,14 +197,14 @@ const criticalPathOrdered = computed(() => {
 })
 
 const maxCostPerLevel = computed(() => {
-  const levels = store.subproblemGraph?.layout?.level_info
+  const levels = store?.subproblemGraph?.layout?.level_info
   if (!levels?.length) return 1
   const costs = levels.map(l => l.level_cost ?? l.node_count)
   return Math.max(1, ...costs)
 })
 
 const levelCosts = computed(() => {
-  const levels = store.subproblemGraph?.layout?.level_info
+  const levels = store?.subproblemGraph?.layout?.level_info
   if (!levels) return []
   return levels.filter(l => l.level_cost != null).map(l => l.level_cost!)
 })
@@ -338,6 +338,7 @@ const sandboxStep = computed(() => {
 const sandboxUserAnswer = ref('')
 const sandboxFeedback = ref<{ type: string; message: string } | null>(null)
 const showSandboxAnswer = ref(false)
+const showMemoMode = ref(false)
 
 // Reset feedback when pattern changes
 // Reset execStep when memo mode changes (trace length changes)
@@ -436,11 +437,11 @@ interface ExecEvent {
 // Tracks the READY QUEUE at each step — shows why this node was picked
 const dagExecTrace = computed<ExecEvent[]>(() => {
   try {
-  const serverTree = store.subproblemGraph?.call_tree
-  const dag = store.subproblemGraph?.dag
+  const serverTree = store?.subproblemGraph?.call_tree
+  const dag = store?.subproblemGraph?.dag
   if (!serverTree || !dag) return []
 
-  const op = store.subproblemGraph?.complexity?.combine_operation || 'unknown'
+  const op = store?.subproblemGraph?.complexity?.combine_operation || 'unknown'
 
   // Collect unique nodes from the call tree
   const uniqueNodes = new Map<string, { id: string; args: string[]; result?: any; children: string[] }>()
@@ -614,10 +615,10 @@ const execTrace = computed<ExecEvent[]>(() => {
     return dagExecTrace.value
   }
 
-  const serverTree = store.subproblemGraph?.call_tree
+  const serverTree = store?.subproblemGraph?.call_tree
   if (!serverTree) return []
 
-  const op = store.subproblemGraph?.complexity?.combine_operation || 'unknown'
+  const op = store?.subproblemGraph?.complexity?.combine_operation || 'unknown'
   const events: ExecEvent[] = []
 
   function dfs(node: { id: string; args: string[]; result?: any; children: any[] }, depth: number, parent?: string) {
@@ -707,7 +708,7 @@ const execCurrentStack = computed(() => {
 const execStepNarrative = computed(() => {
   const ev = execCurrentCall.value
   if (!ev) return ''
-  const op = store.subproblemGraph?.complexity?.combine_operation || 'unknown'
+  const op = store?.subproblemGraph?.complexity?.combine_operation || 'unknown'
 
   // Memo mode: DAG execution narrative with scheduler + invariant
   if (showMemoMode.value) {
@@ -723,10 +724,10 @@ const execStepNarrative = computed(() => {
         return `Base case. Already known — no computation needed.${readyNote}`
       }
       // Show the invariant: dependencies are already computed
-      const childIds = store.subproblemGraph?.dag?.edges
+      const childIds = store?.subproblemGraph?.dag?.edges
         ?.filter(e => e.from === ev.nodeId)
         .map(e => e.to) || []
-      const dagNode = store.subproblemGraph?.dag?.nodes?.find(n => n.id === ev.nodeId)
+      const dagNode = store?.subproblemGraph?.dag?.nodes?.find(n => n.id === ev.nodeId)
       const callCount = dagNode?.call_count || 1
       const deps = childIds.map(c => c.split('(')[0]).join(' and ')
       const reuseNote = callCount > 1
@@ -784,7 +785,7 @@ const execStepNarrative = computed(() => {
     if (ev.isBase) {
       return `This is the simplest case. The answer is already known.`
     }
-    const ch = store.subproblemGraph?.dag?.edges?.filter(e => e.from === ev.nodeId) || []
+    const ch = store?.subproblemGraph?.dag?.edges?.filter(e => e.from === ev.nodeId) || []
     if (ch.length === 2) {
       return `This problem splits into two smaller versions of itself.`
     }
@@ -840,11 +841,11 @@ interface TreeNode {
 
 const callTree = computed<TreeNode | null>(() => {
   try {
-  const serverTree = store.subproblemGraph?.call_tree
-  const dag = store.subproblemGraph?.dag
+  const serverTree = store?.subproblemGraph?.call_tree
+  const dag = store?.subproblemGraph?.dag
   if (!serverTree) return null
 
-  const op = store.subproblemGraph?.complexity?.combine_operation || 'unknown'
+  const op = store?.subproblemGraph?.complexity?.combine_operation || 'unknown'
   const callCounts = new Map(dag?.nodes.map(n => [n.id, n.call_count]) || [])
 
   // Track which subproblems we've already seen (for repeated detection)
@@ -1206,8 +1207,6 @@ const repeatPointer = computed(() => {
   return { from: current, to: first }
 })
 
-// ── Upgrade 6: Memoization comparison ──────────────────────────────
-const showMemoMode = ref(false)
 // Scheduler hover: which ready node is the user considering?
 const hoveredReadyNode = ref<string | null>(null)
 // Nodes that would be unlocked if we pick hoveredReadyNode
@@ -1372,8 +1371,8 @@ function execPlayNext() {
 }
 
 const generalRule = computed(() => {
-  const pattern = store.subproblemGraph?.complexity?.pattern
-  const levels = store.subproblemGraph?.layout?.level_info?.length
+  const pattern = store?.subproblemGraph?.complexity?.pattern
+  const levels = store?.subproblemGraph?.layout?.level_info?.length
   if (!pattern || !levels) return null
 
   if (isCostBalanced.value && levels >= 2) {
@@ -1423,7 +1422,7 @@ const narrative = computed(() => {
   if (path.length < 2) return null
 
   // If we have algorithm-level narrative from pattern recognition, use it as the core
-  const algoNarrative = store.patternResult?.narrative
+  const algoNarrative = store?.patternResult?.narrative
   if (algoNarrative) {
     // Build step-level detail from critical path
     const getExp = (step: number) => store.stepExplanations.find(e => e.step === step)
@@ -1488,7 +1487,7 @@ const narrative = computed(() => {
 
     // Compose: algorithm narrative + critical path chain + complexity reasoning
     const chain = chainParts.length > 0 ? ' Specifically: ' + chainParts.join(', then ') + '.' : ''
-    const complexity = store.patternResult?.complexity || ''
+    const complexity = store?.patternResult?.complexity || ''
     const complexityNote = complexity ? ' ' + complexity : ''
     return algoNarrative + chain + turningNote + complexityNote
   }
@@ -1542,17 +1541,17 @@ const narrative = computed(() => {
 
   if (path.length <= 3) {
     // Short path: compact summary
-    sentences.push(`This algorithm executes through ${path.length} key steps.`)
+    sentences.push(`此算法通过 ${path.length} 个关键步骤执行。`)
   } else if (isLoopHeavy) {
-    sentences.push(`This algorithm processes data through ${path.length} key steps, iterating to build up a result.`)
+    sentences.push(`此算法通过 ${path.length} 个关键步骤处理数据，迭代构建结果。`)
   } else {
-    sentences.push(`This algorithm works through ${path.length} key steps to produce its result.`)
+    sentences.push(`此算法通过 ${path.length} 个关键步骤得出结果。`)
   }
 
   // Base case: if present, mention it early
   if (baseCaseStep && baseCaseStep !== path[0]) {
     const bcExp = getExplanation(baseCaseStep)
-    sentences.push(`It first checks a base case — ${bcExp.toLowerCase()} — to handle the simplest scenario before proceeding.`)
+    sentences.push(`首先检查基准情况 — ${bcExp.toLowerCase()} — 处理最简单的情况再继续。`)
   }
 
   // Middle: walk the path with causal transitions
@@ -1566,15 +1565,15 @@ const narrative = computed(() => {
     // Transition word
     let transition = ''
     if (i === 1 && !baseCaseStep) {
-      transition = 'First, '
+      transition = '首先，'
     } else if (i === path.length - 1) {
-      transition = 'Finally, '
+      transition = '最后，'
     } else if (i === path.length - 2) {
-      transition = 'Then, '
+      transition = '然后，'
     } else if (imp === 'high') {
-      transition = 'Critically, '
+      transition = '关键地，'
     } else {
-      transition = 'Next, '
+      transition = '接下来，'
     }
 
     // Causal link
@@ -1583,9 +1582,9 @@ const narrative = computed(() => {
     const shared = sharedVars(prev, cur)
     if (control) {
       const condCode = getStep(prev)?.code?.replace(/^(if |elif |for |while )/, '').replace(/:$/, '') || ''
-      cause = ` because "${condCode}" determines this path`
+      cause = ` 因为 "${condCode}" 决定了这条路径`
     } else if (shared.length > 0) {
-      cause = ` using ${shared.join(' and ')} from the previous step`
+      cause = ` 使用上一步的 ${shared.join(' 和 ')}`
     }
 
     // Compose sentence
@@ -1602,9 +1601,9 @@ const narrative = computed(() => {
     const resultCode = getStep(path[path.length - 1])?.code || ''
     const resultVar = resultCode.replace(/^return\s*/, '').trim()
     if (resultVar) {
-      sentences.push(`This produces the final result: ${resultVar}.`)
+      sentences.push(`最终产生结果: ${resultVar}。`)
     } else {
-      sentences.push(`This produces the final result.`)
+      sentences.push(`最终产生结果。`)
     }
   }
 
@@ -1613,7 +1612,7 @@ const narrative = computed(() => {
   if (turningPoints.length > 0 && path.length > 4) {
     const tpStep = turningPoints[turningPoints.length - 1]
     const tpExp = getExplanation(tpStep)
-    sentences.push(`The most significant turning point is at step ${tpStep}, where ${tpExp.toLowerCase()}.`)
+    sentences.push(`最重要的转折点在第 ${tpStep} 步，此时 ${tpExp.toLowerCase()}。`)
   }
 
   return sentences.join(' ')
@@ -1828,10 +1827,10 @@ function skippedCount(beforeIdx: number): number {
 
 // Use focused explanation if available, fall back to batch
 const activeExplanation = computed(() => {
-  if (store.focusedExplanation && store.focusedExplanation.step === store.currentStep) {
+  if (store.focusedExplanation && store.focusedExplanation.step === (store?.currentStep ?? 0)) {
     return store.focusedExplanation
   }
-  return store.currentStepExplanation
+  return store?.currentStepExplanation
 })
 
 function importanceColor(imp: string): string {
@@ -1970,7 +1969,7 @@ function togglePlay() {
 
 function playNext() {
   if (!store.isPlaying) return
-  if (store.currentStep < store.totalSteps - 1) {
+  if ((store?.currentStep ?? 0) < (store?.totalSteps ?? 0) - 1) {
     store.nextStep()
     playTimer.value = window.setTimeout(playNext, store.playSpeed)
   } else {
@@ -1998,11 +1997,11 @@ function toggleExplainMode() {
 
 function explainPlayNext() {
   if (!explainPlaying.value) return
-  if (store.currentStep < store.totalSteps - 1) {
+  if ((store?.currentStep ?? 0) < (store?.totalSteps ?? 0) - 1) {
     store.nextStep()
 
     // Importance-based delay
-    const currentImp = store.currentStepExplanation?.importance || 'medium'
+    const currentImp = store?.currentStepExplanation?.importance || 'medium'
     let delay: number
     if (currentImp === 'high') {
       delay = 2500  // Pause at important steps
@@ -2041,26 +2040,26 @@ onUnmounted(() => {
 <template>
   <div class="timeline-panel animate-slide-up">
     <!-- No-data guard: prevents slider with max=-1 from corrupting currentStep -->
-    <div v-if="store.totalSteps === 0" class="empty-state">
-      <p>No timeline data available. Run analysis first.</p>
+    <div v-if="(store?.totalSteps ?? 0) === 0" class="empty-state">
+      <p>暂无时间线数据，请先运行分析</p>
     </div>
 
     <!-- Controls -->
-    <div class="controls" v-if="store.totalSteps > 0">
-      <button class="btn btn-secondary btn-sm" @click="goToStepWithFocus(store.currentStep - 1)">&#9664;</button>
-      <button class="btn btn-sm" :class="store.isPlaying && !explainPlaying ? 'btn-primary' : 'btn-secondary'" @click="togglePlay">
-        {{ store.isPlaying && !explainPlaying ? '&#9632;' : '&#9654;' }}
+    <div class="controls" v-if="(store?.totalSteps ?? 0) > 0">
+      <button class="btn btn-secondary btn-sm" @click="goToStepWithFocus((store?.currentStep ?? 0) - 1)">&#9664;</button>
+      <button class="btn btn-sm" :class="(store?.isPlaying ?? false) && !explainPlaying ? 'btn-primary' : 'btn-secondary'" @click="togglePlay">
+        {{ (store?.isPlaying ?? false) && !explainPlaying ? '&#9632;' : '&#9654;' }}
       </button>
-      <button class="btn btn-secondary btn-sm" @click="goToStepWithFocus(store.currentStep + 1)">&#9654;</button>
+      <button class="btn btn-secondary btn-sm" @click="goToStepWithFocus((store?.currentStep ?? 0) + 1)">&#9654;</button>
       <input
         type="range"
         class="slider"
         :min="0"
-        :max="Math.max(0, store.totalSteps - 1)"
-        :value="store.currentStep"
+        :max="Math.max(0, (store?.totalSteps ?? 0) - 1)"
+        :value="(store?.currentStep ?? 0)"
         @input="goToStepWithFocus(+($event.target as HTMLInputElement).value)"
       />
-      <span class="step-display">{{ store.currentStep }} / {{ Math.max(0, store.totalSteps - 1) }}</span>
+      <span class="step-display">{{ (store?.currentStep ?? 0) }} / {{ Math.max(0, (store?.totalSteps ?? 0) - 1) }}</span>
       <input type="number" class="speed-input" v-model.number="store.playSpeed" min="100" max="3000" step="100" />
       <span class="speed-label">ms</span>
 
@@ -2082,14 +2081,14 @@ onUnmounted(() => {
       :class="{
         'is-turning-point': activeExplanation.turning_point,
         'is-high': activeExplanation.importance === 'high',
-        'is-loading': store.focusLoading,
+        'is-loading': (store?.focusLoading ?? false),
       }"
     >
       <div class="explain-header">
         <span class="explain-badge">
-          {{ store.focusLoading ? '...' : 'AI' }}
+          {{ (store?.focusLoading ?? false) ? '...' : 'AI' }}
         </span>
-        <span class="explain-step-label">Step {{ store.currentStep }}</span>
+        <span class="explain-step-label">Step {{ (store?.currentStep ?? 0) }}</span>
         <!-- Reason icons (primary visual) -->
         <span v-if="activeExplanation.importance_reasons?.length" class="explain-reason-icons">
           <span
@@ -2105,7 +2104,7 @@ onUnmounted(() => {
         >
           {{ importanceIcon(activeExplanation.importance) }}
         </span>
-        <span v-if="activeExplanation.turning_point" class="turning-badge">TURNING POINT</span>
+        <span v-if="activeExplanation.turning_point" class="turning-badge">关键转折</span>
       </div>
       <!-- Natural language explanation (secondary, compact) -->
       <div v-if="activeExplanation.importance_explanation" class="explain-importance-text">
@@ -2114,7 +2113,7 @@ onUnmounted(() => {
       <!-- Causal link: affects downstream steps -->
       <div v-if="activeExplanation.affects?.length" class="explain-causal">
         <span class="causal-icon">→</span>
-        Affects steps {{ activeExplanation.affects.join(', ') }}
+        影响步骤 {{ activeExplanation.affects.join(', ') }}
       </div>
       <!-- LLM explanation (main content) -->
       <div class="explain-text">{{ activeExplanation.explanation }}</div>
@@ -2132,29 +2131,29 @@ onUnmounted(() => {
 
     <!-- Current step highlight -->
     <div
-      v-if="store.currentStepData"
+      v-if="(store?.currentStepData)"
       class="current-step card"
       :class="{ 'step-glow': activeExplanation?.importance === 'high' }"
     >
       <div class="step-header">
-        <span class="step-num">Step {{ store.currentStepData.index }}</span>
-        <span class="step-loc">{{ store.currentStepData.file }}:{{ store.currentStepData.line }}</span>
+        <span class="step-num">Step {{ (store?.currentStepData).index }}</span>
+        <span class="step-loc">{{ (store?.currentStepData).file }}:{{ (store?.currentStepData).line }}</span>
       </div>
-      <div class="step-code">{{ store.currentStepData.code }}</div>
-      <div v-if="store.currentStepData.changed.length" class="step-changes">
-        Changed: {{ store.currentStepData.changed.join(', ') }}
+      <div class="step-code">{{ (store?.currentStepData).code }}</div>
+      <div v-if="(store?.currentStepData).changed.length" class="step-changes">
+        已变更: {{ (store?.currentStepData).changed.join(', ') }}
       </div>
-      <div v-if="store.currentStepData.new_vars.length" class="step-new">
-        New: {{ store.currentStepData.new_vars.join(', ') }}
+      <div v-if="(store?.currentStepData).new_vars.length" class="step-new">
+        新增: {{ (store?.currentStepData).new_vars.join(', ') }}
       </div>
     </div>
 
     <!-- Variable state -->
-    <div v-if="store.currentStepData" class="vars-section">
-      <div class="section-title">Variables</div>
+    <div v-if="(store?.currentStepData)" class="vars-section">
+      <div class="section-title">变量</div>
       <div class="var-grid">
         <div
-          v-for="(info, name) in store.currentStepData.vars"
+          v-for="(info, name) in (store?.currentStepData).vars"
           :key="name"
           class="var-card"
           :class="{ changed: info.changed, 'is-new': info.is_new }"
@@ -2162,21 +2161,21 @@ onUnmounted(() => {
           <div class="var-name">{{ name }}</div>
           <div class="var-value">{{ info.value }}</div>
           <div class="var-type">{{ info.type }}</div>
-          <span v-if="info.changed" class="var-badge changed-badge">CHANGED</span>
-          <span v-if="info.is_new" class="var-badge new-badge">NEW</span>
+          <span v-if="info.changed" class="var-badge changed-badge">已变更</span>
+          <span v-if="info.is_new" class="var-badge new-badge">新</span>
         </div>
       </div>
     </div>
 
     <!-- Importance Heatmap -->
     <div v-if="hasStepExplanations" class="heatmap-bar">
-      <div class="heatmap-label">Importance</div>
+      <div class="heatmap-label">重要性</div>
       <div class="heatmap-row">
         <div
           v-for="step in steps"
           :key="step.index"
           class="heatmap-cell"
-          :class="{ 'cell-current': step.index === store.currentStep }"
+          :class="{ 'cell-current': step.index === (store?.currentStep ?? 0) }"
           :style="{
             background: scoreToHeatColor(store.stepExplanations.find(e => e.step === step.index)?.importance_percentile ?? store.stepExplanations.find(e => e.step === step.index)?.importance_score ?? 0),
             opacity: (store.stepExplanations.find(e => e.step === step.index)?.importance_percentile ?? store.stepExplanations.find(e => e.step === step.index)?.importance_score ?? 0) * 0.7 + 0.3,
@@ -2192,21 +2191,21 @@ onUnmounted(() => {
     <!-- WHY Narrative -->
     <div v-if="narrative" class="narrative card">
       <div class="narrative-header">
-        <span class="narrative-badge">WHY</span>
-        <span v-if="store.patternResult?.pattern" class="pattern-badge">{{ patternLabel(store.patternResult.pattern) }}</span>
-        <span class="narrative-title">How this algorithm works</span>
+        <span class="narrative-badge">原理</span>
+        <span v-if="store?.patternResult?.pattern" class="pattern-badge">{{ patternLabel(store?.patternResult.pattern) }}</span>
+        <span class="narrative-title">算法运作原理</span>
         <span class="narrative-path">{{ criticalPathOrdered.join(' → ') }}</span>
       </div>
       <div class="narrative-text">{{ narrative }}</div>
       <!-- Complexity reasoning -->
-      <div v-if="store.patternResult?.complexity" class="narrative-complexity">
+      <div v-if="store?.patternResult?.complexity" class="narrative-complexity">
         <span class="complexity-icon">⚡</span>
-        {{ store.patternResult.complexity }}
+        {{ store?.patternResult.complexity }}
       </div>
       <!-- Evidence chips -->
-      <div v-if="store.patternResult?.properties" class="narrative-evidence">
+      <div v-if="store?.patternResult?.properties" class="narrative-evidence">
         <span
-          v-for="(data, prop) in store.patternResult.properties"
+          v-for="(data, prop) in store?.patternResult.properties"
           :key="prop"
           class="evidence-chip"
           :title="(data.evidence_sample || []).join('\n')"
@@ -2220,25 +2219,25 @@ onUnmounted(() => {
     <!-- Step list -->
     <div class="step-list">
       <div class="section-title">
-        <span>Steps</span>
+        <span>步骤</span>
         <button
           v-if="hasStepExplanations"
           class="toggle-all-btn"
           @click="store.showAllSteps = !store.showAllSteps"
         >
-          {{ store.showAllSteps ? 'Auto-fold' : `Show all (${store.totalSteps})` }}
+          {{ (store?.showAllSteps ?? false) ? '自动折叠' : `显示全部 (${(store?.totalSteps ?? 0)})` }}
         </button>
       </div>
       <div class="steps-scroll">
         <template v-for="step in visibleSteps" :key="step.index">
           <!-- Skip indicator -->
           <div v-if="skippedCount(step.index) > 0" class="skip-indicator">
-            {{ skippedCount(step.index) }} steps skipped
+            跳过 {{ skippedCount(step.index) }} 步
           </div>
           <div
             class="step-item"
             :class="{
-              active: step.index === store.currentStep,
+              active: step.index === (store?.currentStep ?? 0),
               'has-ai': hasStepExplanations,
               'step-important': store.stepExplanations.find(e => e.step === step.index)?.importance === 'high',
               'step-weight-high': (store.stepExplanations.find(e => e.step === step.index)?.importance_score || 0) >= 0.55,
@@ -2267,7 +2266,7 @@ onUnmounted(() => {
               v-if="causalSource === step.index && store.stepExplanations.find(e => e.step === step.index)?.affects?.length"
               class="causal-affects-label"
             >
-              affects → {{ store.stepExplanations.find(e => e.step === step.index)?.affects?.join(', ') }}
+              影响 → {{ store.stepExplanations.find(e => e.step === step.index)?.affects?.join(', ') }}
             </span>
             <span
               v-if="hasStepExplanations"
@@ -2283,10 +2282,10 @@ onUnmounted(() => {
     <!-- Causal Graph -->
     <div v-if="causalGraph" class="causal-graph card">
       <div class="section-title">
-        <span>Causal Graph</span>
+        <span>因果图</span>
         <span class="graph-legend">
-          <span class="legend-item"><span class="legend-line legend-data"></span> data</span>
-          <span class="legend-item"><span class="legend-line legend-control"></span> control</span>
+          <span class="legend-item"><span class="legend-line legend-data"></span> 数据</span>
+          <span class="legend-item"><span class="legend-line legend-control"></span> 控制</span>
         </span>
       </div>
       <svg
@@ -2345,7 +2344,7 @@ onUnmounted(() => {
             'node-high': node.importance === 'high',
             'node-hovered': hoveredStep === node.id,
             'node-executed': executedSteps.has(node.id),
-            'node-current': node.id === store.currentStep,
+            'node-current': node.id === (store?.currentStep ?? 0),
             'node-critical': criticalPath.has(node.id),
           }"
           @click="goToStepWithFocus(node.id)"
@@ -2356,9 +2355,9 @@ onUnmounted(() => {
             :width="causalGraph.nodeW"
             :height="causalGraph.nodeH"
             rx="6"
-            :fill="node.id === causalSource ? 'rgba(34,211,238,0.12)' : criticalPath.has(node.id) ? 'rgba(251,114,153,0.10)' : node.id === store.currentStep ? 'rgba(251,114,153,0.15)' : executedSteps.has(node.id) ? 'rgba(167,139,250,0.08)' : 'rgba(100,100,120,0.04)'"
+            :fill="node.id === causalSource ? 'rgba(34,211,238,0.12)' : criticalPath.has(node.id) ? 'rgba(251,114,153,0.10)' : node.id === (store?.currentStep ?? 0) ? 'rgba(251,114,153,0.15)' : executedSteps.has(node.id) ? 'rgba(167,139,250,0.08)' : 'rgba(100,100,120,0.04)'"
             :stroke="hoveredStep === node.id ? 'var(--highlight)' : criticalPath.has(node.id) ? 'var(--primary)' : node.importance === 'high' ? 'var(--primary)' : node.id === causalSource ? 'var(--highlight)' : executedSteps.has(node.id) ? 'rgba(167,139,250,0.3)' : 'var(--border)'"
-            :stroke-width="hoveredStep === node.id || node.id === store.currentStep || criticalPath.has(node.id) ? 2.5 : 1.5"
+            :stroke-width="hoveredStep === node.id || node.id === (store?.currentStep ?? 0) || criticalPath.has(node.id) ? 2.5 : 1.5"
           />
           <!-- Semantic explanation (PRIMARY — what this step does) -->
           <text v-if="node.explanation" x="8" y="14" class="node-meaning" :fill="criticalPath.has(node.id) ? 'var(--primary)' : executedSteps.has(node.id) ? 'var(--text)' : 'rgba(120,120,140,0.5)'">
@@ -2373,7 +2372,7 @@ onUnmounted(() => {
           </text>
           <!-- Execution path dot -->
           <circle
-            v-if="node.id === store.currentStep"
+            v-if="node.id === (store?.currentStep ?? 0)"
             :cx="causalGraph.nodeW - 8"
             :cy="causalGraph.nodeH / 2"
             r="4"
@@ -2402,12 +2401,12 @@ onUnmounted(() => {
     </div>
 
     <!-- Subproblem Graph: Computation DAG + Complexity -->
-    <div v-if="store.subproblemGraph?.is_recursive && store.subproblemGraph?.layout" class="subproblem-section">
+    <div v-if="store?.subproblemGraph?.is_recursive && store?.subproblemGraph?.layout" class="subproblem-section">
       <div class="subproblem-header">
         <span class="subproblem-badge">DAG</span>
         <span class="subproblem-title">Computation Structure</span>
-        <span class="subproblem-stats" v-if="store.subproblemGraph.dag">
-          {{ store.subproblemGraph.dag.unique_count }} unique / {{ store.subproblemGraph.dag.total_count }} total calls
+        <span class="subproblem-stats" v-if="store?.subproblemGraph.dag">
+          {{ store?.subproblemGraph.dag.unique_count }} unique / {{ store?.subproblemGraph.dag.total_count }} total calls
         </span>
         <span class="submode-tabs">
           <button :class="['submode-btn', { active: subMode === 'execution' }]" @click="subMode = 'execution'">Execution</button>
@@ -2502,9 +2501,9 @@ onUnmounted(() => {
             <span v-if="execCurrentCall.returnValue != null" class="current-return">→ {{ execCurrentCall.returnValue }}</span>
           </div>
           <!-- Operation type: what kind of combine -->
-          <div v-if="execCurrentCall.type === 'return' && store.subproblemGraph?.complexity?.combine_operation_label && store.subproblemGraph.complexity.combine_operation !== 'unknown'" class="combine-operation">
+          <div v-if="execCurrentCall.type === 'return' && store?.subproblemGraph?.complexity?.combine_operation_label && store?.subproblemGraph.complexity.combine_operation !== 'unknown'" class="combine-operation">
             <span class="combine-label">Combine</span>
-            <span class="combine-type">{{ store.subproblemGraph.complexity.combine_operation_label }}</span>
+            <span class="combine-type">{{ store?.subproblemGraph.complexity.combine_operation_label }}</span>
           </div>
           <!-- Return Composition: how child results combine -->
           <div v-if="execCurrentCall.composition" class="current-composition">
@@ -2871,67 +2870,67 @@ onUnmounted(() => {
           <div v-if="showMemoMode" class="memo-savings-counter">
             <span class="memo-savings-icon">🧠</span>
             <span class="memo-savings-text">
-              With memo: {{ store.subproblemGraph?.dag?.unique_count || 0 }} calls instead of {{ store.subproblemGraph?.dag?.total_count || 0 }}
-              — saves {{ (store.subproblemGraph?.dag?.total_count || 0) - (store.subproblemGraph?.dag?.unique_count || 0) }} recomputations
+              With memo: {{ store?.subproblemGraph?.dag?.unique_count || 0 }} calls instead of {{ store?.subproblemGraph?.dag?.total_count || 0 }}
+              — saves {{ (store?.subproblemGraph?.dag?.total_count || 0) - (store?.subproblemGraph?.dag?.unique_count || 0) }} recomputations
             </span>
           </div>
         </div>
       </div>
 
       <!-- Cognitive Narrative: the "explanation layer" — primary, human-readable -->
-      <div v-if="store.subproblemGraph?.complexity?.cognitive_narrative" class="cognitive-narrative">
+      <div v-if="store?.subproblemGraph?.complexity?.cognitive_narrative" class="cognitive-narrative">
         <div class="cognitive-header">
           <span class="cognitive-badge">EXPLAIN</span>
           <span class="cognitive-title">What is happening?</span>
         </div>
-        <div class="cognitive-text">{{ store.subproblemGraph.complexity.cognitive_narrative }}</div>
+        <div class="cognitive-text">{{ store?.subproblemGraph.complexity.cognitive_narrative }}</div>
       </div>
 
       <!-- Auto Summary (compact, below narrative) -->
-      <div v-if="store.subproblemGraph?.complexity?.auto_summary" class="auto-summary">
+      <div v-if="store?.subproblemGraph?.complexity?.auto_summary" class="auto-summary">
         <div class="summary-header">Summary</div>
         <div class="summary-grid">
           <div class="summary-item">
             <span class="summary-label">Total calls</span>
-            <span class="summary-value">{{ store.subproblemGraph.complexity.auto_summary.total_calls }}</span>
+            <span class="summary-value">{{ store?.subproblemGraph.complexity.auto_summary.total_calls }}</span>
           </div>
           <div class="summary-item">
             <span class="summary-label">Unique subproblems</span>
-            <span class="summary-value">{{ store.subproblemGraph.complexity.auto_summary.unique_subproblems }}</span>
+            <span class="summary-value">{{ store?.subproblemGraph.complexity.auto_summary.unique_subproblems }}</span>
           </div>
-          <div class="summary-item" v-if="store.subproblemGraph.complexity.auto_summary.repeated_calls > 0">
+          <div class="summary-item" v-if="store?.subproblemGraph.complexity.auto_summary.repeated_calls > 0">
             <span class="summary-label">Repeated calls</span>
-            <span class="summary-value summary-warn">{{ store.subproblemGraph.complexity.auto_summary.repeated_calls }}</span>
+            <span class="summary-value summary-warn">{{ store?.subproblemGraph.complexity.auto_summary.repeated_calls }}</span>
           </div>
           <div class="summary-item">
             <span class="summary-label">Recursion depth</span>
-            <span class="summary-value">{{ store.subproblemGraph.complexity.auto_summary.depth }}</span>
+            <span class="summary-value">{{ store?.subproblemGraph.complexity.auto_summary.depth }}</span>
           </div>
-          <div class="summary-item" v-if="store.subproblemGraph.complexity.auto_summary.branching_factor > 0">
+          <div class="summary-item" v-if="store?.subproblemGraph.complexity.auto_summary.branching_factor > 0">
             <span class="summary-label">Branching factor</span>
-            <span class="summary-value">{{ store.subproblemGraph.complexity.auto_summary.branching_factor }}</span>
+            <span class="summary-value">{{ store?.subproblemGraph.complexity.auto_summary.branching_factor }}</span>
           </div>
-          <div class="summary-item" v-if="store.subproblemGraph.complexity.auto_summary.operation !== 'COMBINE'">
+          <div class="summary-item" v-if="store?.subproblemGraph.complexity.auto_summary.operation !== 'COMBINE'">
             <span class="summary-label">Operation</span>
-            <span class="summary-value summary-op">{{ store.subproblemGraph.complexity.auto_summary.operation }}</span>
+            <span class="summary-value summary-op">{{ store?.subproblemGraph.complexity.auto_summary.operation }}</span>
           </div>
         </div>
         <div class="summary-complexity">
           <div class="summary-complexity-row">
             <span class="summary-label">Without cache</span>
-            <span class="summary-value summary-bad">{{ store.subproblemGraph.complexity.auto_summary.complexity }}</span>
+            <span class="summary-value summary-bad">{{ store?.subproblemGraph.complexity.auto_summary.complexity }}</span>
           </div>
-          <div class="summary-complexity-row" v-if="store.subproblemGraph.complexity.auto_summary.optimized_complexity">
+          <div class="summary-complexity-row" v-if="store?.subproblemGraph.complexity.auto_summary.optimized_complexity">
             <span class="summary-label">With cache</span>
-            <span class="summary-value summary-good">{{ store.subproblemGraph.complexity.auto_summary.optimized_complexity.split(' --')[0] }}</span>
+            <span class="summary-value summary-good">{{ store?.subproblemGraph.complexity.auto_summary.optimized_complexity.split(' --')[0] }}</span>
           </div>
-          <div class="summary-complexity-row" v-if="store.subproblemGraph.complexity.auto_summary.speedup">
+          <div class="summary-complexity-row" v-if="store?.subproblemGraph.complexity.auto_summary.speedup">
             <span class="summary-label">Speedup</span>
-            <span class="summary-value summary-highlight">{{ store.subproblemGraph.complexity.auto_summary.speedup }}</span>
+            <span class="summary-value summary-highlight">{{ store?.subproblemGraph.complexity.auto_summary.speedup }}</span>
           </div>
         </div>
-        <div class="summary-memo" v-if="store.subproblemGraph.complexity.auto_summary.has_memoization_benefit">
-          💡 Memoization would reduce calls from {{ store.subproblemGraph.complexity.auto_summary.total_calls }} to {{ store.subproblemGraph.complexity.auto_summary.unique_subproblems }}
+        <div class="summary-memo" v-if="store?.subproblemGraph.complexity.auto_summary.has_memoization_benefit">
+          💡 Memoization would reduce calls from {{ store?.subproblemGraph.complexity.auto_summary.total_calls }} to {{ store?.subproblemGraph.complexity.auto_summary.unique_subproblems }}
         </div>
       </div>
 
@@ -2939,41 +2938,41 @@ onUnmounted(() => {
       <div v-if="subMode === 'analysis'">
 
       <!-- Complexity Analysis -->
-      <div class="complexity-card" v-if="store.subproblemGraph.complexity">
-        <div class="complexity-row" v-if="store.subproblemGraph.complexity.pattern">
+      <div class="complexity-card" v-if="store?.subproblemGraph.complexity">
+        <div class="complexity-row" v-if="store?.subproblemGraph.complexity.pattern">
           <span class="complexity-label">Pattern</span>
-          <span class="complexity-value complexity-highlight">{{ patternLabel(store.subproblemGraph.complexity.pattern) }}</span>
-          <span v-if="store.subproblemGraph.complexity.execution" class="execution-tag" :class="store.subproblemGraph.complexity.execution.toLowerCase()">
-            {{ store.subproblemGraph.complexity.execution }}
+          <span class="complexity-value complexity-highlight">{{ patternLabel(store?.subproblemGraph.complexity.pattern) }}</span>
+          <span v-if="store?.subproblemGraph.complexity.execution" class="execution-tag" :class="store?.subproblemGraph.complexity.execution.toLowerCase()">
+            {{ store?.subproblemGraph.complexity.execution }}
           </span>
-          <span v-if="store.subproblemGraph.complexity.shrink && store.subproblemGraph.complexity.shrink !== 'none'" class="shrink-tag">
-            {{ store.subproblemGraph.complexity.shrink }}
+          <span v-if="store?.subproblemGraph.complexity.shrink && store?.subproblemGraph.complexity.shrink !== 'none'" class="shrink-tag">
+            {{ store?.subproblemGraph.complexity.shrink }}
           </span>
         </div>
         <div class="complexity-row">
           <span class="complexity-label">Recurrence</span>
-          <span class="complexity-value">{{ store.subproblemGraph.complexity.recurrence }}</span>
+          <span class="complexity-value">{{ store?.subproblemGraph.complexity.recurrence }}</span>
         </div>
         <div class="complexity-row">
           <span class="complexity-label">Without cache</span>
-          <span class="complexity-value complexity-bad">{{ store.subproblemGraph.complexity.without_cache }}</span>
+          <span class="complexity-value complexity-bad">{{ store?.subproblemGraph.complexity.without_cache }}</span>
         </div>
         <div class="complexity-row">
           <span class="complexity-label">With cache</span>
-          <span class="complexity-value complexity-good">{{ store.subproblemGraph.complexity.with_cache }}</span>
+          <span class="complexity-value complexity-good">{{ store?.subproblemGraph.complexity.with_cache }}</span>
         </div>
         <div class="complexity-row">
           <span class="complexity-label">Speedup</span>
-          <span class="complexity-value complexity-highlight">{{ store.subproblemGraph.complexity.speedup }}</span>
+          <span class="complexity-value complexity-highlight">{{ store?.subproblemGraph.complexity.speedup }}</span>
         </div>
       </div>
 
       <!-- Semantic Explanation -->
-      <div v-if="store.subproblemGraph.complexity?.semantic_explanation" class="semantic-explanation">
+      <div v-if="store?.subproblemGraph.complexity?.semantic_explanation" class="semantic-explanation">
         <div class="semantic-header">Why this complexity?</div>
         <div class="semantic-lines">
           <div
-            v-for="(line, i) in store.subproblemGraph.complexity.semantic_explanation.split('\n')"
+            v-for="(line, i) in store?.subproblemGraph.complexity.semantic_explanation.split('\n')"
             :key="i"
             class="semantic-line"
             :class="{ 'semantic-conclusion': line.includes('→') || line.includes('Therefore') }"
@@ -2984,8 +2983,8 @@ onUnmounted(() => {
       <!-- DAG Visualization -->
       <div class="dag-container">
         <svg
-          :width="store.subproblemGraph.layout.width"
-          :height="store.subproblemGraph.layout.height"
+          :width="store?.subproblemGraph.layout.width"
+          :height="store?.subproblemGraph.layout.height"
           class="dag-svg"
         >
           <defs>
@@ -2994,12 +2993,12 @@ onUnmounted(() => {
             </marker>
           </defs>
           <!-- Edges -->
-          <g v-for="(edge, i) in store.subproblemGraph.layout.edges" :key="'de'+i">
+          <g v-for="(edge, i) in store?.subproblemGraph.layout.edges" :key="'de'+i">
             <line
-              :x1="edge.from_pos.x + store.subproblemGraph.layout.nodeW"
-              :y1="edge.from_pos.y + store.subproblemGraph.layout.nodeH / 2"
+              :x1="edge.from_pos.x + store?.subproblemGraph.layout.nodeW"
+              :y1="edge.from_pos.y + store?.subproblemGraph.layout.nodeH / 2"
               :x2="edge.to_pos.x"
-              :y2="edge.to_pos.y + store.subproblemGraph.layout.nodeH / 2"
+              :y2="edge.to_pos.y + store?.subproblemGraph.layout.nodeH / 2"
               stroke="rgba(167,139,250,0.35)"
               stroke-width="1.5"
               marker-end="url(#dag-arrow)"
@@ -3007,8 +3006,8 @@ onUnmounted(() => {
             <!-- Edge label: subproblem size -->
             <text
               v-if="edge.size_label"
-              :x="(edge.from_pos.x + store.subproblemGraph.layout.nodeW + edge.to_pos.x) / 2"
-              :y="(edge.from_pos.y + store.subproblemGraph.layout.nodeH / 2 + edge.to_pos.y + store.subproblemGraph.layout.nodeH / 2) / 2 - 4"
+              :x="(edge.from_pos.x + store?.subproblemGraph.layout.nodeW + edge.to_pos.x) / 2"
+              :y="(edge.from_pos.y + store?.subproblemGraph.layout.nodeH / 2 + edge.to_pos.y + store?.subproblemGraph.layout.nodeH / 2) / 2 - 4"
               class="edge-label"
               fill="#a78bfa"
               text-anchor="middle"
@@ -3016,15 +3015,15 @@ onUnmounted(() => {
           </g>
           <!-- Nodes -->
           <g
-            v-for="node in store.subproblemGraph.layout.nodes"
+            v-for="node in store?.subproblemGraph.layout.nodes"
             :key="node.id"
             :transform="`translate(${node.x}, ${node.y})`"
             class="dag-node"
             :class="{ 'dag-reused': node.is_reused }"
           >
             <rect
-              :width="store.subproblemGraph.layout.nodeW"
-              :height="store.subproblemGraph.layout.nodeH"
+              :width="store?.subproblemGraph.layout.nodeW"
+              :height="store?.subproblemGraph.layout.nodeH"
               rx="4"
               :fill="node.is_reused ? 'rgba(251,114,153,0.12)' : 'rgba(100,100,120,0.06)'"
               :stroke="node.is_reused ? 'var(--primary)' : 'var(--border)'"
@@ -3033,7 +3032,7 @@ onUnmounted(() => {
             <text x="6" y="14" class="dag-label" :fill="node.is_reused ? 'var(--primary)' : 'var(--text-dim)'">
               {{ node.label }}
             </text>
-            <text v-if="node.state_size != null" :x="store.subproblemGraph.layout.nodeW - 6" y="28" class="dag-state" fill="#a78bfa" text-anchor="end">
+            <text v-if="node.state_size != null" :x="store?.subproblemGraph.layout.nodeW - 6" y="28" class="dag-state" fill="#a78bfa" text-anchor="end">
               n={{ node.state_size }}
             </text>
             <text v-else-if="node.result != null" x="6" y="28" class="dag-result" fill="var(--text-muted)">
@@ -3041,8 +3040,8 @@ onUnmounted(() => {
             </text>
             <!-- Reuse count badge -->
             <g v-if="node.call_count > 1">
-              <circle :cx="store.subproblemGraph.layout.nodeW - 8" cy="10" r="8" fill="var(--primary)" />
-              <text :x="store.subproblemGraph.layout.nodeW - 8" y="14" class="dag-count" fill="#0f172a" text-anchor="middle">
+              <circle :cx="store?.subproblemGraph.layout.nodeW - 8" cy="10" r="8" fill="var(--primary)" />
+              <text :x="store?.subproblemGraph.layout.nodeW - 8" y="14" class="dag-count" fill="#0f172a" text-anchor="middle">
                 {{ node.call_count }}
               </text>
             </g>
@@ -3051,11 +3050,11 @@ onUnmounted(() => {
       </div>
 
       <!-- Recursion Level View -->
-      <div v-if="store.subproblemGraph.layout?.level_info?.length" class="level-view">
+      <div v-if="store?.subproblemGraph.layout?.level_info?.length" class="level-view">
         <div class="level-header">Cost per Level</div>
         <div class="level-rows">
           <div
-            v-for="lvl in store.subproblemGraph.layout.level_info"
+            v-for="lvl in store?.subproblemGraph.layout.level_info"
             :key="lvl.depth"
             class="level-row"
           >
@@ -3073,7 +3072,7 @@ onUnmounted(() => {
           </div>
         </div>
         <!-- Visual Proof: explicit reasoning chain -->
-        <div class="level-proof" v-if="store.subproblemGraph.complexity">
+        <div class="level-proof" v-if="store?.subproblemGraph.complexity">
           <template v-if="isCostBalanced">
             <div class="proof-line">
               <span class="proof-icon">→</span>
@@ -3081,12 +3080,12 @@ onUnmounted(() => {
             </div>
             <div class="proof-line">
               <span class="proof-icon">→</span>
-              <span>{{ store.subproblemGraph.layout.level_info.length }} levels total</span>
+              <span>{{ store?.subproblemGraph.layout.level_info.length }} levels total</span>
             </div>
             <div class="proof-line proof-conclusion">
               <span class="proof-icon">∴</span>
-              <span>{{ avgLevelCost }} × {{ store.subproblemGraph.layout.level_info.length }} = </span>
-              <span class="proof-result">{{ store.subproblemGraph.complexity.without_cache?.split(' --')[0] }}</span>
+              <span>{{ avgLevelCost }} × {{ store?.subproblemGraph.layout.level_info.length }} = </span>
+              <span class="proof-result">{{ store?.subproblemGraph.complexity.without_cache?.split(' --')[0] }}</span>
             </div>
           </template>
           <template v-else-if="isCostDecreasing">
@@ -3101,7 +3100,7 @@ onUnmounted(() => {
             <div class="proof-line proof-conclusion">
               <span class="proof-icon">∴</span>
               <span>Total = </span>
-              <span class="proof-result">{{ store.subproblemGraph.complexity.without_cache?.split(' --')[0] }}</span>
+              <span class="proof-result">{{ store?.subproblemGraph.complexity.without_cache?.split(' --')[0] }}</span>
             </div>
           </template>
           <template v-else>
@@ -3112,7 +3111,7 @@ onUnmounted(() => {
             <div class="proof-line proof-conclusion">
               <span class="proof-icon">∴</span>
               <span>Total = </span>
-              <span class="proof-result">{{ store.subproblemGraph.complexity.without_cache?.split(' --')[0] }}</span>
+              <span class="proof-result">{{ store?.subproblemGraph.complexity.without_cache?.split(' --')[0] }}</span>
             </div>
           </template>
         </div>
@@ -3215,10 +3214,10 @@ onUnmounted(() => {
       </div>
 
       <!-- Shared subproblems detail -->
-      <div v-if="store.subproblemGraph.complexity?.shared_subproblems?.length" class="shared-subs">
+      <div v-if="store?.subproblemGraph.complexity?.shared_subproblems?.length" class="shared-subs">
         <div class="shared-title">Most recomputed subproblems:</div>
         <div
-          v-for="sub in store.subproblemGraph.complexity.shared_subproblems.slice(0, 5)"
+          v-for="sub in store?.subproblemGraph.complexity.shared_subproblems.slice(0, 5)"
           :key="sub.id"
           class="shared-item"
         >
@@ -3228,8 +3227,8 @@ onUnmounted(() => {
       </div>
 
       <!-- Performance narrative -->
-      <div v-if="store.subproblemGraph.narrative" class="perf-narrative">
-        {{ store.subproblemGraph.narrative }}
+      <div v-if="store?.subproblemGraph.narrative" class="perf-narrative">
+        {{ store?.subproblemGraph.narrative }}
       </div>
 
       </div><!-- end analysis mode -->

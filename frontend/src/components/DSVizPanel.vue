@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, nextTick } from 'vue'
+import { computed, ref, watch, onUnmounted, nextTick } from 'vue'
 import { useAnalysisStore } from '../store/analysisStore'
 
 const store = useAnalysisStore()
@@ -7,11 +7,80 @@ const canvasRef = ref<HTMLElement>()
 const dsStep = ref(0)
 const selectedObj = ref<number | null>(null)
 
-const steps = computed(() => store.dsVizTimeline)
-const totalSteps = computed(() => steps.value.length)
+const steps = computed(() => {
+  const dsv = store.dsVizTimeline
+  if (dsv && dsv.length > 0) return dsv
+  return []
+})
+const totalSteps = computed(() => steps.value?.length || 0)
 const currentData = computed(() => steps.value[dsStep.value] || null)
 
-// Variable diff: compare current vs previous step (with structural detail)
+// Auto-play state
+const isPlaying = ref(true)
+const isInternal = ref(false)
+let timer: ReturnType<typeof setInterval> | null = null
+
+// Auto-play when data arrives OR user switches to this tab
+watch([totalSteps, () => store.activeTab], ([n, tab]) => {
+  if (n > 0 && tab === 'dsviz' && isPlaying.value) startAutoPlay()
+}, { immediate: true })
+
+function startAutoPlay() {
+  stopAutoPlay()
+  timer = setInterval(() => {
+    if (!isPlaying.value) return
+    if (dsStep.value >= totalSteps.value - 1) {
+      isPlaying.value = false
+      stopAutoPlay()
+      return
+    }
+    dsStep.value++
+    isInternal.value = true
+    store.currentStep = dsStep.value
+    nextTick(() => { isInternal.value = false })
+  }, 800)
+}
+
+function stopAutoPlay() {
+  if (timer) { clearInterval(timer); timer = null }
+}
+
+// Manual step change → stop auto-play
+function onManualStep() {
+  isPlaying.value = false
+  stopAutoPlay()
+  isInternal.value = true
+  store.currentStep = dsStep.value
+  nextTick(() => { isInternal.value = false })
+}
+
+function prevDsStep() { dsStep.value = Math.max(0, dsStep.value - 1); onManualStep() }
+function nextDsStep() { dsStep.value = Math.min(totalSteps.value - 1, dsStep.value + 1); onManualStep() }
+
+// Canvas click → toggle play/pause
+function onCanvasClick() {
+  isPlaying.value = !isPlaying.value
+  if (isPlaying.value) startAutoPlay()
+  else stopAutoPlay()
+}
+
+// Sync from store (when user changes step in Timeline/Graph)
+watch(() => store.currentStep, (s) => {
+  if (isInternal.value) return
+  if (store.activeTab === 'dsviz' && s < totalSteps.value && s !== dsStep.value) {
+    dsStep.value = s
+  }
+})
+
+// Slider change → stop + sync
+function onSliderInput(e: Event) {
+  dsStep.value = Number((e.target as HTMLInputElement).value)
+  onManualStep()
+}
+
+onUnmounted(() => stopAutoPlay())
+
+// Variable diff
 function tryParse(raw: string): any {
   if (!raw || typeof raw !== 'string') return null
   if (raw.startsWith('[') || raw.startsWith('{')) {
@@ -42,7 +111,6 @@ const varDiff = computed(() => {
       added.push(name)
     } else if (currVars[name].value !== prevVars[name].value) {
       modified.push(name)
-      // Structural diff for arrays and dicts
       const prevParsed = tryParse(prevVars[name].value)
       const currParsed = tryParse(currVars[name].value)
 
@@ -79,26 +147,11 @@ const varDiff = computed(() => {
   return { added, modified, removed, details }
 })
 
-// Sync with timeline step when on ds-viz tab
-watch(() => store.currentStep, (s) => {
-  if (store.activeTab === 'dsviz' && s < totalSteps.value) {
-    dsStep.value = s
-  }
-})
-
-// Auto-layout nodes using force simulation
+// Force-directed layout
 interface LayoutNode {
-  id: number
-  x: number
-  y: number
-  vx: number
-  vy: number
-  type: string
-  val: string
-  attrs: Record<string, string>
-  refs: Record<string, number>
-  changed: boolean
-  varNames: string[]
+  id: number; x: number; y: number; vx: number; vy: number
+  type: string; val: string; attrs: Record<string, string>
+  refs: Record<string, number>; changed: boolean; varNames: string[]
 }
 
 function computeLayout(data: any): LayoutNode[] {
@@ -111,25 +164,16 @@ function computeLayout(data: any): LayoutNode[] {
     varByObj[objId as number].push(varName)
   }
 
-  for (const [idStr, node] of Object.entries(data.nodes || {})) {
+  for (const [, node] of Object.entries(data.nodes || {})) {
     const n = node as any
     nodes.push({
-      id: n.id,
-      x: 0, y: 0, vx: 0, vy: 0,
-      type: n.type,
-      val: n.val,
-      attrs: n.attrs || {},
-      refs: n.refs || {},
-      changed: n.changed,
-      varNames: varByObj[n.id] || [],
+      id: n.id, x: 0, y: 0, vx: 0, vy: 0,
+      type: n.type, val: n.val, attrs: n.attrs || {},
+      refs: n.refs || {}, changed: n.changed, varNames: varByObj[n.id] || [],
     })
   }
 
-  // Simple force-directed layout
-  const W = 600, H = 400
-  const cx = W / 2, cy = H / 2
-
-  // Initial positions in a circle
+  const W = 600, H = 400, cx = W / 2, cy = H / 2
   nodes.forEach((n, i) => {
     const angle = (2 * Math.PI * i) / Math.max(nodes.length, 1)
     const r = Math.min(W, H) * 0.3
@@ -137,90 +181,50 @@ function computeLayout(data: any): LayoutNode[] {
     n.y = cy + r * Math.sin(angle)
   })
 
-  // Build edge list
-  const edges: { from: number; to: number }[] = []
-  for (const e of (data.edges || [])) {
-    edges.push({ from: e.from, to: e.to })
-  }
+  const edges: { from: number; to: number }[] = (data.edges || []).map((e: any) => ({ from: e.from, to: e.to }))
 
-  // Run simulation
   for (let iter = 0; iter < 80; iter++) {
-    // Repulsion between all nodes
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
-        let dx = nodes[j].x - nodes[i].x
-        let dy = nodes[j].y - nodes[i].y
-        let dist = Math.sqrt(dx * dx + dy * dy) || 1
-        let force = 2000 / (dist * dist)
-        let fx = (dx / dist) * force
-        let fy = (dy / dist) * force
-        nodes[i].vx -= fx
-        nodes[i].vy -= fy
-        nodes[j].vx += fx
-        nodes[j].vy += fy
+        const dx = nodes[j].x - nodes[i].x, dy = nodes[j].y - nodes[i].y
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1
+        const force = 2000 / (dist * dist)
+        nodes[i].vx -= (dx / dist) * force; nodes[i].vy -= (dy / dist) * force
+        nodes[j].vx += (dx / dist) * force; nodes[j].vy += (dy / dist) * force
       }
     }
-
-    // Attraction along edges
     for (const e of edges) {
-      const a = nodes.find(n => n.id === e.from)
-      const b = nodes.find(n => n.id === e.to)
+      const a = nodes.find(n => n.id === e.from), b = nodes.find(n => n.id === e.to)
       if (!a || !b) continue
-      let dx = b.x - a.x
-      let dy = b.y - a.y
-      let dist = Math.sqrt(dx * dx + dy * dy) || 1
-      let force = (dist - 100) * 0.05
-      let fx = (dx / dist) * force
-      let fy = (dy / dist) * force
-      a.vx += fx
-      a.vy += fy
-      b.vx -= fx
-      b.vy -= fy
+      const dx = b.x - a.x, dy = b.y - a.y, dist = Math.sqrt(dx * dx + dy * dy) || 1
+      const force = (dist - 100) * 0.05
+      a.vx += (dx / dist) * force; a.vy += (dy / dist) * force
+      b.vx -= (dx / dist) * force; b.vy -= (dy / dist) * force
     }
-
-    // Center gravity
     for (const n of nodes) {
-      n.vx += (cx - n.x) * 0.01
-      n.vy += (cy - n.y) * 0.01
-    }
-
-    // Apply velocity with damping
-    for (const n of nodes) {
-      n.vx *= 0.8
-      n.vy *= 0.8
-      n.x += n.vx
-      n.y += n.vy
-      // Bounds
-      n.x = Math.max(40, Math.min(W - 40, n.x))
-      n.y = Math.max(40, Math.min(H - 40, n.y))
+      n.vx += (cx - n.x) * 0.01; n.vy += (cy - n.y) * 0.01
+      n.vx *= 0.8; n.vy *= 0.8; n.x += n.vx; n.y += n.vy
+      n.x = Math.max(40, Math.min(W - 40, n.x)); n.y = Math.max(40, Math.min(H - 40, n.y))
     }
   }
-
   return nodes
 }
 
 const layoutNodes = computed(() => computeLayout(currentData.value))
 
-function getNodeCenter(id: number): { x: number; y: number } {
+function getNodeCenter(id: number) {
   const n = layoutNodes.value.find(n => n.id === id)
   return n ? { x: n.x, y: n.y } : { x: 0, y: 0 }
 }
 
-function prevDsStep() { dsStep.value = Math.max(0, dsStep.value - 1) }
-function nextDsStep() { dsStep.value = Math.min(totalSteps.value - 1, dsStep.value + 1) }
-
-function selectObj(id: number) {
-  selectedObj.value = selectedObj.value === id ? null : id
-}
+function selectObj(id: number) { selectedObj.value = selectedObj.value === id ? null : id }
 
 function getPrevVal(name: string): string {
   const prev = dsStep.value > 0 ? store.timeline[dsStep.value - 1] : null
   return String(prev?.vars?.[name]?.value ?? '').slice(0, 20)
 }
-
 function getCurrVal(name: string): string {
-  const curr = store.timeline[dsStep.value]
-  return String(curr?.vars?.[name]?.value ?? '').slice(0, 20)
+  return String(store.timeline[dsStep.value]?.vars?.[name]?.value ?? '').slice(0, 20)
 }
 
 const selectedNode = computed(() => {
@@ -232,16 +236,20 @@ const selectedNode = computed(() => {
 <template>
   <div class="ds-panel animate-slide-up">
     <div v-if="totalSteps === 0" class="ds-empty">
-      <p>No data structure visualization available</p>
+      <div class="empty-icon">📭</div>
+      <p>此执行中无状态变化</p>
     </div>
 
     <template v-else>
       <!-- Controls -->
       <div class="ds-controls">
+        <button class="ctrl-btn play-btn" @click="onCanvasClick" :title="isPlaying ? 'Pause' : 'Play'">
+          {{ isPlaying ? '⏸' : '▶' }}
+        </button>
         <button class="ctrl-btn" @click="prevDsStep" :disabled="dsStep === 0">&larr;</button>
         <span class="step-label">Step {{ dsStep + 1 }} / {{ totalSteps }}</span>
-        <input type="range" :min="0" :max="totalSteps - 1" v-model.number="dsStep" class="step-slider" />
-        <button class="ctrl-btn" @click="nextDsStep" :disabled="dsStep >= totalSteps - 1">&rarr;</button>
+        <input type="range" :min="0" :max="Math.max(0, totalSteps - 1)" :value="dsStep" @input="onSliderInput" class="step-slider" />
+        <button class="ctrl-btn" @click="nextDsStep" :disabled="dsStep >= Math.max(0, totalSteps - 1)">&rarr;</button>
       </div>
 
       <!-- Code line -->
@@ -259,8 +267,8 @@ const selectedNode = computed(() => {
         <span v-for="name in varDiff.removed" :key="'r'+name" class="diff-tag diff-removed">{{ name }}: removed</span>
       </div>
 
-      <!-- Canvas area -->
-      <div class="ds-canvas" ref="canvasRef">
+      <!-- Canvas area (click to toggle play) -->
+      <div class="ds-canvas" ref="canvasRef" @click="onCanvasClick">
         <svg class="edge-svg">
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="28" refY="5"
@@ -272,13 +280,10 @@ const selectedNode = computed(() => {
               <path d="M 0 0 L 10 5 L 0 10 z" fill="#fb7299" />
             </marker>
           </defs>
-          <!-- Edges -->
           <g v-for="edge in (currentData?.edges || [])" :key="`${edge.from}-${edge.to}-${edge.label}`">
             <line
-              :x1="getNodeCenter(edge.from).x"
-              :y1="getNodeCenter(edge.from).y"
-              :x2="getNodeCenter(edge.to).x"
-              :y2="getNodeCenter(edge.to).y"
+              :x1="getNodeCenter(edge.from).x" :y1="getNodeCenter(edge.from).y"
+              :x2="getNodeCenter(edge.to).x" :y2="getNodeCenter(edge.to).y"
               :stroke="edge.changed ? '#fb7299' : '#475569'"
               :stroke-width="edge.changed ? 2.5 : 1.5"
               :stroke-dasharray="edge.changed ? '6,3' : 'none'"
@@ -292,23 +297,19 @@ const selectedNode = computed(() => {
           </g>
         </svg>
 
-        <!-- Nodes -->
         <div
           v-for="node in layoutNodes" :key="node.id"
           class="ds-node"
           :class="{ changed: node.changed, selected: selectedObj === node.id }"
           :style="{ left: node.x - 28 + 'px', top: node.y - 28 + 'px' }"
-          @click="selectObj(node.id)"
+          @click.stop="selectObj(node.id)"
         >
-          <!-- Variable bindings above -->
           <div class="node-vars" v-if="node.varNames.length">
             <span v-for="v in node.varNames" :key="v" class="var-tag">{{ v }}</span>
           </div>
-          <!-- Circle -->
           <div class="node-circle">
             <span class="node-val">{{ node.val.length > 6 ? node.val.slice(0, 6) + '..' : node.val }}</span>
           </div>
-          <!-- Type label -->
           <div class="node-type">{{ node.type }}</div>
         </div>
       </div>
@@ -318,7 +319,7 @@ const selectedNode = computed(() => {
         <div class="detail-header">
           <span class="detail-type">{{ selectedNode.type }}</span>
           <span class="detail-id">#{{ selectedNode.id }}</span>
-          <span v-if="selectedNode.changed" class="detail-changed">CHANGED</span>
+          <span v-if="selectedNode.changed" class="detail-changed">已变更</span>
         </div>
         <div class="detail-val">{{ selectedNode.val }}</div>
         <div class="detail-attrs" v-if="Object.keys(selectedNode.attrs).length">
@@ -344,9 +345,11 @@ const selectedNode = computed(() => {
 .ds-panel { display: flex; flex-direction: column; height: 100%; gap: 8px; }
 
 .ds-empty {
-  display: flex; align-items: center; justify-content: center;
-  height: 100%; color: var(--text-muted);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; color: var(--text-muted); gap: 8px;
 }
+.empty-icon { font-size: 28px; opacity: 0.5; }
+.ds-empty p { font-size: 13px; }
 
 .ds-controls {
   display: flex; align-items: center; gap: 10px;
@@ -362,6 +365,12 @@ const selectedNode = computed(() => {
 .ctrl-btn:disabled { opacity: 0.3; cursor: default; }
 .ctrl-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
 
+.play-btn {
+  font-size: 16px; min-width: 36px; text-align: center;
+  background: rgba(251,114,153,0.08);
+}
+.play-btn:hover { background: rgba(251,114,153,0.15); }
+
 .step-label { font-size: 12px; color: var(--text-dim); min-width: 90px; text-align: center; }
 .step-slider { flex: 1; accent-color: var(--primary); }
 
@@ -376,7 +385,7 @@ const selectedNode = computed(() => {
 .ds-canvas {
   flex: 1; position: relative; min-height: 300px;
   background: var(--bg-card); border: 1px solid var(--border);
-  border-radius: 8px; overflow: hidden;
+  border-radius: 8px; overflow: hidden; cursor: pointer;
 }
 
 .edge-svg {
@@ -413,9 +422,7 @@ const selectedNode = computed(() => {
 .node-val { font-size: 11px; color: var(--text); font-weight: 600; font-family: monospace; }
 .node-type { font-size: 9px; color: var(--text-muted); margin-top: 2px; }
 
-.node-vars {
-  display: flex; gap: 3px; margin-bottom: 4px;
-}
+.node-vars { display: flex; gap: 3px; margin-bottom: 4px; }
 .var-tag {
   font-size: 9px; background: rgba(0,161,214,0.1);
   color: var(--highlight); padding: 1px 6px; border-radius: 4px;
@@ -423,62 +430,33 @@ const selectedNode = computed(() => {
 }
 
 .ds-diff {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 12px;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 12px;
 }
 
 .diff-tag {
-  font-size: 11px;
-  font-family: monospace;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-weight: 600;
+  font-size: 11px; font-family: monospace;
+  padding: 2px 8px; border-radius: 4px; font-weight: 600;
 }
-
-.diff-added {
-  background: rgba(34,197,94,0.1);
-  color: #16a34a;
-  border: 1px solid rgba(34,197,94,0.2);
-}
-
-.diff-modified {
-  background: rgba(234,179,8,0.1);
-  color: #ca8a04;
-  border: 1px solid rgba(234,179,8,0.2);
-}
-
-.diff-removed {
-  background: rgba(239,68,68,0.1);
-  color: #dc2626;
-  border: 1px solid rgba(239,68,68,0.2);
-}
+.diff-added { background: rgba(34,197,94,0.1); color: #16a34a; border: 1px solid rgba(34,197,94,0.2); }
+.diff-modified { background: rgba(234,179,8,0.1); color: #ca8a04; border: 1px solid rgba(234,179,8,0.2); }
+.diff-removed { background: rgba(239,68,68,0.1); color: #dc2626; border: 1px solid rgba(239,68,68,0.2); }
 
 .ds-detail {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 8px; padding: 12px 16px;
 }
-
 .detail-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .detail-type { font-size: 12px; color: var(--primary); font-weight: 600; }
 .detail-id { font-size: 11px; color: var(--text-muted); }
 .detail-changed {
   font-size: 9px; background: rgba(251,114,153,0.15);
-  color: #fb7299; padding: 2px 8px; border-radius: 4px;
-  font-weight: 700;
+  color: #fb7299; padding: 2px 8px; border-radius: 4px; font-weight: 700;
 }
 .detail-val { font-size: 13px; color: var(--text); font-family: monospace; margin-bottom: 8px; }
-
 .detail-section-title { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
-
-.attr-row, .ref-row {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; padding: 2px 0;
-}
+.attr-row, .ref-row { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
 .attr-name { color: var(--accent); font-family: monospace; }
 .attr-type { color: var(--text-muted); font-size: 10px; }
 .ref-attr { color: var(--accent); font-family: monospace; }
