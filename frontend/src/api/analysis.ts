@@ -256,6 +256,13 @@ export interface SubproblemGraphLayout {
   nodeH: number
 }
 
+export interface CallTreeNode {
+  id: string
+  args: string[]
+  result?: any
+  children: CallTreeNode[]
+}
+
 export interface SubproblemGraphResponse {
   success?: boolean
   error?: string
@@ -267,6 +274,7 @@ export interface SubproblemGraphResponse {
     unique_count: number
     total_count: number
   }
+  call_tree?: CallTreeNode
   layout?: SubproblemGraphLayout
   complexity?: {
     recurrence: string
@@ -288,6 +296,7 @@ export interface SubproblemGraphResponse {
     combine_operation_label?: string
     pattern_hint?: string
     pattern_description?: string
+    cognitive_narrative?: string
     auto_summary?: {
       total_calls: number
       unique_subproblems: number

@@ -26,7 +26,12 @@
       "Bash(npx vite *)",
       "Bash(python -c \"from api.server import app; print\\('OK'\\)\")",
       "Bash(python -c \"from reasoning.importance import compute_importance; r = compute_importance\\('if x > 0:', ['x'], [], {'x': {'value': '5', 'type': 'int'}}\\); print\\(r\\)\")",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(xxd)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3)",
+      "Bash(python3 fix_template.py)",
+      "Bash(npx tsc *)"
     ]
   }
 }

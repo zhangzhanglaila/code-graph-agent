@@ -339,6 +339,11 @@ const sandboxFeedback = ref<{ type: string; message: string } | null>(null)
 const showSandboxAnswer = ref(false)
 
 // Reset feedback when pattern changes
+// Reset execStep when memo mode changes (trace length changes)
+watch(showMemoMode, () => {
+  execStep.value = 0
+})
+
 watch(sandboxPattern, () => {
   sandboxFeedback.value = null
   sandboxUserAnswer.value = ''
@@ -401,6 +406,15 @@ const execStep = ref(0)
 const execPlaying = ref(false)
 let execPlayTimer: number | null = null
 
+interface ReadyNodeAnalysis {
+  id: string
+  label: string
+  unlockCount: number        // how many nodes become ready if we pick this one
+  unlockTargets: string[]    // which specific nodes get unlocked (level 1)
+  cascadeTargets: string[]   // level 2: nodes unlocked after level 1 is processed
+  isPicked: boolean
+}
+
 interface ExecEvent {
   nodeId: string
   type: 'call' | 'return'
@@ -412,77 +426,237 @@ interface ExecEvent {
   isBase: boolean
   depth: number
   parent?: string            // parent node id (for return flow)
+  readyQueue?: string[]      // scheduler: all nodes ready at this moment (call events only)
+  pickedFromReady?: boolean  // scheduler: this node was chosen from a non-trivial ready set
+  readyAnalysis?: ReadyNodeAnalysis[]  // scheduler: per-node unlock analysis
 }
 
-const execTrace = computed<ExecEvent[]>(() => {
+// ── DAG execution trace: scheduler-aware topological order (Kahn's algorithm) ──
+// Tracks the READY QUEUE at each step — shows why this node was picked
+const dagExecTrace = computed<ExecEvent[]>(() => {
+  const serverTree = store.subproblemGraph?.call_tree
   const dag = store.subproblemGraph?.dag
-  const layout = store.subproblemGraph?.layout
-  if (!dag || !layout) return []
+  if (!serverTree || !dag) return []
 
-  // Build adjacency: parent → [children] sorted by node id
-  const children = new Map<string, string[]>()
-  const parentOf = new Map<string, string>()
-  for (const e of dag.edges) {
-    if (!children.has(e.from)) children.set(e.from, [])
-    children.get(e.from)!.push(e.to)
-    parentOf.set(e.to, e.from)
+  const op = store.subproblemGraph?.complexity?.combine_operation || 'unknown'
+
+  // Collect unique nodes from the call tree
+  const uniqueNodes = new Map<string, { id: string; args: string[]; result?: any; children: string[] }>()
+  function collectUnique(node: { id: string; args: string[]; result?: any; children: any[] }) {
+    if (!uniqueNodes.has(node.id)) {
+      uniqueNodes.set(node.id, {
+        id: node.id,
+        args: node.args || [],
+        result: node.result,
+        children: (node.children || []).map((c: any) => c.id),
+      })
+    }
+    for (const child of node.children || []) collectUnique(child)
   }
-  for (const [, ch] of children) ch.sort()
+  collectUnique(serverTree)
 
-  // Find root
-  const hasParent = new Set(dag.edges.map(e => e.to))
-  const root = dag.nodes.find(n => !hasParent.has(n.id))?.id || dag.nodes[0]?.id
-  if (!root) return []
+  // Kahn's algorithm with ready queue tracking
+  const inDegree = new Map<string, number>()
+  const parentsOf = new Map<string, string[]>()
+  for (const [id, node] of uniqueNodes) {
+    if (!inDegree.has(id)) inDegree.set(id, 0)
+    for (const childId of node.children) {
+      if (!uniqueNodes.has(childId)) continue
+      if (!parentsOf.has(childId)) parentsOf.set(childId, [])
+      parentsOf.get(childId)!.push(id)
+      inDegree.set(id, (inDegree.get(id) || 0) + 1)
+    }
+  }
 
-  const layoutNode = new Map(layout.nodes.map(n => [n.id, n]))
+  // Initial ready set: base cases (in-degree 0)
+  const ready: string[] = []
+  for (const [id, deg] of inDegree) {
+    if (deg === 0) ready.push(id)
+  }
 
-  // Track results as we DFS — children finish before parent
-  const resultsMap = new Map<string, string>()
-
+  // Scheduler loop: pick from ready, record queue, unlock parents
+  const processed = new Set<string>()
   const events: ExecEvent[] = []
-  function dfs(nodeId: string, depth: number) {
-    const ln = layoutNode.get(nodeId)
-    const ch = children.get(nodeId) || []
-    const isBase = ch.length === 0
-    const parent = parentOf.get(nodeId)
+
+  while (ready.length > 0) {
+    const nodeId = ready.shift()!
+    if (processed.has(nodeId)) continue
+    processed.add(nodeId)
+
+    const node = uniqueNodes.get(nodeId)
+    if (!node) continue
+    const isBase = node.children.length === 0
+    const name = nodeId.split('(')[0]
+    const argsStr = node.args.join(', ')
+
+    // Snapshot: ALL nodes currently ready (including the one we just picked)
+    const readySnapshot = [nodeId, ...ready.filter(id => !processed.has(id))]
+
+    // Strategy analysis: for each ready node, compute what it would unlock (level 1 + cascade level 2)
+    const readySet = new Set(readySnapshot)
+    const analysis: ReadyNodeAnalysis[] = readySnapshot.map(rid => {
+      // Level 1: simulate processing rid, which parents get unlocked?
+      const unlocks: string[] = []
+      const simDeg1 = new Map(inDegree) // copy for simulation
+      for (const parentId of (parentsOf.get(rid) || [])) {
+        if (processed.has(parentId)) continue
+        const cur = simDeg1.get(parentId) || 1
+        simDeg1.set(parentId, cur - 1)
+        if (cur - 1 === 0) unlocks.push(parentId)
+      }
+
+      // Level 2: simulate processing each level-1 unlock, cascade further
+      const cascade: string[] = []
+      const simDeg2 = new Map(simDeg1) // copy after level-1 simulation
+      for (const l1Id of unlocks) {
+        for (const parentId of (parentsOf.get(l1Id) || [])) {
+          if (processed.has(parentId) || readySet.has(parentId)) continue
+          const cur = simDeg2.get(parentId) || 1
+          simDeg2.set(parentId, cur - 1)
+          if (cur - 1 === 0) cascade.push(parentId)
+        }
+      }
+
+      return {
+        id: rid,
+        label: rid.split('(')[0],
+        unlockCount: unlocks.length,
+        unlockTargets: unlocks,
+        cascadeTargets: cascade,
+        isPicked: rid === nodeId,
+      }
+    })
+
+    // Call event — scheduler picked this node from the ready queue
+    events.push({
+      nodeId,
+      type: 'call',
+      name,
+      args: argsStr,
+      isBase,
+      depth: 0,
+      readyQueue: readySnapshot,
+      pickedFromReady: readySnapshot.length > 1,
+      readyAnalysis: analysis,
+    })
+
+    // Return event — compute result
+    const childResults = node.children
+      .map((cid: string) => uniqueNodes.get(cid)?.result)
+      .filter((r: any) => r != null)
+      .map((r: any) => String(r))
+
+    let composition: string | undefined
+    if (childResults.length >= 2) {
+      if (op === 'add') composition = childResults.join(' + ') + ' = ' + node.result
+      else if (op === 'max') composition = 'max(' + childResults.join(', ') + ') = ' + node.result
+      else if (op === 'min') composition = 'min(' + childResults.join(', ') + ') = ' + node.result
+      else composition = childResults.join(' + ') + ' = ' + node.result
+    }
+
+    events.push({
+      nodeId,
+      type: 'return',
+      name,
+      args: argsStr,
+      returnValue: node.result != null ? String(node.result) : undefined,
+      composition,
+      childResults: childResults.length > 0 ? childResults : undefined,
+      isBase,
+      depth: 0,
+    })
+
+    // Unlock parents: decrement in-degree, add newly ready nodes
+    for (const parentId of (parentsOf.get(nodeId) || [])) {
+      const newDeg = (inDegree.get(parentId) || 1) - 1
+      inDegree.set(parentId, newDeg)
+      if (newDeg === 0) ready.push(parentId)
+    }
+  }
+  return events
+})
+
+// Current ready queue at the execution step (DAG mode only)
+const dagReadyQueue = computed(() => {
+  if (!showMemoMode.value) return []
+  const ev = execTrace.value[execStep.value]
+  if (!ev?.readyQueue) return []
+  // Return rich info: nodeId + short label
+  return ev.readyQueue.map(id => ({
+    id,
+    label: id.split('(')[0],
+    args: id.match(/\(([^)]*)\)/)?.[1] || '',
+    isPicked: id === ev.nodeId,
+  }))
+})
+
+// Set of node IDs currently in the ready queue (for SVG highlighting)
+const dagReadyNodeIds = computed(() => {
+  if (!showMemoMode.value) return new Set<string>()
+  const ev = execTrace.value[execStep.value]
+  return new Set(ev?.readyQueue || [])
+})
+
+// Scheduling strategy analysis: what each ready node unlocks
+const dagReadyAnalysis = computed(() => {
+  if (!showMemoMode.value) return []
+  const ev = execTrace.value[execStep.value]
+  return ev?.readyAnalysis || []
+})
+
+const execTrace = computed<ExecEvent[]>(() => {
+  // In memo mode, use DAG execution trace (each subproblem computed once)
+  if (showMemoMode.value && dagExecTrace.value.length > 0) {
+    return dagExecTrace.value
+  }
+
+  const serverTree = store.subproblemGraph?.call_tree
+  if (!serverTree) return []
+
+  const op = store.subproblemGraph?.complexity?.combine_operation || 'unknown'
+  const events: ExecEvent[] = []
+
+  function dfs(node: { id: string; args: string[]; result?: any; children: any[] }, depth: number, parent?: string) {
+    const nodeId = node.id
+    const isBase = !node.children || node.children.length === 0
+    const name = nodeId.split('(')[0]
+    const argsStr = (node.args || []).join(', ')
 
     events.push({
       nodeId,
       type: 'call',
-      name: ln?.label?.split('(')[0] || nodeId.split('(')[0],
-      args: ln?.label?.match(/\(([^)]*)\)/)?.[1] || '',
+      name,
+      args: argsStr,
       isBase,
       depth,
       parent,
     })
 
-    for (const child of ch) {
-      dfs(child, depth + 1)
+    for (const child of (node.children || [])) {
+      dfs(child, depth + 1, nodeId)
     }
 
-    // Children are done — collect their results for composition
-    const node = dag.nodes.find(n => n.id === nodeId)
-    const resultStr = node?.result != null ? String(node.result) : undefined
-    if (resultStr != null) resultsMap.set(nodeId, resultStr)
+    // Return event with composition
+    const resultStr = node.result != null ? String(node.result) : undefined
+    const childResults = (node.children || [])
+      .map((c: any) => c.result != null ? String(c.result) : null)
+      .filter((r: string | null): r is string => r != null)
 
-    const childResults = ch
-      .map(c => resultsMap.get(c))
-      .filter((r): r is string => r != null)
-
-    // Build composition expression
     let composition: string | undefined
     if (childResults.length >= 2) {
-      composition = childResults.join(' + ') + ' = ' + resultStr
+      if (op === 'add') composition = childResults.join(' + ') + ' = ' + resultStr
+      else if (op === 'max') composition = `max(${childResults.join(', ')}) = ${resultStr}`
+      else if (op === 'min') composition = `min(${childResults.join(', ')}) = ${resultStr}`
+      else composition = childResults.join(' + ') + ' = ' + resultStr
     } else if (childResults.length === 1 && !isBase) {
-      // Single child — show what operation was applied
       composition = resultStr
     }
 
     events.push({
       nodeId,
       type: 'return',
-      name: ln?.label?.split('(')[0] || nodeId.split('(')[0],
-      args: ln?.label?.match(/\(([^)]*)\)/)?.[1] || '',
+      name,
+      args: argsStr,
       returnValue: resultStr,
       composition,
       childResults: childResults.length > 0 ? childResults : undefined,
@@ -491,7 +665,8 @@ const execTrace = computed<ExecEvent[]>(() => {
       parent,
     })
   }
-  dfs(root, 0)
+
+  dfs(serverTree, 0)
   return events
 })
 
@@ -523,50 +698,642 @@ const execCurrentStack = computed(() => {
   return stack
 })
 
-function isNodeActive(node: { id: string }): boolean {
+// Step-level narrative: baseline style, one peak at most
+const execStepNarrative = computed(() => {
   const ev = execCurrentCall.value
-  return ev?.nodeId === node.id
-}
+  if (!ev) return ''
+  const op = store.subproblemGraph?.complexity?.combine_operation || 'unknown'
 
-function isNodeVisited(node: { id: string }): boolean {
-  const ev = execCurrentCall.value
-  const currentIdx = execStep.value
-  const trace = execTrace.value
-  // Check if this node has been called before current step
-  for (let i = 0; i <= currentIdx; i++) {
-    if (trace[i]?.nodeId === node.id && trace[i]?.type === 'call') return true
-  }
-  return false
-}
+  // Memo mode: DAG execution narrative with scheduler + invariant
+  if (showMemoMode.value) {
+    if (ev.type === 'call') {
+      const readyQ = ev.readyQueue || []
+      const readyCount = readyQ.length
+      const pickedFromMultiple = ev.pickedFromReady && readyCount > 1
 
-function isEdgeActive(edge: { from: string; to: string }): boolean {
-  const ev = execCurrentCall.value
-  if (!ev) return false
-  if (ev.type === 'call') {
-    // Call flow: parent → child (downward)
-    if (ev.nodeId === edge.to) return true
-    if (ev.nodeId === edge.from) {
-      const trace = execTrace.value
-      const idx = execStep.value
-      if (idx + 1 < trace.length && trace[idx + 1]?.nodeId === edge.to) return true
+      if (ev.isBase) {
+        const readyNote = pickedFromMultiple
+          ? `\nReady queue: [${readyQ.map(id => id.split('(')[0]).join(', ')}] — scheduler picked this base case.`
+          : ''
+        return `Base case. Already known — no computation needed.${readyNote}`
+      }
+      // Show the invariant: dependencies are already computed
+      const childIds = store.subproblemGraph?.dag?.edges
+        ?.filter(e => e.from === ev.nodeId)
+        .map(e => e.to) || []
+      const dagNode = store.subproblemGraph?.dag?.nodes?.find(n => n.id === ev.nodeId)
+      const callCount = dagNode?.call_count || 1
+      const deps = childIds.map(c => c.split('(')[0]).join(' and ')
+      const reuseNote = callCount > 1
+        ? `\nThis subproblem was called ${callCount}x in the tree. Now: compute once.`
+        : ''
+      // Strategy reasoning: explain WHY this node was picked
+      let schedulerNote = ''
+      if (pickedFromMultiple && ev.readyAnalysis) {
+        const analysis = ev.readyAnalysis
+        const picked = analysis.find(a => a.isPicked)
+        const others = analysis.filter(a => !a.isPicked)
+        const maxUnlock = Math.max(...analysis.map(a => a.unlockCount))
+        const isBestChoice = picked && picked.unlockCount === maxUnlock
+
+        if (picked && others.length > 0) {
+          const comparison = analysis.map(a => {
+            const l1 = a.unlockCount === 0 ? 'unlocks nothing' : 'unlocks ' + a.unlockCount
+            const l2 = a.cascadeTargets.length > 0 ? ` → cascades to ${a.cascadeTargets.length} more` : ''
+            return `${a.label} → ${l1}${l2}`
+          }).join(', ')
+          const cascadeNote = picked.cascadeTargets.length > 0
+            ? `\nHover to see cascade: ${picked.unlockTargets.map(t => t.split('(')[0]).join(', ')} would then unlock ${picked.cascadeTargets.map(t => t.split('(')[0]).join(', ')}.`
+            : ''
+          const reason = isBestChoice && maxUnlock > 0
+            ? `Picked ${ev.name} — unlocks the most dependent nodes.${cascadeNote}`
+            : picked.unlockCount === 0
+            ? `Picked ${ev.name} — base case, resolved immediately.`
+            : `Picked ${ev.name}.${cascadeNote}`
+          schedulerNote = `\n${comparison}\n${reason}`
+        }
+      } else if (readyCount === 1) {
+        schedulerNote = `\nOnly node with all dependencies satisfied.`
+      }
+      if (childIds.length > 0) {
+        return `${ev.nodeId} can be computed now.\n${deps} are already solved.${reuseNote}${schedulerNote}`
+      }
+      return `Compute ${ev.nodeId} once.${reuseNote}${schedulerNote}`
     }
-  } else {
-    // Return flow: child → parent (upward) — highlight edge from child to current returning node
-    if (ev.nodeId === edge.to) return true
+    // Return event in memo mode
+    if (ev.isBase) {
+      return `Base case: ${ev.returnValue}. Stored in cache.`
+    }
+    if (ev.composition && ev.childResults?.length === 2) {
+      const [a, b] = ev.childResults
+      return `Combine cached results: ${a} + ${b} = ${ev.returnValue}.\nNo recomputation — children were already solved.`
+    }
+    if (ev.returnValue != null) {
+      return `Result: ${ev.returnValue}. Stored — will never be recomputed.`
+    }
+    return `Done.`
   }
-  return false
+
+  // Tree mode: standard narrative
+  if (ev.type === 'call') {
+    if (ev.isBase) {
+      return `This is the simplest case. The answer is already known.`
+    }
+    const ch = store.subproblemGraph?.dag?.edges?.filter(e => e.from === ev.nodeId) || []
+    if (ch.length === 2) {
+      return `This problem splits into two smaller versions of itself.`
+    }
+    if (ch.length === 1) {
+      return `This reduces to one smaller problem.`
+    }
+    return `Solving this subproblem.`
+  }
+
+  // Return event — explain WHY we can combine
+  if (ev.isBase) {
+    return `Base case returns ${ev.returnValue}.`
+  }
+  if (ev.composition && ev.childResults?.length === 2) {
+    const [a, b] = ev.childResults
+    if (op === 'add') {
+      return `These are answers to smaller versions of the same problem.\n\nSo we can combine them: ${a} + ${b} = ${ev.returnValue}.\n\nThat is why recursion works.`
+    }
+    if (op === 'max') {
+      return `These are answers to smaller versions of the same problem.\n\nThe better one: ${ev.returnValue}.\n\nThat is why recursion works.`
+    }
+    if (op === 'min') {
+      return `These are answers to smaller versions of the same problem.\n\nThe cheaper one: ${ev.returnValue}.\n\nThat is why recursion works.`
+    }
+    if (op === 'merge') {
+      return `These are sorted halves of the same problem.\n\nMerging them into one sorted result.\n\nThat is why recursion works.`
+    }
+    return `These are answers to smaller versions of the same problem.\n\nCombining: ${ev.composition}.\n\nThat is why recursion works.`
+  }
+  if (ev.returnValue != null) {
+    return `Returns ${ev.returnValue}.`
+  }
+  return `Done.`
+})
+
+// ── Call Tree: actual execution tree with repeated nodes ──────────────
+interface TreeNode {
+  id: string            // unique instance id (e.g. "fib(3)#2")
+  nodeId: string        // subproblem id (e.g. "fib(3)")
+  label: string
+  argsStr: string       // arguments display
+  result?: string
+  children: TreeNode[]
+  callIdx: number       // index in execTrace where this call happens
+  returnIdx: number     // index in execTrace where this return happens
+  isRepeated: boolean   // same subproblem seen before
+  isBase: boolean
+  depth: number
+  x: number
+  y: number
+  narrative: string     // one-line explanation
 }
 
-function isEdgeReturnFlow(edge: { from: string; to: string }): boolean {
-  const ev = execCurrentCall.value
-  if (!ev || ev.type !== 'return') return false
-  // Return flow: edge TO the returning node (child → parent)
-  return ev.nodeId === edge.to
+const callTree = computed<TreeNode | null>(() => {
+  const serverTree = store.subproblemGraph?.call_tree
+  const dag = store.subproblemGraph?.dag
+  if (!serverTree) return null
+
+  const op = store.subproblemGraph?.complexity?.combine_operation || 'unknown'
+  const callCounts = new Map(dag?.nodes.map(n => [n.id, n.call_count]) || [])
+
+  // Track which subproblems we've already seen (for repeated detection)
+  const seen = new Set<string>()
+  let instanceCounter = new Map<string, number>()
+
+  function buildTree(node: { id: string; args: string[]; result?: any; children: any[] }, depth: number): TreeNode {
+    const nodeId = node.id
+    const isBase = !node.children || node.children.length === 0
+    const isRepeated = seen.has(nodeId)
+    seen.add(nodeId)
+
+    // Unique instance id
+    const count = (instanceCounter.get(nodeId) || 0) + 1
+    instanceCounter.set(nodeId, count)
+    const instanceId = `${nodeId}#${count}`
+
+    // Build children
+    const childNodes = (node.children || []).map(c => buildTree(c, depth + 1))
+
+    const resultStr = node.result != null ? String(node.result) : undefined
+    const childResults = childNodes
+      .map(cn => cn.result)
+      .filter((r): r is string => r != null)
+
+    // Generate one-line narrative
+    let narrative = ''
+    if (isBase) {
+      narrative = `Base case = ${resultStr}`
+    } else if (isRepeated) {
+      const totalCalls = callCounts.get(nodeId) || 1
+      narrative = `Seen before (${totalCalls}x total) = ${resultStr}`
+    } else if (childResults.length === 2) {
+      if (op === 'add') narrative = `${childResults[0]} + ${childResults[1]} = ${resultStr}`
+      else if (op === 'max') narrative = `max(${childResults[0]}, ${childResults[1]}) = ${resultStr}`
+      else if (op === 'min') narrative = `min(${childResults[0]}, ${childResults[1]}) = ${resultStr}`
+      else if (op === 'merge') narrative = `merge = ${resultStr}`
+      else narrative = `${childResults.join(' + ')} = ${resultStr}`
+    } else if (childResults.length === 1) {
+      narrative = `= ${resultStr}`
+    } else {
+      narrative = `= ${resultStr}`
+    }
+
+    const argsStr = (node.args || []).join(', ')
+
+    return {
+      id: instanceId,
+      nodeId,
+      label: nodeId.split('(')[0],
+      argsStr,
+      result: resultStr,
+      children: childNodes,
+      callIdx: -1,
+      returnIdx: -1,
+      isRepeated,
+      isBase,
+      depth,
+      x: 0,
+      y: 0,
+      narrative,
+    }
+  }
+
+  const tree = buildTree(serverTree, 0)
+
+  // Layout: compute subtree widths, then position
+  const nodeW = 100
+  const nodeH = 32
+  const gapX = 16
+  const gapY = 40
+
+  function computeWidth(node: TreeNode): number {
+    if (node.children.length === 0) return nodeW
+    const childWidths = node.children.map(c => computeWidth(c))
+    return Math.max(nodeW, childWidths.reduce((a, b) => a + b, 0) + gapX * (childWidths.length - 1))
+  }
+
+  function layoutNode_(node: TreeNode, x: number, y: number) {
+    const totalW = computeWidth(node)
+    node.x = x + (totalW - nodeW) / 2
+    node.y = y
+    let cx = x
+    for (const child of node.children) {
+      const cw = computeWidth(child)
+      layoutNode_(child, cx, y + nodeH + gapY)
+      cx += cw + gapX
+    }
+  }
+
+  layoutNode_(tree, 0, 0)
+
+  return tree
+})
+
+// Flatten tree for rendering
+function flattenTree(node: TreeNode): TreeNode[] {
+  const result = [node]
+  for (const child of node.children) {
+    result.push(...flattenTree(child))
+  }
+  return result
 }
 
-function isNodeReturning(node: { id: string }): boolean {
+const callTreeNodes = computed(() => {
+  if (!callTree.value) return []
+  return flattenTree(callTree.value)
+})
+
+const callTreeEdges = computed(() => {
+  if (!callTree.value) return []
+  const edges: { from: TreeNode; to: TreeNode }[] = []
+  function walk(node: TreeNode) {
+    for (const child of node.children) {
+      edges.push({ from: node, to: child })
+      walk(child)
+    }
+  }
+  walk(callTree.value)
+  return edges
+})
+
+// ── Memo DAG: tree restructured into DAG when memo mode is on ─────
+const memoDagNodes = computed(() => {
+  if (!showMemoMode.value || !callTree.value) return []
+  // Keep only first occurrence of each nodeId
+  const seen = new Set<string>()
+  const nodes: TreeNode[] = []
+  function walk(node: TreeNode) {
+    if (!seen.has(node.nodeId)) {
+      seen.add(node.nodeId)
+      // Clone with fresh layout
+      nodes.push({ ...node, children: [], x: 0, y: 0 })
+    }
+    for (const child of node.children) walk(child)
+  }
+  walk(callTree.value)
+
+  // Layout: depth-based (like DAG layout)
+  // Find depth for each nodeId from the tree
+  const depthMap = new Map<string, number>()
+  function getDepth(node: TreeNode, depth: number) {
+    if (!depthMap.has(node.nodeId) || depthMap.get(node.nodeId)! > depth) {
+      depthMap.set(node.nodeId, depth)
+    }
+    for (const child of node.children) getDepth(child, depth + 1)
+  }
+  getDepth(callTree.value, 0)
+
+  // Group by depth
+  const byDepth = new Map<number, TreeNode[]>()
+  for (const n of nodes) {
+    const d = depthMap.get(n.nodeId) || 0
+    if (!byDepth.has(d)) byDepth.set(d, [])
+    byDepth.get(d)!.push(n)
+  }
+
+  // Position
+  const nodeW = 100
+  const nodeH = 32
+  const gapX = 16
+  const gapY = 24
+  for (const [depth, ns] of byDepth) {
+    const x = depth * (nodeW + gapX)
+    ns.forEach((n, i) => {
+      n.x = x
+      n.y = i * (nodeH + gapY)
+    })
+  }
+
+  return nodes
+})
+
+// Lookup map for DAG nodes (used by propagation edge rendering)
+const memoDagNodesMap = computed(() => {
+  return new Map(memoDagNodes.value.map(n => [n.nodeId, n]))
+})
+
+const memoDagEdges = computed(() => {
+  if (!showMemoMode.value || !callTree.value) return []
+  // Build edges: for each tree edge (parent → child), create edge between unique nodes
+  const edgeSet = new Set<string>()
+  const edges: { from: TreeNode; to: TreeNode }[] = []
+  const nodeMap = new Map(memoDagNodes.value.map(n => [n.nodeId, n]))
+
+  function walk(node: TreeNode) {
+    for (const child of node.children) {
+      const fromNode = nodeMap.get(node.nodeId)
+      const toNode = nodeMap.get(child.nodeId)
+      if (fromNode && toNode && fromNode.nodeId !== toNode.nodeId) {
+        const key = `${fromNode.nodeId}->${toNode.nodeId}`
+        if (!edgeSet.has(key)) {
+          edgeSet.add(key)
+          edges.push({ from: fromNode, to: toNode })
+        }
+      }
+      walk(child)
+    }
+  }
+  walk(callTree.value)
+  return edges
+})
+
+const memoDagWidth = computed(() => {
+  if (memoDagNodes.value.length === 0) return 400
+  return Math.max(400, Math.max(...memoDagNodes.value.map(n => n.x)) + 130)
+})
+
+const memoDagHeight = computed(() => {
+  if (memoDagNodes.value.length === 0) return 200
+  return Math.max(200, Math.max(...memoDagNodes.value.map(n => n.y)) + 60)
+})
+
+const callTreeWidth = computed(() => {
+  if (!callTree.value || callTreeNodes.value.length === 0) return 400
+  return Math.max(400, Math.max(...callTreeNodes.value.map(n => n.x)) + 130)
+})
+
+const callTreeHeight = computed(() => {
+  if (!callTree.value || callTreeNodes.value.length === 0) return 200
+  return Math.max(200, Math.max(...callTreeNodes.value.map(n => n.y)) + 60)
+})
+
+// Which tree nodes are visible at current exec step
+const visibleTreeNodes = computed(() => {
+  const step = execStep.value
+  const trace = execTrace.value
+  const visible = new Set<string>()
+  const instanceCounts = new Map<string, number>()
+  for (let i = 0; i <= Math.min(step, trace.length - 1); i++) {
+    const ev = trace[i]
+    if (!ev) continue
+    const count = (instanceCounts.get(ev.nodeId) || 0) + 1
+    instanceCounts.set(ev.nodeId, count)
+    visible.add(`${ev.nodeId}#${count}`)
+  }
+  return visible
+})
+
+// Which tree node is currently active (at execStep)
+const activeTreeNode = computed(() => {
   const ev = execCurrentCall.value
-  return ev?.type === 'return' && ev.nodeId === node.id
+  if (!ev) return null
+  const trace = execTrace.value
+  const step = execStep.value
+  let count = 0
+  for (let i = 0; i <= step; i++) {
+    if (trace[i]?.nodeId === ev.nodeId) count++
+  }
+  return `${ev.nodeId}#${count}`
+})
+
+// Track which nodes should flash (first time becoming repeated)
+const flashNodes = computed(() => {
+  const step = execStep.value
+  if (step <= 0) return new Set<string>()
+  const prevVisible = new Set<string>()
+  const instanceCounts = new Map<string, number>()
+  const trace = execTrace.value
+  for (let i = 0; i <= step - 1; i++) {
+    const ev = trace[i]
+    if (!ev) continue
+    const count = (instanceCounts.get(ev.nodeId) || 0) + 1
+    instanceCounts.set(ev.nodeId, count)
+    prevVisible.add(`${ev.nodeId}#${count}`)
+  }
+  // Flash = visible now but was not visible before, AND is repeated
+  const flashing = new Set<string>()
+  for (const id of visibleTreeNodes.value) {
+    if (!prevVisible.has(id)) {
+      const node = callTreeNodes.value.find(n => n.id === id)
+      if (node?.isRepeated) flashing.add(id)
+    }
+  }
+  return flashing
+})
+
+// Count of repeated nodes visible so far
+const repeatCount = computed(() => {
+  let count = 0
+  for (const id of visibleTreeNodes.value) {
+    const node = callTreeNodes.value.find(n => n.id === id)
+    if (node?.isRepeated) count++
+  }
+  return count
+})
+
+// Hover state for inline narrative
+const hoveredNode = ref<string | null>(null)
+const hoveredNarrative = computed(() => {
+  if (!hoveredNode.value) return null
+  const node = callTreeNodes.value.find(n => n.id === hoveredNode.value)
+  return node?.narrative || null
+})
+const hoveredNodePos = computed(() => {
+  if (!hoveredNode.value) return null
+  const node = callTreeNodes.value.find(n => n.id === hoveredNode.value)
+  return node ? { x: node.x, y: node.y } : null
+})
+
+// ── Upgrade 4: Active edge (who called whom) ──────────────────────
+const activeEdge = computed(() => {
+  const ev = execCurrentCall.value
+  if (!ev || !ev.parent) return null
+  // Find the tree node instances for parent and current
+  const trace = execTrace.value
+  const step = execStep.value
+  // Count instances up to current step
+  const instanceCounts = new Map<string, number>()
+  let parentId: string | null = null
+  let childId: string | null = null
+  for (let i = 0; i <= step; i++) {
+    const t = trace[i]
+    if (!t) continue
+    const count = (instanceCounts.get(t.nodeId) || 0) + 1
+    instanceCounts.set(t.nodeId, count)
+    if (i === step) {
+      childId = `${t.nodeId}#${count}`
+    }
+    // Track parent: the last call event for the parent nodeId before current
+    if (t.nodeId === ev.parent && t.type === 'call') {
+      parentId = `${t.nodeId}#${count}`
+    }
+  }
+  if (!parentId || !childId) return null
+  const pNode = callTreeNodes.value.find(n => n.id === parentId)
+  const cNode = callTreeNodes.value.find(n => n.id === childId)
+  if (!pNode || !cNode) return null
+  return { from: pNode, to: cNode }
+})
+
+// ── Upgrade 5: Repeat pointer (dashed line to first occurrence) ────
+const repeatPointer = computed(() => {
+  const ev = execCurrentCall.value
+  if (!ev) return null
+  const trace = execTrace.value
+  const step = execStep.value
+  // Find the current node's instance ID
+  const instanceCounts = new Map<string, number>()
+  let currentInstId: string | null = null
+  let firstInstId: string | null = null
+  for (let i = 0; i <= step; i++) {
+    const t = trace[i]
+    if (!t) continue
+    const count = (instanceCounts.get(t.nodeId) || 0) + 1
+    instanceCounts.set(t.nodeId, count)
+    if (i === step) {
+      currentInstId = `${t.nodeId}#${count}`
+    }
+    if (t.nodeId === ev.nodeId && count === 1) {
+      firstInstId = `${t.nodeId}#1`
+    }
+  }
+  if (!currentInstId || !firstInstId || currentInstId === firstInstId) return null
+  const current = callTreeNodes.value.find(n => n.id === currentInstId)
+  const first = callTreeNodes.value.find(n => n.id === firstInstId)
+  if (!current || !first || !current.isRepeated) return null
+  return { from: current, to: first }
+})
+
+// ── Upgrade 6: Memoization comparison ──────────────────────────────
+const showMemoMode = ref(false)
+// Scheduler hover: which ready node is the user considering?
+const hoveredReadyNode = ref<string | null>(null)
+// Nodes that would be unlocked if we pick hoveredReadyNode
+const dagWillUnlockNodes = computed(() => {
+  if (!showMemoMode.value || !hoveredReadyNode.value) return new Set<string>()
+  const ev = execTrace.value[execStep.value]
+  if (!ev?.readyAnalysis) return new Set<string>()
+  const match = ev.readyAnalysis.find(a => a.id === hoveredReadyNode.value)
+  return new Set(match?.unlockTargets || [])
+})
+// Level-2 cascade: nodes unlocked after level-1 is processed
+const dagCascadeNodes = computed(() => {
+  if (!showMemoMode.value || !hoveredReadyNode.value) return new Set<string>()
+  const ev = execTrace.value[execStep.value]
+  if (!ev?.readyAnalysis) return new Set<string>()
+  const match = ev.readyAnalysis.find(a => a.id === hoveredReadyNode.value)
+  return new Set(match?.cascadeTargets || [])
+})
+const memoCachedNodes = computed(() => {
+  if (!showMemoMode.value) return new Set<string>()
+  // nodeId already includes args (e.g. "fib(3)"), so this is subproblem-level dedup
+  // Track which subproblems have been computed up to current playback step
+  const cached = new Set<string>()
+  const computed_ = new Set<string>()  // subproblems already computed
+  const instanceCounts = new Map<string, number>()
+  const trace = execTrace.value
+  const step = execStep.value
+  for (let i = 0; i <= Math.min(step, trace.length - 1); i++) {
+    const t = trace[i]
+    if (!t || t.type !== 'call') continue
+    const count = (instanceCounts.get(t.nodeId) || 0) + 1
+    instanceCounts.set(t.nodeId, count)
+    const instId = `${t.nodeId}#${count}`
+    if (computed_.has(t.nodeId)) {
+      cached.add(instId) // would be a cache hit — same subproblem already solved
+    }
+    computed_.add(t.nodeId)
+  }
+  return cached
+})
+
+// ── Complexity curve: cumulative calls vs unique over time ─────────
+const complexityCurve = computed(() => {
+  const trace = execTrace.value
+  if (trace.length === 0) return null
+  // Build curve LIVE up to current step (not pre-computed)
+  const step = execStep.value
+  const points: { step: number; total: number; unique: number; waste: number }[] = []
+  const seen = new Set<string>()
+  let total = 0
+  for (let i = 0; i <= Math.min(step, trace.length - 1); i++) {
+    const t = trace[i]
+    if (!t || t.type !== 'call') continue
+    total++
+    seen.add(t.nodeId)
+    points.push({ step: i, total, unique: seen.size, waste: total - seen.size })
+  }
+  if (points.length < 2) return null
+  const maxTotal = Math.max(points[points.length - 1].total, 2)
+  const chartW = 200
+  const chartH = 60
+  const maxStep = Math.max(step, 1)
+  const toX = (s: number) => (s / maxStep) * chartW
+  const toY = (val: number) => chartH - (val / maxTotal) * chartH
+  const totalPath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${toX(p.step).toFixed(1)},${toY(p.total).toFixed(1)}`).join(' ')
+  const uniquePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${toX(p.step).toFixed(1)},${toY(p.unique).toFixed(1)}`).join(' ')
+  // Waste area: polygon between total line and unique line
+  const wastePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${toX(p.step).toFixed(1)},${toY(p.total).toFixed(1)}`).join(' ')
+    + ' ' + [...points].reverse().map((p, i) => `${i === 0 ? 'L' : 'L'}${toX(p.step).toFixed(1)},${toY(p.unique).toFixed(1)}`).join(' ')
+    + ' Z'
+  const curPoint = points[points.length - 1]
+  return {
+    chartW, chartH, totalPath, uniquePath, wastePath,
+    curX: toX(curPoint.step),
+    curTotalY: toY(curPoint.total),
+    curUniqueY: toY(curPoint.unique),
+    curTotal: curPoint.total,
+    curUnique: curPoint.unique,
+    curWaste: curPoint.waste,
+    maxTotal,
+  }
+})
+
+// Tree node styling helpers
+function treeFill(node: TreeNode): string {
+  if (showMemoMode.value) {
+    if (memoCachedNodes.value.has(node.id)) return 'rgba(52,211,153,0.12)'
+    return 'rgba(251,114,153,0.1)'
+  }
+  if (activeTreeNode.value === node.id) return 'rgba(34,211,238,0.12)'
+  if (node.isRepeated) return 'rgba(251,114,153,0.1)'
+  return 'rgba(100,100,120,0.05)'
+}
+function treeStroke(node: TreeNode): string {
+  if (showMemoMode.value) {
+    if (memoCachedNodes.value.has(node.id)) return '#34d399'
+    return '#fb7299'
+  }
+  if (activeTreeNode.value === node.id) return 'var(--accent)'
+  if (node.isRepeated) return '#fb7299'
+  return 'var(--border)'
+}
+function treeStrokeWidth(node: TreeNode): number {
+  if (showMemoMode.value) return 2
+  return (activeTreeNode.value === node.id || node.isRepeated) ? 2 : 1
+}
+function treeLabelFill(node: TreeNode): string {
+  if (showMemoMode.value) {
+    if (memoCachedNodes.value.has(node.id)) return '#34d399'
+    return '#fb7299'
+  }
+  if (activeTreeNode.value === node.id) return 'var(--accent)'
+  if (node.isRepeated) return '#fb7299'
+  return 'var(--text)'
+}
+function treeResultFill(node: TreeNode): string {
+  return node.isRepeated ? 'rgba(251,114,153,0.7)' : 'var(--text-dim)'
+}
+function treeFilter(node: TreeNode): string | undefined {
+  if (node.isRepeated && activeTreeNode.value !== node.id) return 'url(#repeat-glow)'
+  return undefined
+}
+
+// Selected tree node for tooltip
+const selectedTreeNode = ref<string | null>(null)
+const selectedNodeNarrative = computed(() => {
+  if (!selectedTreeNode.value) return null
+  const node = callTreeNodes.value.find(n => n.id === selectedTreeNode.value)
+  return node?.narrative || null
+})
+
+function onTreeNodeClick(node: TreeNode) {
+  selectedTreeNode.value = selectedTreeNode.value === node.id ? null : node.id
 }
 
 function execStepBack() {
@@ -1645,6 +2412,57 @@ onUnmounted(() => {
           <button class="exec-btn" @click="execStepForward" :disabled="execStep >= execTrace.length - 1">▶</button>
           <button class="exec-btn exec-play" @click="execTogglePlay">{{ execPlaying ? '⏸' : '▶▶' }}</button>
         </div>
+        <!-- Ready Queue (DAG scheduler mode) -->
+        <div v-if="showMemoMode && dagReadyQueue.length > 0" class="ready-queue">
+          <div class="ready-queue-header">
+            <span class="ready-queue-badge">SCHEDULER</span>
+            <span class="ready-queue-title">Ready Queue</span>
+            <span class="ready-queue-count">{{ dagReadyQueue.length }} node{{ dagReadyQueue.length > 1 ? 's' : '' }}</span>
+          </div>
+          <!-- Strategy analysis: what each ready node unlocks -->
+          <div class="ready-strategy">
+            <div
+              v-for="item in dagReadyAnalysis"
+              :key="item.id"
+              class="strategy-row"
+              :class="{
+                'strategy-picked': item.isPicked,
+                'strategy-other': !item.isPicked,
+                'strategy-hovered': hoveredReadyNode === item.id,
+              }"
+              @mouseenter="hoveredReadyNode = item.id"
+              @mouseleave="hoveredReadyNode = null"
+            >
+              <span class="strategy-icon">{{ item.isPicked ? '▶' : '○' }}</span>
+              <span class="strategy-label">{{ item.label }}</span>
+              <span class="strategy-arrow">→</span>
+              <span class="strategy-unlock" :class="{ 'strategy-leaf': item.unlockCount === 0 }">
+                {{ item.unlockCount === 0 ? 'leaf — no impact' : item.unlockCount === 1 ? 'unlocks 1' : 'unlocks ' + item.unlockCount }}
+              </span>
+              <span v-if="item.unlockTargets.length > 0" class="strategy-targets">
+                ({{ item.unlockTargets.map(t => t.split('(')[0]).join(', ') }})
+              </span>
+              <span v-if="item.cascadeTargets.length > 0" class="strategy-cascade">
+                +{{ item.cascadeTargets.length }} cascade
+              </span>
+              <span v-if="item.isPicked" class="strategy-badge">PICKED</span>
+            </div>
+          </div>
+          <!-- Pick reasoning: why this choice -->
+          <div v-if="dagReadyAnalysis.length > 1" class="ready-queue-pick">
+            <span class="pick-arrow">→</span>
+            <span class="pick-text">
+              <template v-if="dagReadyAnalysis.find(a => a.isPicked)?.unlockCount ?? 0 > 0">
+                Picked <strong>{{ dagReadyAnalysis.find(a => a.isPicked)?.label }}</strong>
+                — unlocks {{ dagReadyAnalysis.find(a => a.isPicked)?.unlockCount }} dependent node{{ (dagReadyAnalysis.find(a => a.isPicked)?.unlockCount ?? 0) > 1 ? 's' : '' }}
+              </template>
+              <template v-else>
+                Picked <strong>{{ dagReadyAnalysis.find(a => a.isPicked)?.label }}</strong>
+                — base case, no dependencies to unlock
+              </template>
+            </span>
+          </div>
+        </div>
         <!-- Call stack -->
         <div class="exec-stack">
           <div class="stack-label">Call Stack</div>
@@ -1663,9 +2481,14 @@ onUnmounted(() => {
         </div>
         <!-- Current call highlight -->
         <div class="exec-current" v-if="execCurrentCall">
-          <div class="current-label">{{ execCurrentCall.type === 'call' ? '→ Calling' : execCurrentCall.type === 'return' ? '← Returning' : '· Base case' }}</div>
-          <div class="current-call">{{ execCurrentCall.name }}({{ execCurrentCall.args }})</div>
-          <div v-if="execCurrentCall.returnValue != null" class="current-return">returns {{ execCurrentCall.returnValue }}</div>
+          <!-- Step narrative: the "explanation" — primary -->
+          <div class="step-narrative" v-if="execStepNarrative">{{ execStepNarrative }}</div>
+          <!-- Raw data: secondary, compact -->
+          <div class="current-raw">
+            <span class="current-label">{{ execCurrentCall.type === 'call' ? '→' : '←' }}</span>
+            <span class="current-call">{{ execCurrentCall.name }}({{ execCurrentCall.args }})</span>
+            <span v-if="execCurrentCall.returnValue != null" class="current-return">→ {{ execCurrentCall.returnValue }}</span>
+          </div>
           <!-- Operation type: what kind of combine -->
           <div v-if="execCurrentCall.type === 'return' && store.subproblemGraph?.complexity?.combine_operation_label && store.subproblemGraph.complexity.combine_operation !== 'unknown'" class="combine-operation">
             <span class="combine-label">Combine</span>
@@ -1681,94 +2504,378 @@ onUnmounted(() => {
             <span v-for="(r, i) in execCurrentCall.childResults" :key="i" class="child-result">{{ execCurrentCall.name }}({{ execCurrentCall.args?.split(',')[i]?.trim() || '' }}) → {{ r }}</span>
           </div>
         </div>
-        <!-- DAG with current node highlighted -->
-        <div class="exec-dag">
-          <svg
-            :width="store.subproblemGraph.layout.width"
-            :height="store.subproblemGraph.layout.height"
-            class="dag-svg"
-          >
-            <defs>
-              <marker id="dag-arrow-exec" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
-                <polygon points="0 0, 6 2.5, 0 5" fill="rgba(167,139,250,0.5)" />
-              </marker>
-              <marker id="dag-arrow-return" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
-                <polygon points="0 0, 6 2.5, 0 5" fill="#34d399" />
-              </marker>
-              <filter id="return-glow">
-                <feGaussianBlur stdDeviation="2" result="blur"/>
-                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-              </filter>
-            </defs>
-            <!-- Base edges (faint) -->
-            <g v-for="(edge, i) in store.subproblemGraph.layout.edges" :key="'ee'+i">
-              <line
-                :x1="edge.from_pos.x + store.subproblemGraph.layout.nodeW"
-                :y1="edge.from_pos.y + store.subproblemGraph.layout.nodeH / 2"
-                :x2="edge.to_pos.x"
-                :y2="edge.to_pos.y + store.subproblemGraph.layout.nodeH / 2"
-                stroke="rgba(167,139,250,0.15)"
-                stroke-width="1"
-              />
-            </g>
-            <!-- Active call flow (parent → child, downward) -->
-            <g v-for="(edge, i) in store.subproblemGraph.layout.edges" :key="'ec'+i">
-              <line
-                v-if="isEdgeActive(edge) && !isEdgeReturnFlow(edge)"
-                :x1="edge.from_pos.x + store.subproblemGraph.layout.nodeW"
-                :y1="edge.from_pos.y + store.subproblemGraph.layout.nodeH / 2"
-                :x2="edge.to_pos.x"
-                :y2="edge.to_pos.y + store.subproblemGraph.layout.nodeH / 2"
-                stroke="var(--primary)"
-                stroke-width="2"
-                marker-end="url(#dag-arrow-exec)"
-              />
-            </g>
-            <!-- Return flow (child → parent, upward, glowing green) -->
-            <g v-for="(edge, i) in store.subproblemGraph.layout.edges" :key="'er'+i">
-              <line
-                v-if="isEdgeReturnFlow(edge)"
-                :x1="edge.from_pos.x + store.subproblemGraph.layout.nodeW"
-                :y1="edge.from_pos.y + store.subproblemGraph.layout.nodeH / 2"
-                :x2="edge.to_pos.x"
-                :y2="edge.to_pos.y + store.subproblemGraph.layout.nodeH / 2"
-                stroke="#34d399"
-                stroke-width="2.5"
-                filter="url(#return-glow)"
-                marker-end="url(#dag-arrow-return)"
-              />
-            </g>
-            <g
-              v-for="node in store.subproblemGraph.layout.nodes"
-              :key="node.id"
-              :transform="`translate(${node.x}, ${node.y})`"
+        <!-- Call Tree: visual execution tree with repeated nodes -->
+        <div class="call-tree-container" v-if="callTreeNodes.length > 0">
+          <div class="call-tree-header">
+            <span class="call-tree-badge">TREE</span>
+            <span class="call-tree-title">Call Tree</span>
+            <span class="call-tree-legend">
+              <span v-if="!showMemoMode" class="legend-item"><span class="legend-dot legend-new"></span> first seen</span>
+              <span v-if="!showMemoMode" class="legend-item"><span class="legend-dot legend-repeat"></span> repeated</span>
+              <span v-if="!showMemoMode" class="legend-item"><span class="legend-dot legend-active"></span> current</span>
+              <span v-if="showMemoMode" class="legend-item"><span class="legend-dot legend-cached"></span> cache hit</span>
+              <span v-if="showMemoMode" class="legend-item"><span class="legend-dot legend-computed"></span> computed</span>
+            </span>
+            <button class="memo-toggle" :class="{ active: showMemoMode }" @click="showMemoMode = !showMemoMode">
+              {{ showMemoMode ? '🧠 Memo ON' : 'Memo OFF' }}
+            </button>
+          </div>
+          <!-- Execution invariant (memo mode) -->
+          <div v-if="showMemoMode" class="exec-invariant">
+            <span class="invariant-label">INVARIANT</span>
+            <span class="invariant-text">A node is computed only after all its dependencies are computed.</span>
+          </div>
+          <div class="call-tree-scroll">
+            <!-- TREE MODE (memo OFF) -->
+            <svg
+              v-if="!showMemoMode"
+              :width="callTreeWidth"
+              :height="callTreeHeight"
+              class="call-tree-svg"
             >
-              <rect
-                :width="store.subproblemGraph.layout.nodeW"
-                :height="store.subproblemGraph.layout.nodeH"
-                rx="4"
-                :fill="isNodeReturning(node) ? 'rgba(52,211,153,0.15)' : isNodeActive(node) ? 'rgba(34,211,238,0.15)' : isNodeVisited(node) ? 'rgba(100,100,120,0.06)' : 'rgba(100,100,120,0.02)'"
-                :stroke="isNodeReturning(node) ? '#34d399' : isNodeActive(node) ? 'var(--accent)' : isNodeVisited(node) ? 'var(--border)' : 'rgba(100,100,120,0.1)'"
-                :stroke-width="isNodeReturning(node) || isNodeActive(node) ? 2 : 1"
-              />
-              <text x="6" y="14" class="dag-label" :fill="isNodeReturning(node) ? '#34d399' : isNodeActive(node) ? 'var(--accent)' : 'var(--text-dim)'">
-                {{ node.label }}
-              </text>
-              <text v-if="node.state_size != null" :x="store.subproblemGraph.layout.nodeW - 6" y="28" class="dag-state" fill="#a78bfa" text-anchor="end">
-                n={{ node.state_size }}
-              </text>
-            </g>
-          </svg>
+              <defs>
+                <marker id="tree-arrow" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                  <polygon points="0 0, 6 2.5, 0 5" fill="rgba(167,139,250,0.4)" />
+                </marker>
+                <marker id="tree-arrow-active" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                  <polygon points="0 0, 6 2.5, 0 5" fill="var(--accent)" />
+                </marker>
+                <marker id="tree-arrow-repeat" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                  <polygon points="0 0, 6 2.5, 0 5" fill="#fb7299" />
+                </marker>
+                <filter id="repeat-glow">
+                  <feGaussianBlur stdDeviation="1.5" result="blur"/>
+                  <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                </filter>
+                <filter id="active-glow">
+                  <feGaussianBlur stdDeviation="2" result="blur"/>
+                  <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                </filter>
+              </defs>
+              <!-- Edges -->
+              <g v-for="(edge, i) in callTreeEdges" :key="'te'+i">
+                <line
+                  v-if="visibleTreeNodes.has(edge.from.id) && visibleTreeNodes.has(edge.to.id)"
+                  :x1="edge.from.x + 50"
+                  :y1="edge.from.y + 32"
+                  :x2="edge.to.x + 50"
+                  :y2="edge.to.y"
+                  :stroke="activeTreeNode === edge.to.id ? 'var(--accent)' : 'rgba(167,139,250,0.25)'"
+                  :stroke-width="activeTreeNode === edge.to.id ? 2 : 1"
+                  :marker-end="activeTreeNode === edge.to.id ? 'url(#tree-arrow-active)' : 'url(#tree-arrow)'"
+                />
+              </g>
+              <!-- Active edge glow -->
+              <g v-if="activeEdge">
+                <line
+                  :x1="activeEdge.from.x + 50"
+                  :y1="activeEdge.from.y + 32"
+                  :x2="activeEdge.to.x + 50"
+                  :y2="activeEdge.to.y"
+                  stroke="var(--accent)"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  class="active-edge-glow"
+                  marker-end="url(#tree-arrow-active)"
+                />
+                <circle r="3" fill="var(--accent)" class="flow-dot">
+                  <animateMotion
+                    :dur="'0.6s'"
+                    repeatCount="1"
+                    :path="`M${activeEdge.from.x + 50},${activeEdge.from.y + 32} L${activeEdge.to.x + 50},${activeEdge.to.y}`"
+                  />
+                </circle>
+              </g>
+              <!-- Repeat pointer -->
+              <g v-if="repeatPointer">
+                <line
+                  :x1="repeatPointer.from.x + 50"
+                  :y1="repeatPointer.from.y + 16"
+                  :x2="repeatPointer.to.x + 50"
+                  :y2="repeatPointer.to.y + 16"
+                  stroke="#fb7299"
+                  stroke-width="1.5"
+                  stroke-dasharray="4,3"
+                  stroke-linecap="round"
+                  class="repeat-pointer-line"
+                  marker-end="url(#tree-arrow-repeat)"
+                />
+                <text
+                  :x="(repeatPointer.from.x + repeatPointer.to.x) / 2 + 50"
+                  :y="(repeatPointer.from.y + repeatPointer.to.y) / 2 + 12"
+                  class="repeat-pointer-label"
+                  fill="#fb7299"
+                  text-anchor="middle"
+                >seen before</text>
+              </g>
+              <!-- Nodes -->
+              <g
+                v-for="node in callTreeNodes"
+                :key="node.id"
+                :transform="`translate(${node.x}, ${node.y})`"
+                class="tree-node"
+                :class="{
+                  'tree-node-active': activeTreeNode === node.id,
+                  'tree-node-repeat': node.isRepeated,
+                  'tree-node-flash': flashNodes.has(node.id),
+                  'tree-node-enter': visibleTreeNodes.has(node.id),
+                }"
+                v-if="visibleTreeNodes.has(node.id)"
+                @mouseenter="hoveredNode = node.id"
+                @mouseleave="hoveredNode = null"
+              >
+                <rect
+                  width="100" height="32" rx="6"
+                  :fill="treeFill(node)"
+                  :stroke="treeStroke(node)"
+                  :stroke-width="treeStrokeWidth(node)"
+                  :filter="treeFilter(node)"
+                />
+                <text x="8" y="14" class="tree-label" :fill="treeLabelFill(node)">
+                  {{ node.label }}{{ node.argsStr ? '(' + node.argsStr + ')' : '' }}
+                </text>
+                <text v-if="node.result !== undefined" x="8" y="26" class="tree-result" :fill="treeResultFill(node)">
+                  = {{ node.result }}
+                </text>
+                <g v-if="node.isRepeated" :transform="`translate(84, 2)`">
+                  <rect width="14" height="12" rx="3" fill="rgba(251,114,153,0.3)" />
+                  <text x="7" y="9.5" text-anchor="middle" class="tree-repeat-badge" fill="#fb7299">↺</text>
+                </g>
+                <circle
+                  v-if="flashNodes.has(node.id)"
+                  cx="50" cy="16" r="60"
+                  fill="none"
+                  stroke="rgba(255,68,68,0.4)"
+                  stroke-width="2"
+                  class="burst-ring"
+                />
+              </g>
+              <!-- Hover narrative -->
+              <g
+                v-if="hoveredNarrative && hoveredNodePos"
+                :transform="`translate(${hoveredNodePos.x - 10}, ${hoveredNodePos.y + 36})`"
+                class="tree-hover-narrative"
+              >
+                <rect
+                  :width="Math.max(120, hoveredNarrative.length * 6.5 + 16)"
+                  height="24" rx="4"
+                  fill="rgba(15,23,42,0.92)"
+                  stroke="rgba(251,114,153,0.4)"
+                  stroke-width="1"
+                />
+                <text x="8" y="16" class="hover-narrative-text" fill="#e2e8f0">
+                  {{ hoveredNarrative }}
+                </text>
+              </g>
+            </svg>
+
+            <!-- DAG MODE (memo ON) — tree restructured into DAG -->
+            <!-- Visual rule hint -->
+            <div v-if="showMemoMode && hoveredReadyNode" class="dag-hint">
+              <span class="dag-hint-icon">→</span>
+              <span class="dag-hint-text">
+                <template v-if="dagWillUnlockNodes.size > 0">
+                  <span class="dag-hint-bright">Bright</span> = direct unlock
+                  <template v-if="dagCascadeNodes.size > 0"> · <span class="dag-hint-dim">Dim</span> = cascade</template>
+                </template>
+                <template v-else>
+                  No nodes unlocked — this is a leaf choice
+                </template>
+              </span>
+            </div>
+            <div v-else-if="showMemoMode" class="dag-hint dag-hint-idle">
+              <span class="dag-hint-text">Hover a ready node to see what it unlocks</span>
+            </div>
+            <svg
+              v-if="showMemoMode"
+              :width="memoDagWidth"
+              :height="memoDagHeight"
+              class="call-tree-svg"
+            >
+              <defs>
+                <marker id="dag-arrow" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+                  <polygon points="0 0, 6 2.5, 0 5" fill="rgba(52,211,153,0.5)" />
+                </marker>
+                <marker id="unlock-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                  <polygon points="0 0, 8 3, 0 6" fill="#fbb92a" />
+                </marker>
+              </defs>
+              <!-- DAG Edges -->
+              <g v-for="(edge, i) in memoDagEdges" :key="'de'+i">
+                <line
+                  :x1="edge.from.x + 50"
+                  :y1="edge.from.y + 32"
+                  :x2="edge.to.x + 50"
+                  :y2="edge.to.y"
+                  stroke="rgba(52,211,153,0.35)"
+                  stroke-width="1.5"
+                  marker-end="url(#dag-arrow)"
+                />
+              </g>
+              <!-- Propagation edges: level-1 (amber) and level-2 (dim amber) -->
+              <g v-for="item in (hoveredReadyNode ? dagReadyAnalysis.filter(a => a.id === hoveredReadyNode) : [])" :key="'prop-'+item.id">
+                <!-- Level-1 edges: ready node → direct unlocks -->
+                <g v-for="targetId in item.unlockTargets" :key="'pe-'+targetId">
+                  <line
+                    v-if="memoDagNodesMap.get(targetId) && memoDagNodesMap.get(item.id)"
+                    :x1="memoDagNodesMap.get(item.id)!.x + 50"
+                    :y1="memoDagNodesMap.get(item.id)!.y + 16"
+                    :x2="memoDagNodesMap.get(targetId)!.x + 50"
+                    :y2="memoDagNodesMap.get(targetId)!.y + 16"
+                    stroke="#fbb92a"
+                    stroke-width="2.5"
+                    stroke-dasharray="6,3"
+                    class="propagation-edge"
+                    marker-end="url(#unlock-arrow)"
+                  />
+                </g>
+                <!-- Level-2 edges: level-1 → cascade unlocks -->
+                <g v-for="cascadeId in item.cascadeTargets" :key="'ce-'+cascadeId">
+                  <g v-for="l1Id in item.unlockTargets" :key="'ce-'+l1Id+'-'+cascadeId">
+                    <line
+                      v-if="memoDagNodesMap.get(l1Id) && memoDagNodesMap.get(cascadeId)"
+                      :x1="memoDagNodesMap.get(l1Id)!.x + 50"
+                      :y1="memoDagNodesMap.get(l1Id)!.y + 16"
+                      :x2="memoDagNodesMap.get(cascadeId)!.x + 50"
+                      :y2="memoDagNodesMap.get(cascadeId)!.y + 16"
+                      stroke="rgba(251,193,58,0.35)"
+                      stroke-width="1.5"
+                      stroke-dasharray="4,4"
+                      class="cascade-edge"
+                    />
+                  </g>
+                </g>
+              </g>
+              <!-- DAG Nodes -->
+              <g
+                v-for="node in memoDagNodes"
+                :key="node.nodeId"
+                :transform="`translate(${node.x}, ${node.y})`"
+                class="tree-node"
+                :class="{
+                  'dag-node-ready': dagReadyNodeIds.has(node.nodeId) && execCurrentCall?.nodeId !== node.nodeId,
+                  'dag-node-picked': execCurrentCall?.nodeId === node.nodeId && showMemoMode,
+                  'dag-node-will-unlock': dagWillUnlockNodes.has(node.nodeId),
+                  'dag-node-cascade': dagCascadeNodes.has(node.nodeId) && !dagWillUnlockNodes.has(node.nodeId),
+                }"
+                @mouseenter="hoveredNode = node.id"
+                @mouseleave="hoveredNode = null"
+              >
+                <!-- Cascade glow (level-2, dim amber) -->
+                <rect
+                  v-if="dagCascadeNodes.has(node.nodeId) && !dagWillUnlockNodes.has(node.nodeId)"
+                  x="-3" y="-3" width="106" height="38" rx="8"
+                  fill="rgba(251,193,58,0.04)"
+                  stroke="rgba(251,193,58,0.3)"
+                  stroke-width="1.5"
+                  stroke-dasharray="3,3"
+                  class="cascade-ring"
+                />
+                <!-- Will-unlock glow (level-1, amber) -->
+                <rect
+                  v-if="dagWillUnlockNodes.has(node.nodeId)"
+                  x="-4" y="-4" width="108" height="40" rx="9"
+                  fill="rgba(251,193,58,0.08)"
+                  stroke="rgba(251,193,58,0.7)"
+                  stroke-width="2"
+                  class="will-unlock-ring"
+                />
+                <!-- Ready glow (behind the rect) -->
+                <rect
+                  v-if="dagReadyNodeIds.has(node.nodeId) && execCurrentCall?.nodeId !== node.nodeId && !dagWillUnlockNodes.has(node.nodeId)"
+                  x="-3" y="-3" width="106" height="38" rx="8"
+                  fill="none"
+                  stroke="rgba(52,211,153,0.5)"
+                  stroke-width="2"
+                  stroke-dasharray="4,2"
+                  class="ready-glow-ring"
+                />
+                <rect
+                  width="100" height="32" rx="6"
+                  :fill="dagWillUnlockNodes.has(node.nodeId) ? 'rgba(251,193,58,0.15)' : dagCascadeNodes.has(node.nodeId) ? 'rgba(251,193,58,0.06)' : execCurrentCall?.nodeId === node.nodeId && showMemoMode ? 'rgba(52,211,153,0.2)' : dagReadyNodeIds.has(node.nodeId) ? 'rgba(52,211,153,0.12)' : 'rgba(52,211,153,0.08)'"
+                  :stroke="dagWillUnlockNodes.has(node.nodeId) ? '#fbb92a' : dagCascadeNodes.has(node.nodeId) ? 'rgba(251,193,58,0.4)' : execCurrentCall?.nodeId === node.nodeId && showMemoMode ? '#34d399' : '#34d399'"
+                  :stroke-width="dagWillUnlockNodes.has(node.nodeId) ? 2 : dagCascadeNodes.has(node.nodeId) ? 1.5 : execCurrentCall?.nodeId === node.nodeId && showMemoMode ? 2.5 : 1.5"
+                />
+                <text x="8" y="14" class="tree-label" :fill="dagWillUnlockNodes.has(node.nodeId) ? '#fbb92a' : dagCascadeNodes.has(node.nodeId) ? 'rgba(251,193,58,0.6)' : '#34d399'">
+                  {{ node.label }}{{ node.argsStr ? '(' + node.argsStr + ')' : '' }}
+                </text>
+                <text v-if="node.result !== undefined" x="8" y="26" class="tree-result" :fill="dagWillUnlockNodes.has(node.nodeId) ? 'rgba(251,185,42,0.7)' : dagCascadeNodes.has(node.nodeId) ? 'rgba(251,193,58,0.4)' : 'rgba(52,211,153,0.7)'">
+                  = {{ node.result }}
+                </text>
+                <!-- Cache hit badge -->
+                <g :transform="`translate(84, 2)`">
+                  <rect width="14" height="12" rx="3" fill="rgba(52,211,153,0.2)" />
+                  <text x="7" y="9.5" text-anchor="middle" class="tree-repeat-badge" fill="#34d399">✓</text>
+                </g>
+              </g>
+              <!-- Hover narrative for DAG -->
+              <g
+                v-if="hoveredNarrative && hoveredNodePos"
+                :transform="`translate(${hoveredNodePos.x - 10}, ${hoveredNodePos.y + 36})`"
+                class="tree-hover-narrative"
+              >
+                <rect
+                  :width="Math.max(120, hoveredNarrative.length * 6.5 + 16)"
+                  height="24" rx="4"
+                  fill="rgba(15,23,42,0.92)"
+                  stroke="rgba(52,211,153,0.4)"
+                  stroke-width="1"
+                />
+                <text x="8" y="16" class="hover-narrative-text" fill="#e2e8f0">
+                  {{ hoveredNarrative }}
+                </text>
+              </g>
+            </svg>
+          </div>
+          <!-- Complexity curve: cumulative calls vs unique -->
+          <div v-if="complexityCurve" class="complexity-curve">
+            <div class="curve-header">
+              <span class="curve-title">Growth</span>
+              <span class="curve-stats">
+                <span class="curve-total">{{ complexityCurve.curTotal }} calls</span>
+                <span class="curve-sep">/</span>
+                <span class="curve-unique">{{ complexityCurve.curUnique }} unique</span>
+                <span v-if="complexityCurve.curWaste > 0" class="curve-waste">(+{{ complexityCurve.curWaste }} waste)</span>
+              </span>
+            </div>
+            <svg :width="complexityCurve.chartW + 10" :height="complexityCurve.chartH + 10" class="curve-svg">
+              <!-- Waste area: between total and unique lines -->
+              <path :d="complexityCurve.wastePath" fill="rgba(251,114,153,0.1)" />
+              <!-- Total calls line (red) -->
+              <path :d="complexityCurve.totalPath" fill="none" stroke="#fb7299" stroke-width="1.5" />
+              <!-- Unique subproblems line (green) -->
+              <path :d="complexityCurve.uniquePath" fill="none" stroke="#34d399" stroke-width="1.5" />
+              <!-- Current position dots -->
+              <circle :cx="complexityCurve.curX" :cy="complexityCurve.curTotalY" r="3" fill="#fb7299" />
+              <circle :cx="complexityCurve.curX" :cy="complexityCurve.curUniqueY" r="3" fill="#34d399" />
+            </svg>
+          </div>
+          <!-- Explosion counter: how many repeated calls -->
+          <div v-if="repeatCount > 0 && !showMemoMode" class="tree-explosion-counter">
+            <span class="explosion-icon">💥</span>
+            <span class="explosion-text">{{ repeatCount }} repeated calls — that's the waste</span>
+          </div>
+          <!-- Memo savings counter -->
+          <div v-if="showMemoMode" class="memo-savings-counter">
+            <span class="memo-savings-icon">🧠</span>
+            <span class="memo-savings-text">
+              With memo: {{ store.subproblemGraph?.dag?.unique_count || 0 }} calls instead of {{ store.subproblemGraph?.dag?.total_count || 0 }}
+              — saves {{ (store.subproblemGraph?.dag?.total_count || 0) - (store.subproblemGraph?.dag?.unique_count || 0) }} recomputations
+            </span>
+          </div>
         </div>
       </div>
 
-      <!-- Pattern Label -->
-      <div v-if="store.subproblemGraph?.complexity?.pattern_hint" class="pattern-label-box">
-        <span class="pattern-label-icon">🧠</span>
-        <span class="pattern-label-text">{{ store.subproblemGraph.complexity.pattern_description || patternLabel(store.subproblemGraph.complexity.pattern_hint) }}</span>
+      <!-- Cognitive Narrative: the "explanation layer" — primary, human-readable -->
+      <div v-if="store.subproblemGraph?.complexity?.cognitive_narrative" class="cognitive-narrative">
+        <div class="cognitive-header">
+          <span class="cognitive-badge">EXPLAIN</span>
+          <span class="cognitive-title">What is happening?</span>
+        </div>
+        <div class="cognitive-text">{{ store.subproblemGraph.complexity.cognitive_narrative }}</div>
       </div>
 
-      <!-- Auto Summary -->
+      <!-- Auto Summary (compact, below narrative) -->
       <div v-if="store.subproblemGraph?.complexity?.auto_summary" class="auto-summary">
         <div class="summary-header">Summary</div>
         <div class="summary-grid">
@@ -3384,7 +4491,21 @@ onUnmounted(() => {
   border: 1px solid rgba(34,211,238,0.2);
   border-left: 3px solid var(--accent);
   border-radius: 0 6px 6px 0;
-  padding: 8px 10px;
+  padding: 10px 12px;
+}
+.step-narrative {
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.6;
+  margin-bottom: 6px;
+}
+.current-raw {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--text-muted);
 }
 .current-label {
   font-size: 10px;
@@ -3411,6 +4532,454 @@ onUnmounted(() => {
 .exec-dag {
   overflow-x: auto;
   padding: 4px 0;
+}
+
+/* Call Tree Visualization */
+.call-tree-container {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(15,23,42,0.4);
+}
+.call-tree-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.call-tree-badge {
+  background: linear-gradient(135deg, #fb7299, #a78bfa);
+  color: #0f172a; font-size: 9px; font-weight: 800;
+  padding: 2px 8px; border-radius: 3px; letter-spacing: 1px;
+}
+.call-tree-title {
+  font-size: 12px; font-weight: 700; color: var(--text);
+}
+.call-tree-legend {
+  margin-left: auto; display: flex; gap: 12px;
+}
+.legend-item {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 10px; color: var(--text-muted);
+}
+.legend-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.legend-new {
+  background: var(--border);
+  border: 1px solid var(--text-dim);
+}
+.legend-repeat {
+  background: rgba(251,114,153,0.4);
+  border: 1px solid #fb7299;
+}
+.legend-active {
+  background: rgba(34,211,238,0.3);
+  border: 1px solid var(--accent);
+}
+.call-tree-scroll {
+  overflow-x: auto; overflow-y: auto;
+  max-height: 400px;
+  padding: 12px;
+}
+.call-tree-svg {
+  display: block;
+}
+.tree-node {
+  cursor: pointer;
+}
+/* Upgrade 1: Tree "grows" — nodes appear with fade-in */
+.tree-node-enter {
+  animation: tree-grow 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes tree-grow {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+/* Upgrade 2: Repeated node flash — explosive burst when first repeated */
+.tree-node-flash rect {
+  animation: repeat-flash 0.7s ease-out;
+}
+@keyframes repeat-flash {
+  0% { stroke-width: 2; }
+  20% { stroke-width: 5; stroke: #ff2222; fill: rgba(255,34,34,0.3); }
+  50% { stroke-width: 4; stroke: #ff4444; fill: rgba(255,68,68,0.2); }
+  80% { stroke-width: 3; stroke: #fb7299; fill: rgba(251,114,153,0.15); }
+  100% { stroke-width: 2; stroke: #fb7299; fill: rgba(251,114,153,0.1); }
+}
+/* Radial burst ring */
+.burst-ring {
+  animation: burst-expand 0.7s ease-out forwards;
+  pointer-events: none;
+}
+@keyframes burst-expand {
+  0% { r: 10; opacity: 0.8; stroke-width: 3; }
+  40% { r: 40; opacity: 0.5; stroke-width: 2; }
+  100% { r: 80; opacity: 0; stroke-width: 0.5; }
+}
+.tree-node:hover rect {
+  stroke-width: 2.5;
+}
+.tree-label {
+  font-size: 11px; font-weight: 600; font-family: monospace;
+}
+.tree-result {
+  font-size: 9px; font-family: monospace;
+}
+.tree-repeat-badge {
+  font-size: 8px; font-weight: 800;
+}
+/* Hover narrative — appears directly on the node */
+.tree-hover-narrative {
+  pointer-events: none;
+}
+.hover-narrative-text {
+  font-size: 10px; font-weight: 500; font-family: monospace;
+}
+/* Explosion counter */
+.tree-explosion-counter {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(251,114,153,0.06);
+  animation: counter-pulse 0.4s ease-out;
+}
+@keyframes counter-pulse {
+  0% { background: rgba(251,114,153,0.15); }
+  100% { background: rgba(251,114,153,0.06); }
+}
+.explosion-icon {
+  font-size: 14px;
+}
+.explosion-text {
+  font-size: 11px; color: #fb7299; font-weight: 600;
+}
+/* Legacy tooltip (keep for compatibility) */
+.tree-tooltip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(251,114,153,0.05);
+  cursor: pointer;
+}
+.tree-tooltip-icon {
+  font-size: 14px; flex-shrink: 0;
+}
+.tree-tooltip-text {
+  font-size: 12px; color: var(--text); line-height: 1.4;
+  font-weight: 500;
+}
+
+/* Upgrade 4: Active edge glow */
+.active-edge-glow {
+  filter: url(#active-glow);
+  animation: edge-pulse 0.8s ease-in-out infinite alternate;
+}
+@keyframes edge-pulse {
+  0% { opacity: 0.6; stroke-width: 2; }
+  100% { opacity: 1; stroke-width: 3.5; }
+}
+.flow-dot {
+  animation: flow-fade 0.6s ease-out forwards;
+}
+@keyframes flow-fade {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Upgrade 5: Repeat pointer */
+.repeat-pointer-line {
+  animation: pointer-appear 0.4s ease-out;
+}
+@keyframes pointer-appear {
+  0% { opacity: 0; stroke-dashoffset: 20; }
+  100% { opacity: 0.7; stroke-dashoffset: 0; }
+}
+.repeat-pointer-label {
+  font-size: 9px; font-weight: 600; font-family: monospace;
+  animation: label-fade 0.5s ease-out;
+}
+@keyframes label-fade {
+  0% { opacity: 0; }
+  100% { opacity: 0.7; }
+}
+
+/* Memo toggle */
+.memo-toggle {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(100,100,120,0.06);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.memo-toggle:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.memo-toggle.active {
+  background: rgba(52,211,153,0.1);
+  border-color: #34d399;
+  color: #34d399;
+}
+
+/* Legend for memo mode */
+.legend-cached {
+  background: rgba(52,211,153,0.3);
+  border: 1px solid #34d399;
+}
+.legend-computed {
+  background: rgba(251,114,153,0.3);
+  border: 1px solid #fb7299;
+}
+
+/* Memo savings counter */
+.memo-savings-counter {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(52,211,153,0.06);
+  animation: counter-pulse 0.4s ease-out;
+}
+.memo-savings-icon {
+  font-size: 14px;
+}
+.memo-savings-text {
+  font-size: 11px; color: #34d399; font-weight: 600;
+}
+
+/* Execution invariant (memo mode) */
+.exec-invariant {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  background: rgba(52,211,153,0.04);
+  border-bottom: 1px solid rgba(52,211,153,0.15);
+}
+.invariant-label {
+  background: rgba(52,211,153,0.15);
+  color: #34d399; font-size: 8px; font-weight: 800;
+  padding: 2px 6px; border-radius: 3px; letter-spacing: 1px;
+}
+.invariant-text {
+  font-size: 11px; color: var(--text-dim); font-weight: 500;
+  font-style: italic;
+}
+
+/* Ready Queue (scheduler) */
+.ready-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(52,211,153,0.04);
+  border: 1px solid rgba(52,211,153,0.15);
+  border-radius: 6px;
+}
+.ready-queue-header {
+  display: flex; align-items: center; gap: 6px;
+}
+.ready-queue-badge {
+  background: rgba(52,211,153,0.15);
+  color: #34d399; font-size: 8px; font-weight: 800;
+  padding: 2px 6px; border-radius: 3px; letter-spacing: 1px;
+}
+.ready-queue-title {
+  font-size: 11px; font-weight: 600; color: var(--text-dim);
+}
+.ready-queue-count {
+  font-size: 10px; color: var(--text-muted); margin-left: auto;
+}
+.ready-strategy {
+  display: flex; flex-direction: column; gap: 3px;
+}
+.strategy-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  transition: all 0.2s;
+}
+.strategy-picked {
+  background: rgba(52,211,153,0.12);
+  border: 1px solid rgba(52,211,153,0.3);
+}
+.strategy-other {
+  background: rgba(52,211,153,0.04);
+  border: 1px solid rgba(52,211,153,0.08);
+  opacity: 0.7;
+}
+.strategy-icon {
+  font-size: 9px; width: 12px; text-align: center;
+}
+.strategy-picked .strategy-icon {
+  color: #34d399;
+}
+.strategy-label {
+  font-family: 'Fira Code', monospace;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 50px;
+}
+.strategy-picked .strategy-label {
+  color: #34d399;
+}
+.strategy-arrow {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.strategy-unlock {
+  color: #34d399;
+  font-weight: 600;
+}
+.strategy-leaf {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-style: italic;
+}
+.strategy-targets {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-family: 'Fira Code', monospace;
+}
+.strategy-cascade {
+  font-size: 9px;
+  color: rgba(251,193,58,0.7);
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: rgba(251,193,58,0.08);
+}
+.strategy-badge {
+  margin-left: auto;
+  background: rgba(52,211,153,0.2);
+  color: #34d399;
+  font-size: 8px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+.ready-queue-pick {
+  display: flex; align-items: center; gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(52,211,153,0.1);
+}
+.pick-arrow {
+  color: #34d399; font-size: 12px; font-weight: 700;
+}
+.pick-text {
+  font-size: 11px; color: var(--text-dim);
+}
+.pick-text strong {
+  color: #34d399;
+}
+
+/* DAG node scheduler highlights */
+.dag-node-picked rect {
+  filter: url(#active-glow);
+}
+.ready-glow-ring {
+  animation: ready-ring-pulse 1.5s ease-in-out infinite;
+}
+@keyframes ready-ring-pulse {
+  0%, 100% { stroke-opacity: 0.3; }
+  50% { stroke-opacity: 0.8; }
+}
+/* Will-unlock propagation: amber glow on nodes that would be unlocked */
+.will-unlock-ring {
+  animation: will-unlock-pulse 0.8s ease-in-out infinite;
+}
+@keyframes will-unlock-pulse {
+  0%, 100% { stroke-opacity: 0.5; fill-opacity: 0.6; }
+  50% { stroke-opacity: 1; fill-opacity: 1; }
+}
+.dag-node-will-unlock {
+  filter: drop-shadow(0 0 6px rgba(251,193,58,0.4));
+}
+.dag-node-cascade {
+  filter: drop-shadow(0 0 3px rgba(251,193,58,0.2));
+}
+.cascade-ring {
+  animation: cascade-pulse 2s ease-in-out infinite;
+}
+@keyframes cascade-pulse {
+  0%, 100% { stroke-opacity: 0.2; }
+  50% { stroke-opacity: 0.5; }
+}
+/* Strategy row hover state */
+.strategy-hovered {
+  background: rgba(52,211,153,0.1) !important;
+  border-color: rgba(52,211,153,0.4) !important;
+}
+.strategy-hovered .strategy-label {
+  color: #34d399 !important;
+}
+.strategy-hovered .strategy-unlock {
+  color: #fbb92a !important;
+}
+/* DAG hint bar */
+.dag-hint {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px;
+  background: rgba(251,193,58,0.05);
+  border: 1px solid rgba(251,193,58,0.15);
+  border-radius: 5px;
+  margin-bottom: 6px;
+}
+.dag-hint-idle {
+  background: rgba(52,211,153,0.04);
+  border-color: rgba(52,211,153,0.12);
+}
+.dag-hint-icon {
+  color: #fbb92a; font-weight: 700; font-size: 12px;
+}
+.dag-hint-idle .dag-hint-icon {
+  color: var(--text-muted);
+}
+.dag-hint-text {
+  font-size: 11px; color: var(--text-dim);
+}
+.dag-hint-bright {
+  color: #fbb92a; font-weight: 700;
+}
+.dag-hint-dim {
+  color: rgba(251,193,58,0.5); font-weight: 600;
+}
+
+/* Propagation edge: animated flow from ready node to unlock target */
+.propagation-edge {
+  animation: flow-propagation 1s linear infinite;
+}
+@keyframes flow-propagation {
+  to { stroke-dashoffset: -18; }
+}
+
+/* Complexity curve */
+.complexity-curve {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(15,23,42,0.3);
+}
+.curve-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+}
+.curve-title {
+  font-size: 10px; font-weight: 700; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.curve-stats {
+  display: flex; align-items: center; gap: 4px; font-size: 10px;
+}
+.curve-total { color: #fb7299; font-weight: 600; }
+.curve-sep { color: var(--text-muted); }
+.curve-unique { color: #34d399; font-weight: 600; }
+.curve-waste { color: var(--text-muted); font-weight: 400; }
+.curve-svg {
+  display: block;
 }
 
 /* Return Composition */
@@ -3484,23 +5053,40 @@ onUnmounted(() => {
   letter-spacing: 1px;
 }
 
-/* Pattern label */
-.pattern-label-box {
+/* Cognitive Narrative: the explanation layer */
+.cognitive-narrative {
+  background: linear-gradient(135deg, rgba(251,114,153,0.05), rgba(167,139,250,0.05));
+  border: 1px solid rgba(251,114,153,0.2);
+  border-left: 3px solid var(--primary);
+  border-radius: 0 8px 8px 0;
+  padding: 12px 14px;
+}
+.cognitive-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: rgba(251,114,153,0.06);
-  border: 1px solid rgba(251,114,153,0.15);
-  border-radius: 6px;
+  gap: 8px;
+  margin-bottom: 8px;
 }
-.pattern-label-icon {
-  font-size: 14px;
+.cognitive-badge {
+  background: linear-gradient(135deg, #fb7299, #a78bfa);
+  color: #0f172a;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 3px;
+  letter-spacing: 1px;
 }
-.pattern-label-text {
-  font-size: 12px;
-  font-weight: 600;
+.cognitive-title {
+  font-size: 13px;
+  font-weight: 700;
   color: var(--primary);
+}
+.cognitive-text {
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.7;
+  letter-spacing: 0.01em;
+  white-space: pre-line;
 }
 
 /* Auto Summary */

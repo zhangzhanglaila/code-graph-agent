@@ -2180,6 +2180,18 @@ async def subproblem_graph(req: ExplainStepsRequest):
         # Build DAG
         dag_nodes, dag_edges, unique_count, total_count = _build_subproblem_dag(tree)
 
+        # Serialize call tree (strip internal _parent refs, limit depth for payload)
+        def _serialize_tree(node, depth=0):
+            if node is None or depth > 12:
+                return None
+            return {
+                'id': node['id'],
+                'args': node.get('args', []),
+                'result': node.get('result'),
+                'children': [_serialize_tree(c, depth + 1) for c in node.get('children', []) if c],
+            }
+        call_tree = _serialize_tree(tree)
+
         # Derive complexity
         complexity = _derive_complexity_from_dag(dag_nodes, dag_edges, total_count, unique_count)
 
@@ -2206,6 +2218,9 @@ async def subproblem_graph(req: ExplainStepsRequest):
             "has_memoization_benefit": total_count > unique_count * 1.5,
         }
 
+        # Cognitive narrative: human-readable explanation
+        complexity["cognitive_narrative"] = _generate_cognitive_narrative(complexity, func_name)
+
         # Layout for visualization
         layout = _dag_to_tree_layout(dag_nodes, dag_edges)
 
@@ -2222,6 +2237,7 @@ async def subproblem_graph(req: ExplainStepsRequest):
                 'unique_count': unique_count,
                 'total_count': total_count,
             },
+            'call_tree': call_tree,
             'layout': layout,
             'complexity': complexity,
             'narrative': perf_narrative,
@@ -2268,6 +2284,168 @@ def _generate_performance_narrative(complexity: dict, dag_nodes: list, func_name
         )
 
     return ' '.join(parts)
+
+
+def _generate_cognitive_narrative(complexity: dict, func_name: str = '') -> str:
+    """Generate a teaching narrative with cognitive conflict.
+
+    Pipeline: baseline → tension → trigger → peak → aftermath
+    Peak is selected by what is MOST COUNTER-INTUITIVE, not most important.
+    Uses \\n\\n to separate thinking steps (rendered as paragraphs).
+    """
+    total = complexity.get('total_calls', 0)
+    unique = complexity.get('unique_calls', 0)
+    depth = complexity.get('depth', 0)
+    branching = complexity.get('branching_factor', 0)
+    operation = complexity.get('combine_operation', 'unknown')
+    pattern_hint = complexity.get('pattern_hint', '')
+    complexity_class = complexity.get('without_cache', '').split(' --')[0]
+    optimized = complexity.get('with_cache', '').split(' --')[0]
+    speedup = complexity.get('speedup', '')
+    shared = complexity.get('shared_subproblems', [])
+    name = func_name or 'This function'
+
+    has_redundancy = shared and total > unique * 1.5
+
+    # --- Pick the peak type: what is most counter-intuitive? ---
+    if has_redundancy and speedup and speedup != 'none':
+        peak_type = 'illusion_of_work'  # "you think you're solving N, but really solving same K"
+    elif branching >= 2 and depth >= 4 and total > 20:
+        peak_type = 'explosion'  # "it doesn't grow, it explodes"
+    elif depth <= 3 and total > 10:
+        peak_type = 'hidden_cost'  # "looks small, work is hiding"
+    else:
+        peak_type = 'structure'  # efficient algorithm, the insight is the structure
+
+    parts = []
+
+    # === Step 1: Baseline (quiet) — metaphor drives explanation ===
+    if pattern_hint == 'fibonacci':
+        parts.append(
+            f"This process behaves like a tree.\n\n"
+            f"Each step grows two new branches."
+        )
+    elif pattern_hint == 'merge_sort':
+        parts.append(
+            f"Think of a deck of cards.\n\n"
+            f"Split it in half. Sort each half.\n\n"
+            f"Weave the two sorted halves back together."
+        )
+    elif pattern_hint == 'binary_search':
+        parts.append(
+            f"Imagine looking up a word in a dictionary.\n\n"
+            f"Flip to the middle. Too far? Flip to the middle of what is left."
+        )
+    elif pattern_hint == 'dp_decision':
+        parts.append(f"At each item, you make a choice: take it or leave it.")
+    elif pattern_hint == 'dp_optimization':
+        parts.append(f"Like a GPS that checks every route to find the shortest.")
+    elif operation == 'merge':
+        parts.append(f"Split. Sort each half. Merge back together.")
+    else:
+        parts.append(f"{name} breaks a problem into smaller versions of itself.")
+
+    # === Step 2: Build tension (light) — numbers, scale ===
+    if branching >= 2 and total > unique:
+        parts.append(
+            f"Each problem splits into {int(branching)} subproblems.\n\n"
+            f"That creates {total} calls in total."
+        )
+    elif branching >= 2:
+        parts.append(
+            f"Each problem splits into {int(branching)} subproblems.\n\n"
+            f"The recursion goes {depth} levels deep."
+        )
+    elif total > 1:
+        parts.append(f"The recursion goes {depth} levels deep, making {total} calls.")
+
+    # === Step 3: Mechanism (quiet) ===
+    if operation == 'add' and branching >= 2:
+        parts.append(f"Each subproblem returns a number. The caller adds them.")
+    elif operation == 'add':
+        parts.append(f"Each step adds its piece to the total.")
+    elif operation == 'merge':
+        parts.append(f"Each half returns a sorted list. The caller merges them.")
+    elif operation == 'max':
+        parts.append(f"Two options are tried. The better one wins.")
+    elif operation == 'min':
+        parts.append(f"The cheapest option is chosen at each step.")
+
+    # === Step 4: Trigger + Peak (Expectation → Break → Replace) + Locking ===
+    if peak_type == 'illusion_of_work':
+        # Expectation → Break → Replace
+        parts.append(
+            f"Why does that matter?\n\n"
+            f"It looks like {total} problems.\n\n"
+            f"It is not.\n\n"
+            f"You are solving the same {unique} problems again and again."
+        )
+        # Locking: cement the understanding
+        parts.append(
+            f"That is why naive recursion feels slow.\n\n"
+            f"Not because the problem is big.\n\n"
+            f"Because the work is repeated."
+        )
+        # Aftermath
+        parts.append(
+            f"Without caching: {complexity_class}.\n\n"
+            f"With caching: {optimized}.\n\n"
+            f"That is a {speedup} difference."
+        )
+    elif peak_type == 'explosion':
+        # Expectation → Break → Replace
+        parts.append(
+            f"At first, it feels manageable.\n\n"
+            f"Then each step creates more work than the last.\n\n"
+            f"It does not grow.\n\n"
+            f"It explodes."
+        )
+        # Locking
+        parts.append(
+            f"This is the nature of exponential growth.\n\n"
+            f"Small inputs are fine. Large inputs are impossible."
+        )
+        if complexity_class:
+            parts.append(f"That is {complexity_class}.")
+    elif peak_type == 'hidden_cost':
+        # Expectation → Break → Replace
+        parts.append(
+            f"It looks small.\n\n"
+            f"Only {depth} levels deep.\n\n"
+            f"But the work is not in the depth.\n\n"
+            f"It is in the branching."
+        )
+        # Locking
+        parts.append(
+            f"{total} calls, hidden behind a shallow tree."
+        )
+        if complexity_class:
+            parts.append(f"That is {complexity_class}.")
+    elif peak_type == 'structure':
+        if pattern_hint == 'fibonacci':
+            parts.append(
+                f"The work doubles at every level.\n\n"
+                f"That is exponential growth."
+            )
+        elif pattern_hint == 'merge_sort':
+            parts.append(
+                f"Each level does the same amount of work.\n\n"
+                f"Equal work per level, log n levels.\n\n"
+                f"That is O(n log n)."
+            )
+        elif pattern_hint == 'binary_search':
+            parts.append(
+                f"You never look at the same element twice.\n\n"
+                f"That is why it is O(log n)."
+            )
+        elif pattern_hint == 'dp_decision' and shared:
+            parts.append(f"Many paths lead to the same subproblem. Caching avoids solving them twice.")
+        elif pattern_hint == 'dp_optimization' and shared:
+            parts.append(f"Overlapping subproblems mean repeated work. Memoization eliminates the redundancy.")
+        elif complexity_class and complexity_class.startswith('O('):
+            parts.append(f"This gives {complexity_class} time complexity.")
+
+    return '\n\n'.join(parts)
 
 
 @app.get("/api/health")
