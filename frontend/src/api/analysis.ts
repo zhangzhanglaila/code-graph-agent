@@ -72,6 +72,40 @@ export interface ComputationalMotifData {
   depth: number
 }
 
+export interface ConstraintSummary {
+  total_facts: number
+  observed: number
+  derived: number
+  by_kind: Record<string, number>
+  rules_applied: number
+  strata?: Record<string, number>
+}
+
+export interface ReasoningDAGNode {
+  id: string
+  kind: string
+  subject: string
+  relation: string
+  value: any
+  source: string
+  confidence: number
+  evidence: string
+  rule: string
+  stratum?: number
+  stratum_name?: string
+}
+
+export interface ReasoningDAGEdge {
+  from: string
+  to: string
+  rule: string
+}
+
+export interface ReasoningDAG {
+  nodes: ReasoningDAGNode[]
+  edges: ReasoningDAGEdge[]
+}
+
 export interface DetectedPattern {
   pattern_name: string
   display_name: string
@@ -89,6 +123,8 @@ export interface DetectedPattern {
   goals?: GoalData[]
   counterfactuals?: CounterfactualData[]
   motifs?: ComputationalMotifData[]
+  constraint_summary?: ConstraintSummary
+  reasoning_dag?: ReasoningDAG
 }
 
 export interface InsightResponse {

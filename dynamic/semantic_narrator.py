@@ -2956,6 +2956,1078 @@ class SemanticCompressor:
         return motifs
 
 
+# ─── P6: Constraint IR (Semantic Intermediate Representation) ──
+#
+# THE critical upgrade. Replaces heuristic pattern matching with
+# declarative constraint reasoning.
+#
+# Architecture:
+#   ExecutionEvent → SemanticFact[] → ConstraintGraph → fixed-point → cognition
+#
+# Instead of:
+#   if "lo" and "hi": infer binary_search_minimization
+#
+# We write:
+#   Fact: Monotonic(lo, increasing, step_2..step_5)
+#   Fact: Monotonic(hi, decreasing, step_2..step_5)
+#   Fact: Paired(lo, hi, "interval")
+#   Rule: Paired(a,b,"interval") ∧ Monotonic(a,increasing) ∧ Monotonic(b,decreasing)
+#         → DerivedFact(Shrinks, Interval(a,b))
+#   Rule: Shrinks(Interval(a,b)) ∧ Bounded(Interval(a,b))
+#         → Invariant(progress, interval_shrinks)
+#         → Goal(minimize, search_space)
+#
+# This is declarative, composable, and doesn't explode.
+
+from enum import Enum
+
+
+class FactKind(str, Enum):
+    """Primitive fact types in the Constraint IR."""
+    # Variable properties
+    MONOTONIC = 'monotonic'         # Monotonic(var, direction, steps)
+    CONSTANT = 'constant'           # Constant(var, value, steps)
+    BOUNDED = 'bounded'             # Bounded(var, lower, upper)
+    PAIRED = 'paired'               # Paired(var1, var2, relationship)
+    CONVERGES = 'converges'         # Converges(var1, var2, steps)
+    CHANGES = 'changes'             # Changes(var, step)
+    ACCUMULATES = 'accumulates'     # Accumulates(var, operation)
+
+    # Structural properties
+    RECURSIVE = 'recursive'         # Recursive(func, depth)
+    BRANCHING = 'branching'         # Branching(step, condition)
+    LOOPING = 'looping'             # Looping(step, guard)
+    BASE_CASE = 'base_case'         # BaseCase(step, condition)
+    MEMOIZED = 'memoized'           # Memoized(func, cache_var)
+
+    # Derived properties
+    SHRINKS = 'shrinks'             # Shrinks(interval) — derived
+    REACHABLE = 'reachable'         # Reachable(target, from) — derived
+    STABLE = 'stable'               # Stable(state, step) — derived
+    DOMINATES = 'dominates'         # Dominates(step1, step2) — derived
+
+    # Goal-level
+    OBJECTIVE = 'objective'         # Objective(type, target) — derived
+    INVARIANT = 'invariant'         # Invariant(category, predicate) — derived
+    COUNTERFACTUAL = 'counterfactual'  # Counterfactual(condition, consequence) — derived
+
+
+@dataclass
+class SemanticFact:
+    """A primitive fact in the Constraint IR.
+
+    This is the atomic unit of semantic knowledge.
+    All cognition (goals, invariants, counterfactuals, motifs)
+    is derived from facts through constraint rules.
+
+    P7: Use typed constructors (MonotonicFact, PairedFact, etc.)
+    for type-safe fact creation instead of raw SemanticFact.
+    """
+    kind: FactKind
+    subject: str                    # primary entity (variable name, step, etc.)
+    relation: str = ''              # secondary qualifier (direction, relationship, etc.)
+    value: Any = None               # optional value (bound, constant, etc.)
+    steps: Tuple[int, ...] = ()     # step range where this fact holds
+    confidence: float = 1.0
+    source: str = ''                # 'observed' | 'derived'
+    evidence: str = ''              # human-readable evidence
+    depends_on: Tuple[str, ...] = ()  # fact IDs this was derived from
+
+    # P8: Provenance tracking
+    derived_from_rule: str = ''     # name of the rule that derived this fact
+    derived_from_facts: Tuple[str, ...] = ()  # fact IDs used to derive this
+
+    @property
+    def id(self) -> str:
+        """Unique identifier for this fact."""
+        return f'{self.kind.value}:{self.subject}:{self.relation}:{self.value}'
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'kind': self.kind.value,
+            'subject': self.subject,
+            'relation': self.relation,
+            'value': self.value,
+            'steps': list(self.steps),
+            'confidence': self.confidence,
+            'source': self.source,
+            'evidence': self.evidence,
+            'derived_from_rule': self.derived_from_rule,
+            'derived_from_facts': list(self.derived_from_facts),
+        }
+
+
+# ─── P7: Typed Fact Constructors ──────────────────────────────
+#
+# Type-safe constructors for SemanticFact.
+# Instead of: SemanticFact(FactKind.MONOTONIC, 'lo', 'increasing')
+# Write:      MonotonicFact('lo', 'increasing')
+#
+# Each constructor encodes the semantic structure of its fact type,
+# making the code self-documenting and preventing string soup.
+
+def MonotonicFact(var: str, direction: str, steps: Tuple[int, ...] = (),
+                  confidence: float = 1.0, source: str = '',
+                  evidence: str = '') -> SemanticFact:
+    """Variable `var` is monotonically `direction` (increasing/decreasing)."""
+    return SemanticFact(
+        kind=FactKind.MONOTONIC, subject=var, relation=direction,
+        steps=steps, confidence=confidence, source=source,
+        evidence=evidence or f'{var} 单调{direction}',
+    )
+
+def PairedFact(var1: str, var2: str, relationship: str = 'interval',
+               steps: Tuple[int, ...] = (), confidence: float = 1.0,
+               source: str = '', evidence: str = '') -> SemanticFact:
+    """Two variables form a structural pair (interval, sorted, etc.)."""
+    return SemanticFact(
+        kind=FactKind.PAIRED, subject=var1, relation=relationship,
+        value=var2, steps=steps, confidence=confidence, source=source,
+        evidence=evidence or f'{var1} 和 {var2} 形成 {relationship}',
+    )
+
+def ConvergesFact(var1: str, var2: str, steps: Tuple[int, ...] = (),
+                  confidence: float = 1.0, source: str = '',
+                  evidence: str = '') -> SemanticFact:
+    """Two variables are converging toward each other."""
+    return SemanticFact(
+        kind=FactKind.CONVERGES, subject=var1, relation='converges_with',
+        value=var2, steps=steps, confidence=confidence, source=source,
+        evidence=evidence or f'{var1} 和 {var2} 正在收敛',
+    )
+
+def LoopingFact(step: int, steps: Tuple[int, ...] = (),
+                confidence: float = 1.0, source: str = '',
+                evidence: str = '') -> SemanticFact:
+    """A loop guard exists at this step."""
+    return SemanticFact(
+        kind=FactKind.LOOPING, subject=str(step),
+        steps=(step,) if not steps else steps,
+        confidence=confidence, source=source,
+        evidence=evidence or f'步骤 {step}: 循环守卫',
+    )
+
+def RecursiveFact(func: str, steps: Tuple[int, ...] = (),
+                  confidence: float = 1.0, source: str = '',
+                  evidence: str = '') -> SemanticFact:
+    """Function `func` has a recursive call."""
+    return SemanticFact(
+        kind=FactKind.RECURSIVE, subject=func,
+        steps=steps, confidence=confidence, source=source,
+        evidence=evidence or f'{func} 是递归函数',
+    )
+
+def MemoizedFact(var: str, steps: Tuple[int, ...] = (),
+                 confidence: float = 1.0, source: str = '',
+                 evidence: str = '') -> SemanticFact:
+    """Variable `var` is used for memoization/caching."""
+    return SemanticFact(
+        kind=FactKind.MEMOIZED, subject=var,
+        steps=steps, confidence=confidence, source=source,
+        evidence=evidence or f'{var} 用于缓存',
+    )
+
+def AccumulatesFact(var: str, steps: Tuple[int, ...] = (),
+                    confidence: float = 1.0, source: str = '',
+                    evidence: str = '') -> SemanticFact:
+    """Variable `var` accumulates a value (sum, count, etc.)."""
+    return SemanticFact(
+        kind=FactKind.ACCUMULATES, subject=var,
+        steps=steps, confidence=confidence, source=source,
+        evidence=evidence or f'{var} 是累积变量',
+    )
+
+def ShrinksFact(interval: str, steps: Tuple[int, ...] = (),
+                confidence: float = 1.0, source: str = 'derived',
+                evidence: str = '') -> SemanticFact:
+    """An interval or quantity is shrinking (derived from monotonic pair)."""
+    return SemanticFact(
+        kind=FactKind.SHRINKS, subject=interval,
+        steps=steps, confidence=confidence, source=source,
+        evidence=evidence or f'{interval} 单调收缩',
+    )
+
+def ObjectiveFact(goal_type: str, target: str, steps: Tuple[int, ...] = (),
+                  confidence: float = 1.0, source: str = 'derived',
+                  evidence: str = '') -> SemanticFact:
+    """An optimization objective (minimize, maximize, converge, etc.)."""
+    return SemanticFact(
+        kind=FactKind.OBJECTIVE, subject=goal_type, relation=target,
+        steps=steps, confidence=confidence, source=source,
+        evidence=evidence or f'目标: {goal_type} {target}',
+    )
+
+def InvariantFact(category: str, predicate: str, steps: Tuple[int, ...] = (),
+                  confidence: float = 1.0, source: str = 'derived',
+                  evidence: str = '') -> SemanticFact:
+    """A correctness invariant (progress, termination, loop_invariant, etc.)."""
+    return SemanticFact(
+        kind=FactKind.INVARIANT, subject=category, relation=predicate,
+        steps=steps, confidence=confidence, source=source,
+        evidence=evidence or f'{category}: {predicate}',
+    )
+
+def CounterfactualFact(condition: str, consequence: str, steps: Tuple[int, ...] = (),
+                       confidence: float = 1.0, source: str = 'derived',
+                       evidence: str = '') -> SemanticFact:
+    """A counterfactual: if condition, then consequence."""
+    return SemanticFact(
+        kind=FactKind.COUNTERFACTUAL, subject=condition, relation=consequence,
+        steps=steps, confidence=confidence, source=source,
+        evidence=evidence or f'如果 {condition} → {consequence}',
+    )
+
+
+@dataclass
+class ConstraintRule:
+    """A declarative rule that derives new facts from existing ones.
+
+    Format:
+        name: human-readable rule name
+        requires: list of fact patterns that must all match
+        produces: list of fact templates to create when matched
+        description: why this rule exists
+
+    A fact pattern is a SemanticFact with optional wildcards (None = any).
+    Matching is structural: kind, subject, relation must match (if non-None).
+    """
+    name: str
+    requires: List[SemanticFact]
+    produces: List[SemanticFact]
+    description: str = ''
+
+
+class ConstraintGraph:
+    """The Semantic Intermediate Representation.
+
+    Stores facts and derives higher-level cognition through
+    fixed-point iteration over constraint rules.
+
+    This is the backbone that replaces all heuristic engines.
+    """
+
+    def __init__(self):
+        self.facts: Dict[str, SemanticFact] = {}  # id → fact
+        self.derivation_chain: Dict[str, List[str]] = {}  # fact_id → [source_fact_ids]
+        self._rules: List[ConstraintRule] = self._build_rules()
+        self._stratified: List[StratifiedRule] = stratify_rules(self._rules)
+        self._stratum_stats: Dict[int, int] = {}  # stratum → facts derived
+
+    def add_fact(self, fact: SemanticFact) -> str:
+        """Add a fact to the graph. Canonicalizes first (P9). Returns the fact's ID."""
+        fact = canonicalize(fact)  # P9: normalize
+        fid = fact.id
+        if fid not in self.facts:
+            self.facts[fid] = fact
+        else:
+            # Merge: keep higher confidence, union steps
+            existing = self.facts[fid]
+            existing.confidence = max(existing.confidence, fact.confidence)
+            existing.steps = tuple(sorted(set(existing.steps) | set(fact.steps)))
+        return fid
+
+    def add_facts(self, facts: List[SemanticFact]) -> None:
+        for f in facts:
+            self.add_fact(f)
+
+    def query(self, kind: Optional[FactKind] = None,
+              subject: Optional[str] = None,
+              relation: Optional[str] = None) -> List[SemanticFact]:
+        """Query facts by pattern. None = wildcard."""
+        results = []
+        for f in self.facts.values():
+            if kind and f.kind != kind:
+                continue
+            if subject and f.subject != subject:
+                continue
+            if relation and f.relation != relation:
+                continue
+            results.append(f)
+        return results
+
+    def fixed_point(self, max_iterations: int = 10) -> int:
+        """Run stratified fixed-point iteration (P10).
+
+        Rules fire in stratum order (L0 → L6), ensuring prerequisites
+        are available before higher-level rules run.
+        Returns total number of new facts derived.
+        """
+        total_new = 0
+        for _ in range(max_iterations):
+            round_new = 0
+            # P10: Execute strata in order
+            for stratum in range(7):
+                stratum_rules = [sr.rule for sr in self._stratified if sr.stratum == stratum]
+                if not stratum_rules:
+                    continue
+                new_facts = self._apply_rules_subset(stratum_rules)
+                round_new += len(new_facts)
+                self._stratum_stats[stratum] = self._stratum_stats.get(stratum, 0) + len(new_facts)
+            if round_new == 0:
+                break
+            total_new += round_new
+        return total_new
+
+    def _apply_rules(self) -> List[SemanticFact]:
+        """Apply all rules once. Return newly derived facts with provenance."""
+        return self._apply_rules_subset(self._rules)
+
+    def _apply_rules_subset(self, rules: List[ConstraintRule]) -> List[SemanticFact]:
+        """Apply a subset of rules once. Return newly derived facts with provenance."""
+        new_facts = []
+        existing_ids = set(self.facts.keys())
+
+        for rule in rules:
+            matches = self._match_rule(rule)
+            for match_bindings in matches:
+                for prod_template in rule.produces:
+                    derived = self._instantiate(prod_template, match_bindings)
+                    if derived.id not in existing_ids:
+                        derived.source = 'derived'
+                        # P8: Provenance tracking
+                        derived.derived_from_rule = rule.name
+                        derived.derived_from_facts = tuple(
+                            b.id for b in match_bindings.values()
+                        )
+                        self.add_fact(derived)
+                        self.derivation_chain[derived.id] = list(derived.derived_from_facts)
+                        new_facts.append(derived)
+        return new_facts
+
+    # ─── P8: Provenance & Explainability ───────────────────────
+
+    def explain(self, fact_id: str, depth: int = 0, max_depth: int = 10) -> List[Dict[str, Any]]:
+        """Explain the derivation chain for a fact.
+
+        Returns a list of reasoning steps, each containing:
+        - fact: the fact at this step
+        - rule: the rule that derived it (if any)
+        - inputs: the facts that were used as inputs
+        - depth: nesting level
+
+        This is the "proof tree" for a derived fact.
+        """
+        if depth > max_depth:
+            return []
+
+        fact = self.facts.get(fact_id)
+        if not fact:
+            return []
+
+        chain = []
+        source_facts = self.derivation_chain.get(fact_id, [])
+
+        # Recurse into source facts first (bottom-up)
+        for src_id in source_facts:
+            chain.extend(self.explain(src_id, depth + 1, max_depth))
+
+        # Then add this fact
+        chain.append({
+            'fact': fact.to_dict(),
+            'rule': fact.derived_from_rule or '',
+            'source_facts': source_facts,
+            'depth': depth,
+        })
+
+        return chain
+
+    def explain_dag(self) -> Dict[str, Any]:
+        """Export the full reasoning DAG for visualization (P10: includes stratum).
+
+        Returns nodes (facts) and edges (derivation relationships).
+        """
+        # Build rule → stratum mapping
+        rule_stratum = {}
+        for sr in self._stratified:
+            rule_stratum[sr.rule.name] = int(sr.stratum)
+
+        nodes = []
+        edges = []
+        for fid, fact in self.facts.items():
+            # Determine stratum: observed facts are L0, derived facts inherit from rule
+            if fact.source == 'observed':
+                stratum = 0
+            else:
+                stratum = rule_stratum.get(fact.derived_from_rule, 1)
+
+            nodes.append({
+                'id': fid,
+                'kind': fact.kind.value,
+                'subject': fact.subject,
+                'relation': fact.relation,
+                'value': fact.value,
+                'source': fact.source,
+                'confidence': fact.confidence,
+                'evidence': fact.evidence,
+                'rule': fact.derived_from_rule,
+                'stratum': stratum,
+                'stratum_name': STRATUM_NAMES.get(stratum, f'L{stratum}'),
+            })
+            for src_id in self.derivation_chain.get(fid, []):
+                edges.append({
+                    'from': src_id,
+                    'to': fid,
+                    'rule': fact.derived_from_rule,
+                })
+        return {'nodes': nodes, 'edges': edges}
+
+    def _match_rule(self, rule: ConstraintRule) -> List[Dict[str, SemanticFact]]:
+        """Find all ways to satisfy a rule's requirements.
+
+        Returns list of binding maps: {template_subject → matched_fact}.
+        Enforces that different named wildcards bind to DIFFERENT subjects.
+        """
+        if not rule.requires:
+            return [{}]
+
+        bindings_list: List[Dict[str, SemanticFact]] = [{}]
+
+        for req in rule.requires:
+            new_bindings = []
+            for bindings in bindings_list:
+                candidates = self._find_matching(req, bindings)
+                for candidate in candidates:
+                    new_b = dict(bindings)
+                    # Bind the template subject to the matched fact
+                    if req.subject not in new_b:
+                        new_b[req.subject] = candidate
+                    # Enforce: different wildcards must bind to different subjects
+                    if self._bindings_valid(new_b):
+                        new_bindings.append(new_b)
+            bindings_list = new_bindings
+            if not bindings_list:
+                break
+
+        return bindings_list
+
+    @staticmethod
+    def _bindings_valid(bindings: Dict[str, SemanticFact]) -> bool:
+        """Check that different named wildcards don't bind to the same fact."""
+        seen_ids: set = set()
+        for key, fact in bindings.items():
+            if key.startswith('*'):
+                if fact.id in seen_ids:
+                    return False  # Two wildcards bound to same fact
+                seen_ids.add(fact.id)
+        return True
+
+    def _find_matching(self, template: SemanticFact,
+                       bindings: Dict[str, SemanticFact]) -> List[SemanticFact]:
+        """Find facts matching a template, respecting existing bindings.
+
+        Named wildcards (subjects starting with '*') are bindable placeholders.
+        Each unique wildcard name binds to exactly one FACT (by id, not just subject).
+        Different fact kinds with the same subject can bind to different wildcards.
+        """
+        results = []
+        is_wildcard = template.subject.startswith('*')
+
+        # Build set of already-bound fact IDs (to prevent double-binding same fact)
+        bound_fact_ids = {f.id for f in bindings.values()}
+
+        for fact in self.facts.values():
+            # Kind must match
+            if template.kind != fact.kind:
+                continue
+            # Subject matching
+            if is_wildcard:
+                # If this wildcard is already bound, the fact's subject must match
+                if template.subject in bindings:
+                    if bindings[template.subject].subject != fact.subject:
+                        continue
+                # Don't bind the same fact to two different wildcards
+                if fact.id in bound_fact_ids:
+                    continue
+            else:
+                if template.subject != fact.subject:
+                    continue
+            # Relation: must match if specified
+            if template.relation and template.relation != '*' and template.relation != fact.relation:
+                continue
+            results.append(fact)
+        return results
+
+    def _instantiate(self, template: SemanticFact,
+                     bindings: Dict[str, SemanticFact]) -> SemanticFact:
+        """Create a concrete fact from a template + bindings.
+
+        Named wildcards (e.g. '*pair', '*lo') are resolved from bindings.
+        Literal subjects pass through unchanged.
+        """
+        subject = template.subject
+        if subject.startswith('*') and subject in bindings:
+            subject = bindings[subject].subject
+
+        # Also resolve value if it's a named wildcard
+        value = template.value
+        if isinstance(value, str) and value.startswith('*') and value in bindings:
+            value = bindings[value].subject
+
+        # Collect steps from all bindings
+        all_steps = set(template.steps)
+        for b in bindings.values():
+            all_steps.update(b.steps)
+
+        return SemanticFact(
+            kind=template.kind,
+            subject=subject,
+            relation=template.relation,
+            value=value,
+            steps=tuple(sorted(all_steps)),
+            confidence=min(b.confidence for b in bindings.values()) if bindings else template.confidence,
+            evidence=template.evidence,
+        )
+
+    # ─── Declarative Rule Definitions ─────────────────────────
+
+    def _build_rules(self) -> List[ConstraintRule]:
+        """Build the constraint rule set.
+
+        These are DECLARATIVE — they describe WHAT to derive, not HOW to detect.
+        This is the core difference from heuristic engines.
+        """
+        return [
+            # ── Interval Shrinking ──
+            ConstraintRule(
+                name='interval_shrinks',
+                description='If two variables form an interval and one increases while the other decreases, the interval shrinks.',
+                requires=[
+                    SemanticFact(FactKind.PAIRED, '*pair', 'interval'),
+                    SemanticFact(FactKind.MONOTONIC, '*lo', 'increasing'),
+                    SemanticFact(FactKind.MONOTONIC, '*hi', 'decreasing'),
+                ],
+                produces=[
+                    SemanticFact(FactKind.SHRINKS, '*pair', '',
+                                 evidence='区间单调收缩', confidence=0.9),
+                ],
+            ),
+
+            # ── Progress Guarantee ──
+            ConstraintRule(
+                name='shrinking_interval_progress',
+                description='A shrinking interval guarantees progress toward termination.',
+                requires=[
+                    SemanticFact(FactKind.SHRINKS, '*interval'),
+                    SemanticFact(FactKind.LOOPING, '*loop'),
+                ],
+                produces=[
+                    SemanticFact(FactKind.INVARIANT, 'progress', 'interval_shrinks',
+                                 evidence='区间收缩保证进展', confidence=0.9),
+                    SemanticFact(FactKind.OBJECTIVE, 'minimize', 'search_space',
+                                 evidence='目标: 最小化搜索空间', confidence=0.85),
+                ],
+            ),
+
+            # ── Convergence → Termination ──
+            ConstraintRule(
+                name='convergence_termination',
+                description='If interval shrinks to a point, termination is guaranteed.',
+                requires=[
+                    SemanticFact(FactKind.SHRINKS, '*s'),
+                    SemanticFact(FactKind.CONVERGES, '*c'),
+                ],
+                produces=[
+                    SemanticFact(FactKind.INVARIANT, 'termination', 'convergence',
+                                 evidence='收敛保证终止', confidence=0.9),
+                    SemanticFact(FactKind.OBJECTIVE, 'converge', '*c',
+                                 evidence='目标: 收敛到不动点', confidence=0.85),
+                ],
+            ),
+
+            # ── Accumulation → Maximization ──
+            ConstraintRule(
+                name='accumulation_maximization',
+                description='A variable that accumulates (sum, count) is being maximized.',
+                requires=[
+                    SemanticFact(FactKind.ACCUMULATES, '*acc'),
+                    SemanticFact(FactKind.MONOTONIC, '*acc', 'increasing'),
+                ],
+                produces=[
+                    SemanticFact(FactKind.OBJECTIVE, 'maximize', '*acc',
+                                 evidence='目标: 最大化累积值', confidence=0.8),
+                ],
+            ),
+
+            # ── Memoization → Compression ──
+            ConstraintRule(
+                name='memoization_compression',
+                description='Memoization compresses the state space by caching subproblem results.',
+                requires=[
+                    SemanticFact(FactKind.MEMOIZED, '*memo'),
+                ],
+                produces=[
+                    SemanticFact(FactKind.OBJECTIVE, 'compress', 'state_space',
+                                 evidence='目标: 通过缓存压缩状态空间', confidence=0.85),
+                    SemanticFact(FactKind.INVARIANT, 'progress', 'subproblems_cached',
+                                 evidence='子问题被缓存避免重复计算', confidence=0.8),
+                ],
+            ),
+
+            # ── Recursion + Base Case → Termination ──
+            ConstraintRule(
+                name='recursion_base_case_termination',
+                description='Recursion with a base case guarantees termination if the problem shrinks.',
+                requires=[
+                    SemanticFact(FactKind.RECURSIVE, '*func'),
+                    SemanticFact(FactKind.BASE_CASE, '*case'),
+                ],
+                produces=[
+                    SemanticFact(FactKind.INVARIANT, 'termination', 'base_case_reached',
+                                 evidence='基例保证递归终止', confidence=0.85),
+                ],
+            ),
+
+            # ── Loop Guard → Loop Invariant ──
+            ConstraintRule(
+                name='loop_guard_invariant',
+                description='A loop guard is a loop invariant that must hold for the loop to continue.',
+                requires=[
+                    SemanticFact(FactKind.LOOPING, '*loop'),
+                ],
+                produces=[
+                    SemanticFact(FactKind.INVARIANT, 'loop_invariant', 'guard_holds',
+                                 evidence='循环守卫在每次迭代中成立', confidence=0.8),
+                ],
+            ),
+
+            # ── Ordering Preservation ──
+            ConstraintRule(
+                name='ordering_preservation',
+                description='Sort/merge operations preserve ordering as an invariant.',
+                requires=[
+                    SemanticFact(FactKind.PAIRED, '*pair', 'sorted'),
+                ],
+                produces=[
+                    SemanticFact(FactKind.OBJECTIVE, 'preserve', 'ordering',
+                                 evidence='目标: 保持有序性', confidence=0.8),
+                    SemanticFact(FactKind.INVARIANT, 'postcondition', 'sorted_output',
+                                 evidence='输出保持有序', confidence=0.75),
+                ],
+            ),
+
+            # ── Shrinking + Looping → Counterfactual ──
+            ConstraintRule(
+                name='no_progress_counterfactual',
+                description='If progress condition were violated, the loop would not terminate.',
+                requires=[
+                    SemanticFact(FactKind.INVARIANT, 'progress', '*inv'),
+                    SemanticFact(FactKind.LOOPING, '*loop'),
+                ],
+                produces=[
+                    SemanticFact(FactKind.COUNTERFACTUAL, 'progress_violated', 'infinite_loop',
+                                 evidence='如果进展条件不成立 → 无限循环', confidence=0.85),
+                ],
+            ),
+
+            # ── Memoization Removal Counterfactual ──
+            ConstraintRule(
+                name='no_memo_counterfactual',
+                description='If memoization were removed, complexity would explode.',
+                requires=[
+                    SemanticFact(FactKind.MEMOIZED, '*memo'),
+                    SemanticFact(FactKind.RECURSIVE, '*func'),
+                ],
+                produces=[
+                    SemanticFact(FactKind.COUNTERFACTUAL, 'memo_removed', 'exponential_blowup',
+                                 evidence='如果移除缓存 → 指数级时间复杂度', confidence=0.9),
+                ],
+            ),
+        ]
+
+    # ─── Fact Extraction from Execution Events ────────────────
+
+    @staticmethod
+    def extract_facts(events: List[ExecutionEvent],
+                      match: PatternMatch) -> List[SemanticFact]:
+        """Extract primitive semantic facts from execution events.
+
+        This is the ONLY place where observation meets interpretation.
+        Everything above this is pure derivation.
+        """
+        facts: List[SemanticFact] = []
+        pattern_events = [e for e in events
+                          if match.start_step <= e.step <= match.end_step]
+
+        if len(pattern_events) < 2:
+            return facts
+
+        step_range = (match.start_step, match.end_step)
+
+        # ── Track variable trajectories ──
+        var_steps: Dict[str, List[Tuple[int, str]]] = {}  # var → [(step, value_str)]
+        for e in pattern_events:
+            for tag in e.semantic_tags:
+                if '=' in tag:
+                    name, val = tag.split('=', 1)
+                    name, val = name.strip(), val.strip()
+                    if name not in var_steps:
+                        var_steps[name] = []
+                    var_steps[name].append((e.step, val))
+
+        # ── Observe monotonicity (P7: typed constructors) ──
+        for var, vals in var_steps.items():
+            nums = []
+            for step, v in vals:
+                try:
+                    nums.append((step, float(v)))
+                except ValueError:
+                    pass
+
+            if len(nums) >= 2:
+                is_inc = all(nums[i][1] <= nums[i+1][1] for i in range(len(nums)-1))
+                is_dec = all(nums[i][1] >= nums[i+1][1] for i in range(len(nums)-1))
+                steps = tuple(range(nums[0][0], nums[-1][0]+1))
+
+                if is_inc:
+                    facts.append(MonotonicFact(var, 'increasing', steps=steps, source='observed',
+                        evidence=f'{var} 单调递增: {nums[0][1]} → {nums[-1][1]}'))
+                elif is_dec:
+                    facts.append(MonotonicFact(var, 'decreasing', steps=steps, source='observed',
+                        evidence=f'{var} 单调递减: {nums[0][1]} → {nums[-1][1]}'))
+
+        # ── Observe changes ──
+        for var in var_steps:
+            if len(var_steps[var]) >= 2:
+                facts.append(SemanticFact(
+                    kind=FactKind.CHANGES, subject=var,
+                    steps=(var_steps[var][0][0], var_steps[var][-1][0]),
+                    source='observed', evidence=f'{var} 在执行过程中发生变化',
+                ))
+
+        # ── Observe pairs (interval, sorted, etc.) ──
+        interval_pairs = [
+            ('lo', 'hi'), ('left', 'right'), ('start', 'end'),
+            ('low', 'high'), ('begin', 'end'), ('min_idx', 'max_idx'),
+        ]
+        for a, b in interval_pairs:
+            if a in var_steps and b in var_steps:
+                facts.append(PairedFact(a, b, 'interval', steps=step_range, source='observed'))
+
+        # ── Observe convergence ──
+        converging_pairs = [
+            ('slow', 'fast'), ('lo', 'hi'), ('left', 'right'),
+            ('tortoise', 'hare'), ('i', 'j'),
+        ]
+        for a, b in converging_pairs:
+            a_vals = [(s, float(v)) for s, v in var_steps.get(a, []) if _try_float(v) is not None]
+            b_vals = [(s, float(v)) for s, v in var_steps.get(b, []) if _try_float(v) is not None]
+            if len(a_vals) >= 2 and len(b_vals) >= 2:
+                init_diff = abs(a_vals[0][1] - b_vals[0][1])
+                final_diff = abs(a_vals[-1][1] - b_vals[-1][1])
+                if init_diff > 0 and final_diff < init_diff * 0.3:
+                    facts.append(ConvergesFact(a, b, steps=(a_vals[0][0], a_vals[-1][0]),
+                        source='observed',
+                        evidence=f'{a} 和 {b} 收敛: 距离 {init_diff:.1f} → {final_diff:.1f}'))
+
+        # ── Observe looping ──
+        for e in pattern_events:
+            if e.event_type in ('loop_guard', 'condition', 'loop'):
+                facts.append(LoopingFact(e.step, source='observed'))
+
+        # ── Observe recursion ──
+        for e in pattern_events:
+            if e.event_type == 'recursive_call' or 'recursive' in e.semantic_tags:
+                func = e.narration.split('(')[0] if '(' in e.narration else '?'
+                facts.append(RecursiveFact(func, steps=(e.step,), source='observed',
+                    evidence=f'步骤 {e.step}: 递归调用 {func}'))
+            if e.event_type == 'base_case' or 'base_case' in e.semantic_tags:
+                facts.append(SemanticFact(
+                    kind=FactKind.BASE_CASE, subject=str(e.step),
+                    steps=(e.step,), source='observed',
+                    evidence=f'步骤 {e.step}: 基例',
+                ))
+
+        # ── Observe memoization ──
+        memo_tags = {'memo', 'cache', 'dp', 'memoize', 'lookup', 'table'}
+        for e in pattern_events:
+            tags = e.semantic_tags if isinstance(e.semantic_tags, set) else set(e.semantic_tags)
+            if tags & memo_tags:
+                var_name = e.narration.split('=')[0].strip() if '=' in e.narration else 'memo'
+                facts.append(MemoizedFact(var_name, steps=(e.step,), source='observed',
+                    evidence=f'步骤 {e.step}: 缓存/记忆化操作'))
+
+        # ── Observe accumulation ──
+        acc_names = {'sum', 'total', 'count', 'result', 'acc', 'score'}
+        for var in var_steps:
+            if var.lower() in acc_names:
+                facts.append(AccumulatesFact(var, steps=step_range, source='observed'))
+
+        return facts
+
+    # ─── Cognition Extraction ─────────────────────────────────
+
+    def extract_goals(self) -> List[Goal]:
+        """Extract goals from derived OBJECTIVE facts."""
+        goals = []
+        for f in self.query(kind=FactKind.OBJECTIVE):
+            goals.append(Goal(
+                goal_type=f.subject,  # 'minimize', 'maximize', etc.
+                target=f.relation or f.subject,
+                variable=f.value if isinstance(f.value, str) else None,
+                evidence=[f.evidence] if f.evidence else [],
+                confidence=f.confidence,
+                start_step=f.steps[0] if f.steps else 0,
+                end_step=f.steps[-1] if f.steps else 0,
+                description=f.evidence,
+            ))
+        return goals
+
+    def extract_invariants(self) -> List[Invariant]:
+        """Extract invariants from derived INVARIANT facts."""
+        invariants = []
+        for f in self.query(kind=FactKind.INVARIANT):
+            invariants.append(Invariant(
+                name=f'{f.subject}_{f.relation}',
+                predicate=f.evidence or f'{f.subject}({f.relation})',
+                holds_on=list(f.steps),
+                violated_by=[],
+                confidence=f.confidence,
+                category=f.subject,  # 'progress', 'termination', etc.
+                description=f.evidence,
+                depends_on=list(f.depends_on),
+            ))
+        return invariants
+
+    def extract_counterfactuals(self) -> List[Counterfactual]:
+        """Extract counterfactuals from derived COUNTERFACTUAL facts."""
+        counterfactuals = []
+        for f in self.query(kind=FactKind.COUNTERFACTUAL):
+            category_map = {
+                'infinite_loop': 'termination_loss',
+                'exponential_blowup': 'efficiency_loss',
+                'correctness_violated': 'correctness_loss',
+            }
+            counterfactuals.append(Counterfactual(
+                condition=f.subject.replace('_', ' '),
+                consequence=f.relation.replace('_', ' '),
+                severity='critical' if 'termination' in (f.relation or '') else 'major',
+                confidence=f.confidence,
+                affected_invariant=f.value if isinstance(f.value, str) else '',
+                category=category_map.get(f.relation, 'correctness_loss'),
+            ))
+        return counterfactuals
+
+    def summary(self) -> Dict[str, Any]:
+        """Human-readable summary of the constraint graph."""
+        by_kind: Dict[str, int] = {}
+        for f in self.facts.values():
+            by_kind[f.kind.value] = by_kind.get(f.kind.value, 0) + 1
+
+        observed = sum(1 for f in self.facts.values() if f.source == 'observed')
+        derived = sum(1 for f in self.facts.values() if f.source == 'derived')
+
+        # P10: Stratum breakdown
+        strata = {}
+        for s, count in self._stratum_stats.items():
+            strata[STRATUM_NAMES.get(s, f'L{s}')] = count
+
+        return {
+            'total_facts': len(self.facts),
+            'observed': observed,
+            'derived': derived,
+            'by_kind': by_kind,
+            'rules_applied': len(self.derivation_chain),
+            'strata': strata,
+        }
+
+
+def _try_float(v: str) -> Optional[float]:
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+# ─── P9: Canonical Fact Normalization ─────────────────────────
+#
+# Prevents semantic duplication in the DAG.
+#
+# Problem:
+#   MonotonicFact('lo', 'increasing')  and  TrendFact('lo', 'positive')
+#   represent the same truth but have different IDs.
+#
+# Solution: canonicalize() maps every fact to a unique normal form.
+# This ensures the DAG has no redundant nodes and derivation is deterministic.
+
+# Canonical aliases: variant → canonical (kind, relation)
+_CANONICAL_ALIASES: Dict[Tuple[str, str], Tuple[FactKind, str]] = {
+    # Monotonicity
+    ('monotonic', 'positive'): (FactKind.MONOTONIC, 'increasing'),
+    ('monotonic', 'up'): (FactKind.MONOTONIC, 'increasing'),
+    ('monotonic', 'growing'): (FactKind.MONOTONIC, 'increasing'),
+    ('monotonic', 'negative'): (FactKind.MONOTONIC, 'decreasing'),
+    ('monotonic', 'down'): (FactKind.MONOTONIC, 'decreasing'),
+    ('monotonic', 'shrinking'): (FactKind.MONOTONIC, 'decreasing'),
+
+    # Pairs
+    ('paired', 'range'): (FactKind.PAIRED, 'interval'),
+    ('paired', 'bounds'): (FactKind.PAIRED, 'interval'),
+    ('paired', 'ordered'): (FactKind.PAIRED, 'sorted'),
+
+    # Convergence
+    ('converges', 'meets'): (FactKind.CONVERGES, 'converges_with'),
+    ('converges', 'approaches'): (FactKind.CONVERGES, 'converges_with'),
+
+    # Objectives
+    ('objective', 'reduce'): (FactKind.OBJECTIVE, 'minimize'),
+    ('objective', 'shrink'): (FactKind.OBJECTIVE, 'minimize'),
+    ('objective', 'grow'): (FactKind.OBJECTIVE, 'maximize'),
+    ('objective', 'expand'): (FactKind.OBJECTIVE, 'maximize'),
+    ('objective', 'reach'): (FactKind.OBJECTIVE, 'converge'),
+    ('objective', 'stabilize'): (FactKind.OBJECTIVE, 'converge'),
+    ('objective', 'maintain'): (FactKind.OBJECTIVE, 'preserve'),
+    ('objective', 'keep'): (FactKind.OBJECTIVE, 'preserve'),
+}
+
+
+def canonicalize(fact: SemanticFact) -> SemanticFact:
+    """Map a fact to its canonical normal form.
+
+    This is the semantic equivalent of type normalization in compilers.
+    Ensures that semantically equivalent facts have the same ID.
+    """
+    key = (fact.kind.value, fact.relation)
+    if key in _CANONICAL_ALIASES:
+        canon_kind, canon_relation = _CANONICAL_ALIASES[key]
+        return SemanticFact(
+            kind=canon_kind,
+            subject=fact.subject,
+            relation=canon_relation,
+            value=fact.value,
+            steps=fact.steps,
+            confidence=fact.confidence,
+            source=fact.source,
+            evidence=fact.evidence,
+            derived_from_rule=fact.derived_from_rule,
+            derived_from_facts=fact.derived_from_facts,
+        )
+    return fact
+
+
+# ─── P10: Rule Stratification ─────────────────────────────────
+#
+# Organizes rules into layers (strata) to prevent rule explosion
+# and ensure correct derivation ordering.
+#
+# Without stratification, all rules fire in arbitrary order, which
+# can cause: missed derivations, redundant work, non-deterministic results.
+#
+# Strata (bottom to top):
+#   L0: Observations      — raw facts from execution events
+#   L1: Structural facts  — pairs, monotonicity, convergence
+#   L2: Behavioral facts  — shrinking, accumulation, memoization
+#   L3: Objectives        — goals derived from behavior
+#   L4: Correctness       — invariants, termination guarantees
+#   L5: Counterfactuals   — failure modes derived from invariants
+#   L6: Motifs            — deep computational archetypes
+#
+# Rules in lower strata fire first, ensuring all prerequisites
+# are available before higher strata rules run.
+
+class RuleStratum(int):
+    """A rule stratum (layer) in the constraint system."""
+    pass
+
+# Stratum constants
+STRATUM_OBSERVATION = RuleStratum(0)
+STRATUM_STRUCTURAL = RuleStratum(1)
+STRATUM_BEHAVIORAL = RuleStratum(2)
+STRATUM_OBJECTIVE = RuleStratum(3)
+STRATUM_CORRECTNESS = RuleStratum(4)
+STRATUM_COUNTERFACTUAL = RuleStratum(5)
+STRATUM_MOTIF = RuleStratum(6)
+
+STRATUM_NAMES = {
+    0: '观测', 1: '结构', 2: '行为', 3: '目标', 4: '正确性', 5: '反事实', 6: '原语',
+}
+
+
+@dataclass
+class StratifiedRule:
+    """A constraint rule with a stratum (layer) assignment.
+
+    The stratum determines WHEN the rule fires relative to other rules.
+    Lower strata fire first.
+    """
+    rule: ConstraintRule
+    stratum: RuleStratum
+    description: str = ''
+
+
+def stratify_rules(rules: List[ConstraintRule]) -> List[StratifiedRule]:
+    """Automatically assign strata to rules based on their produces/consumes.
+
+    Heuristic:
+    - Rules producing OBJECTIVE/INVARIANT → stratum 3-4
+    - Rules producing COUNTERFACTUAL → stratum 5
+    - Rules producing SHRINKS/STABLE → stratum 2
+    - Everything else → stratum 1
+    """
+    stratified = []
+    for rule in rules:
+        # Determine stratum from what the rule produces
+        max_produce_stratum = STRATUM_STRUCTURAL  # default
+        for prod in rule.produces:
+            if prod.kind == FactKind.OBJECTIVE:
+                max_produce_stratum = max(max_produce_stratum, STRATUM_OBJECTIVE)
+            elif prod.kind == FactKind.INVARIANT:
+                max_produce_stratum = max(max_produce_stratum, STRATUM_CORRECTNESS)
+            elif prod.kind == FactKind.COUNTERFACTUAL:
+                max_produce_stratum = max(max_produce_stratum, STRATUM_COUNTERFACTUAL)
+            elif prod.kind in (FactKind.SHRINKS, FactKind.STABLE, FactKind.REACHABLE):
+                max_produce_stratum = max(max_produce_stratum, STRATUM_BEHAVIORAL)
+
+        stratified.append(StratifiedRule(
+            rule=rule,
+            stratum=max_produce_stratum,
+            description=rule.description,
+        ))
+
+    # Sort by stratum (lower fires first)
+    stratified.sort(key=lambda s: s.stratum)
+    return stratified
+
+
+# ─── ConstraintEngine: The New Cognition Pipeline ──────────────
+
+class ConstraintEngine:
+    """The declarative cognition pipeline.
+
+    Replaces heuristic-based GoalInferenceEngine, InvariantEngine (partially),
+    and CounterfactualEngine with a single declarative system.
+
+    Pipeline:
+        ExecutionEvent[] → extract_facts() → ConstraintGraph
+        → fixed_point() → extract_goals/invariants/counterfactuals
+
+    This is the "semantic compiler" that transforms execution into cognition.
+    """
+
+    def __init__(self):
+        self.graph = ConstraintGraph()
+
+    def compile(self, events: List[ExecutionEvent],
+                match: PatternMatch) -> Dict[str, Any]:
+        """Full compilation: events → cognition.
+
+        Returns dict with goals, invariants, counterfactuals, and graph summary.
+        """
+        # Phase 1: Extract primitive facts from observations
+        observed_facts = ConstraintGraph.extract_facts(events, match)
+        self.graph.add_facts(observed_facts)
+
+        # Phase 2: Derive higher-level facts through fixed-point iteration
+        self.graph.fixed_point(max_iterations=10)
+
+        # Phase 3: Extract cognition from derived facts
+        return {
+            'goals': self.graph.extract_goals(),
+            'invariants': self.graph.extract_invariants(),
+            'counterfactuals': self.graph.extract_counterfactuals(),
+            'summary': self.graph.summary(),
+        }
+
+
 # ─── Updated IntentGraph with Full Cognition Stack ─────────────
 
 @dataclass
@@ -2981,6 +4053,8 @@ class IntentGraph:
     goals: List[Goal] = field(default_factory=list)
     counterfactuals: List[Counterfactual] = field(default_factory=list)
     motifs: List[ComputationalMotif] = field(default_factory=list)
+    constraint_summary: Dict[str, Any] = field(default_factory=dict)
+    reasoning_dag: Dict[str, Any] = field(default_factory=dict)  # P8: provenance DAG
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -3074,6 +4148,8 @@ class IntentGraph:
                 }
                 for m in self.motifs
             ],
+            'constraint_summary': self.constraint_summary,
+            'reasoning_dag': self.reasoning_dag,
         }
 
 
@@ -3082,26 +4158,29 @@ class IntentGraph:
 class CognitionEngine:
     """Top-level orchestrator: PatternMatch → IntentGraph.
 
-    v3 pipeline (9 stages):
+    v4 pipeline (hybrid declarative + heuristic):
     1. Pattern detection (PatternCombinator)
     2. Semantic classification (SemanticLattice)
     3. Temporal analysis (TemporalLogicEngine)
-    4. Invariant extraction (InvariantEngine)
+    4. Constraint IR compilation (ConstraintEngine) — PRIMARY
     5. Causal graph construction (CausalGraph)
-    6. Goal inference (GoalInferenceEngine)
-    7. Counterfactual reasoning (CounterfactualEngine)
-    8. Semantic compression (SemanticCompressor)
-    9. Narrative generation (CognitiveNarrativeGenerator)
+    6. Semantic compression (SemanticCompressor)
+    7. Narrative generation (CognitiveNarrativeGenerator)
+
+    The ConstraintEngine replaces GoalInferenceEngine, InvariantEngine,
+    and CounterfactualEngine with a single declarative system.
+    Heuristic engines are kept as fallback/enrichment.
     """
 
     def __init__(self):
         self.narrative_gen = CognitiveNarrativeGenerator()
         self.temporal = TemporalLogicEngine()
-        self.invariant_engine = InvariantEngine()
         self.causal_graph = CausalGraph()
+        self.compressor = SemanticCompressor()
+        # Heuristic engines (fallback / enrichment)
+        self.invariant_engine = InvariantEngine()
         self.goal_engine = GoalInferenceEngine()
         self.counterfactual_engine = CounterfactualEngine()
-        self.compressor = SemanticCompressor()
 
     def understand(self, matches: List[PatternMatch],
                    events: List[ExecutionEvent]) -> List[IntentGraph]:
@@ -3109,27 +4188,37 @@ class CognitionEngine:
         intent_graphs = []
 
         for match in matches:
-            # Generate cognitive narrative
-            narrative = self.narrative_gen.generate(match, events)
+            # ── Phase 1: Constraint IR (declarative) ──
+            constraint_engine = ConstraintEngine()
+            constraint_result = constraint_engine.compile(events, match)
+            reasoning_dag = constraint_engine.graph.explain_dag()
 
-            # Extract temporal facts
-            temporal_facts = self.temporal.analyze(events, match)
+            goals_c = constraint_result['goals']
+            invariants_c = constraint_result['invariants']
+            counterfactuals_c = constraint_result['counterfactuals']
+            constraint_summary = constraint_result['summary']
 
-            # Extract invariants (correctness)
-            invariants = self.invariant_engine.extract(events, match)
+            # ── Phase 2: Heuristic enrichment (merge, don't replace) ──
+            # Heuristics may find things the constraint rules don't cover yet
+            goals_h = self.goal_engine.infer(events, match)
+            invariants_h = self.invariant_engine.extract(events, match)
+            counterfactuals_h = self.counterfactual_engine.reason(
+                events, match, invariants_h, goals_h)
 
-            # Build causal graph (causality)
+            # Merge: constraint-derived takes priority, heuristics fill gaps
+            goals = self._merge_goals(goals_c, goals_h)
+            invariants = self._merge_invariants(invariants_c, invariants_h)
+            counterfactuals = self._merge_counterfactuals(counterfactuals_c, counterfactuals_h)
+
+            # ── Phase 3: Causal graph (independent) ──
             _, causal_edges = self.causal_graph.build(events, match)
 
-            # Infer goals (optimization objectives)
-            goals = self.goal_engine.infer(events, match)
-
-            # Counterfactual reasoning (what would break)
-            counterfactuals = self.counterfactual_engine.reason(
-                events, match, invariants, goals)
-
-            # Semantic compression (deep computational motifs)
+            # ── Phase 4: Semantic compression (uses merged goals) ──
             motifs = self.compressor.compress(events, match, goals)
+
+            # ── Phase 5: Narrative + Temporal ──
+            narrative = self.narrative_gen.generate(match, events)
+            temporal_facts = self.temporal.analyze(events, match)
 
             intent_graphs.append(IntentGraph(
                 pattern=match,
@@ -3140,9 +4229,46 @@ class CognitionEngine:
                 goals=goals,
                 counterfactuals=counterfactuals,
                 motifs=motifs,
+                constraint_summary=constraint_summary,
+                reasoning_dag=reasoning_dag,
             ))
 
         return intent_graphs
+
+    @staticmethod
+    def _merge_goals(constraint: List[Goal], heuristic: List[Goal]) -> List[Goal]:
+        """Merge constraint-derived and heuristic goals. Constraint takes priority."""
+        seen_targets = {(g.goal_type, g.target) for g in constraint}
+        merged = list(constraint)
+        for g in heuristic:
+            if (g.goal_type, g.target) not in seen_targets:
+                merged.append(g)
+                seen_targets.add((g.goal_type, g.target))
+        return sorted(merged, key=lambda g: g.confidence, reverse=True)
+
+    @staticmethod
+    def _merge_invariants(constraint: List[Invariant],
+                          heuristic: List[Invariant]) -> List[Invariant]:
+        """Merge constraint-derived and heuristic invariants."""
+        seen_names = {inv.name for inv in constraint}
+        merged = list(constraint)
+        for inv in heuristic:
+            if inv.name not in seen_names:
+                merged.append(inv)
+                seen_names.add(inv.name)
+        return sorted(merged, key=lambda i: i.confidence, reverse=True)
+
+    @staticmethod
+    def _merge_counterfactuals(constraint: List[Counterfactual],
+                               heuristic: List[Counterfactual]) -> List[Counterfactual]:
+        """Merge constraint-derived and heuristic counterfactuals."""
+        seen = {(cf.condition, cf.consequence) for cf in constraint}
+        merged = list(constraint)
+        for cf in heuristic:
+            if (cf.condition, cf.consequence) not in seen:
+                merged.append(cf)
+                seen.add((cf.condition, cf.consequence))
+        return sorted(merged, key=lambda c: c.confidence, reverse=True)
 
 
 # ─── Helpers ────────────────────────────────────────────────────

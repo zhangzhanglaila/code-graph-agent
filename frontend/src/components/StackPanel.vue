@@ -74,6 +74,60 @@ const currentCausalEdges = computed(() => {
   return edges.filter(e => e.cause === step || e.effect === step).slice(0, 6)
 })
 
+// Reasoning DAG: flatten into ordered steps for display
+const reasoningSteps = computed(() => {
+  const dag = currentPattern.value?.reasoning_dag
+  if (!dag?.nodes?.length) return []
+
+  // Build adjacency: node_id → source edges
+  const sourcesOf = new Map<string, string[]>()
+  for (const e of dag.edges || []) {
+    if (!sourcesOf.has(e.to)) sourcesOf.set(e.to, [])
+    sourcesOf.get(e.to)!.push(e.from)
+  }
+
+  // Topological sort (BFS from observed facts)
+  const nodeMap = new Map(dag.nodes.map(n => [n.id, n]))
+  const visited = new Set<string>()
+  const result: { fact: any; rule: string; depth: number }[] = []
+
+  // Start from observed (leaf) facts
+  const queue = dag.nodes.filter(n => n.source === 'observed').map(n => n.id)
+  for (const id of queue) visited.add(id)
+
+  while (queue.length) {
+    const nid = queue.shift()!
+    const node = nodeMap.get(nid)
+    if (!node) continue
+
+    // Find derived facts that depend on this one
+    for (const [target, srcs] of sourcesOf) {
+      if (srcs.includes(nid) && !visited.has(target)) {
+        // Check if all sources are visited
+        if (srcs.every(s => visited.has(s))) {
+          visited.add(target)
+          queue.push(target)
+        }
+      }
+    }
+
+    result.push({
+      fact: node,
+      rule: node.rule || '',
+      depth: node.source === 'observed' ? 0 : 1,
+    })
+  }
+
+  // Add any unvisited nodes
+  for (const n of dag.nodes) {
+    if (!visited.has(n.id)) {
+      result.push({ fact: n, rule: n.rule || '', depth: n.source === 'observed' ? 0 : 1 })
+    }
+  }
+
+  return result
+})
+
 // Current frame lifecycle event
 const currentFrameEvent = computed(() => {
   const events = store.frameLifecycle
@@ -119,6 +173,18 @@ function stepRange(frame: { start_step: number; end_step: number | null }) {
       </div>
       <span class="pattern-range">步骤 {{ currentPattern.start_step + 1 }}–{{ currentPattern.end_step + 1 }}</span>
       <span class="pattern-conf">{{ Math.round(currentPattern.confidence * 100) }}%</span>
+    </div>
+
+    <!-- Constraint IR Summary -->
+    <div v-if="currentPattern?.constraint_summary?.total_facts" class="constraint-bar">
+      <span class="cs-icon">📐</span>
+      <span class="cs-label">语义 IR</span>
+      <span class="cs-fact">{{ currentPattern.constraint_summary.observed }} 观测</span>
+      <span class="cs-derived">{{ currentPattern.constraint_summary.derived }} 推导</span>
+      <span class="cs-total">{{ currentPattern.constraint_summary.total_facts }} 事实</span>
+      <span v-for="(count, stratum) in currentPattern.constraint_summary.strata" :key="stratum" class="cs-stratum" v-if="count > 0">
+        {{ stratum }}: {{ count }}
+      </span>
     </div>
 
     <!-- Cognitive Narrative (the "why") -->
@@ -256,6 +322,26 @@ function stepRange(frame: { start_step: number; end_step: number | null }) {
           <div v-if="m.evidence?.length" class="motif-evidence">
             <span v-for="(ev, j) in m.evidence" :key="j" class="motif-ev">{{ ev }}</span>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reasoning DAG (provenance chain) -->
+    <div v-if="reasoningSteps.length" class="reasoning-panel">
+      <div class="reasoning-title">
+        <span class="reasoning-icon">🌳</span>
+        <span>推理链</span>
+        <span class="reasoning-count">{{ reasoningSteps.length }} 步</span>
+      </div>
+      <div class="reasoning-chain">
+        <div v-for="(step, i) in reasoningSteps" :key="i"
+          class="reasoning-step" :class="step.fact.source"
+          :style="{ marginLeft: step.depth * 16 + 'px' }">
+          <span class="rs-stratum" v-if="step.fact.stratum_name">{{ step.fact.stratum_name }}</span>
+          <span class="rs-rule" v-if="step.rule">{{ step.rule }}</span>
+          <span class="rs-kind">{{ step.fact.kind }}</span>
+          <span class="rs-evidence">{{ step.fact.evidence }}</span>
+          <span class="rs-source">{{ step.fact.source === 'observed' ? '观测' : '推导' }}</span>
         </div>
       </div>
     </div>
@@ -553,6 +639,34 @@ function stepRange(frame: { start_step: number; end_step: number | null }) {
   to { opacity: 1; transform: translateX(0); }
 }
 
+/* Constraint IR Summary */
+.constraint-bar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  background: linear-gradient(135deg, rgba(139,92,246,0.05), rgba(59,130,246,0.05));
+  border: 1px solid rgba(139,92,246,0.15);
+  border-left: 3px solid #8b5cf6;
+  border-radius: 8px; padding: 8px 12px;
+  font-size: 10px;
+}
+.cs-icon { font-size: 13px; }
+.cs-label { font-weight: 700; color: #8b5cf6; }
+.cs-fact { color: #3b82f6; background: rgba(59,130,246,0.08); padding: 1px 6px; border-radius: 3px; }
+.cs-derived { color: #22c55e; background: rgba(34,197,94,0.08); padding: 1px 6px; border-radius: 3px; }
+.cs-total { color: var(--text-muted); margin-left: auto; }
+.cs-kind {
+  color: var(--text-dim); background: rgba(148,163,184,0.06);
+  padding: 1px 5px; border-radius: 3px; font-family: monospace;
+}
+.cs-stratum {
+  color: #8b5cf6; background: rgba(139,92,246,0.08);
+  padding: 1px 5px; border-radius: 3px; font-size: 9px;
+}
+.rs-stratum {
+  font-size: 9px; color: #8b5cf6; font-weight: 600;
+  background: rgba(139,92,246,0.08); padding: 1px 5px; border-radius: 3px;
+  white-space: nowrap;
+}
+
 /* Counterfactuals Panel */
 .counterfactuals-panel {
   display: flex; flex-direction: column; gap: 6px;
@@ -648,6 +762,53 @@ function stepRange(frame: { start_step: number; end_step: number | null }) {
   padding: 2px 6px; background: rgba(148,163,184,0.06);
   border-radius: 3px; border-left: 2px solid #6366f1;
 }
+
+/* Reasoning DAG Panel */
+.reasoning-panel {
+  display: flex; flex-direction: column; gap: 6px;
+  background: linear-gradient(135deg, rgba(20,184,166,0.04), rgba(6,182,212,0.04));
+  border: 1px solid rgba(20,184,166,0.15);
+  border-left: 3px solid #14b8a6;
+  border-radius: 8px; padding: 10px 14px;
+  animation: flSlide 0.3s ease;
+}
+.reasoning-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700; color: #14b8a6;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.reasoning-icon { font-size: 14px; }
+.reasoning-count {
+  font-size: 9px; background: rgba(20,184,166,0.12);
+  padding: 1px 6px; border-radius: 3px; margin-left: auto;
+}
+.reasoning-chain {
+  display: flex; flex-direction: column; gap: 3px;
+}
+.reasoning-step {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(148,163,184,0.04);
+  border: 1px solid rgba(148,163,184,0.08);
+  border-radius: 4px; padding: 4px 8px;
+  font-size: 10px;
+}
+.reasoning-step.observed { border-left: 2px solid #3b82f6; }
+.reasoning-step.derived { border-left: 2px solid #22c55e; background: rgba(34,197,94,0.04); }
+.rs-rule {
+  font-size: 9px; font-weight: 700; color: #8b5cf6;
+  background: rgba(139,92,246,0.08); padding: 1px 5px; border-radius: 3px;
+  white-space: nowrap;
+}
+.rs-kind {
+  font-size: 9px; color: var(--text-muted); font-family: monospace;
+  white-space: nowrap;
+}
+.rs-evidence { font-size: 10px; color: var(--text); flex: 1; }
+.rs-source {
+  font-size: 9px; padding: 1px 5px; border-radius: 3px; white-space: nowrap;
+}
+.reasoning-step.observed .rs-source { color: #3b82f6; background: rgba(59,130,246,0.08); }
+.reasoning-step.derived .rs-source { color: #22c55e; background: rgba(34,197,94,0.08); }
 
 /* Goals Panel */
 .goals-panel {
