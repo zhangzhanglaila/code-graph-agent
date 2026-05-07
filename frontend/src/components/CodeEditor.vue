@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useAnalysisStore } from '../store/analysisStore'
 
 const store = useAnalysisStore()
@@ -7,8 +7,15 @@ const editorContainer = ref<HTMLElement>()
 let editor: any = null
 let monaco: any = null
 let lineHighlight: any = null
+let disposed = false
+
+function isAlive() {
+  if (disposed || !editor || !monaco) return false
+  try { return !!editor.getModel() } catch { return false }
+}
 
 onMounted(async () => {
+  disposed = false
   monaco = await import('monaco-editor')
 
   editor = monaco.editor.create(editorContainer.value!, {
@@ -33,22 +40,35 @@ onMounted(async () => {
   })
 })
 
+onUnmounted(() => {
+  disposed = true
+  lineHighlight = null
+  if (editor) {
+    try { editor.dispose() } catch {}
+    editor = null
+  }
+  monaco = null
+})
+
 watch(() => store.code, (newCode) => {
-  if (editor && editor.getValue() !== newCode) {
+  if (!isAlive()) return
+  if (editor.getValue() !== newCode) {
     editor.setValue(newCode)
   }
 })
 
 watch(() => store.highlightedLine, (line) => {
-  if (!editor || !monaco) return
-  lineHighlight = editor.deltaDecorations(lineHighlight || [], line > 0 ? [{
-    range: new monaco.Range(line, 1, line, 1),
-    options: {
-      isWholeLine: true,
-      className: 'debugger-line',
-      glyphMarginClassName: 'debugger-glyph',
-    },
-  }] : [])
+  if (!isAlive()) return
+  try {
+    lineHighlight = editor.deltaDecorations(lineHighlight || [], line > 0 ? [{
+      range: new monaco.Range(line, 1, line, 1),
+      options: {
+        isWholeLine: true,
+        className: 'debugger-line',
+        glyphMarginClassName: 'debugger-glyph',
+      },
+    }] : [])
+  } catch { /* editor DOM detached */ }
 })
 </script>
 

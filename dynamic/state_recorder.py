@@ -3,7 +3,7 @@
 Unlike tracer.py which records WHERE execution went,
 this records WHAT the state looked like at each step.
 
-Output: a timeline of (line, locals_snapshot, diff_from_previous)
+Output: a timeline of (line, locals_snapshot, diff_from_previous, depth, call_id)
 """
 
 from __future__ import annotations
@@ -37,6 +37,8 @@ class ExecutionStep:
     changed_vars: List[str]         # which vars changed since last step
     new_vars: List[str]             # newly created vars
     removed_vars: List[str]         # vars that went out of scope
+    depth: int = 0                  # call-stack depth (0 = top-level)
+    call_id: int = 0                # which call frame this step belongs to
 
 
 @dataclass
@@ -116,12 +118,18 @@ class StateRecorder:
         self._prev_locals: Dict[str, VariableSnapshot] = {}
         self._step_index = 0
         self._active = False
+        self._depth = 0
+        self._call_counter = 0
+        self._call_stack: List[int] = []  # stack of call_ids
 
     def start(self) -> None:
         self._active = True
         self._steps = []
         self._prev_locals = {}
         self._step_index = 0
+        self._depth = 0
+        self._call_counter = 0
+        self._call_stack = []
         sys.settrace(self._trace)
 
     def stop(self) -> None:
@@ -149,12 +157,18 @@ class StateRecorder:
         if not self._should_trace(file_path):
             return None
 
-        if event == "line":
-            self._record_state(frame, file_path)
-        elif event == "call":
+        if event == "call":
+            self._depth += 1
+            self._call_counter += 1
+            self._call_stack.append(self._call_counter)
             self._record_state(frame, file_path)
             return self._trace
         elif event == "return":
+            self._record_state(frame, file_path)
+            self._depth = max(0, self._depth - 1)
+            if self._call_stack:
+                self._call_stack.pop()
+        elif event == "line":
             self._record_state(frame, file_path)
         elif event == "exception":
             self._record_state(frame, file_path)
@@ -175,13 +189,22 @@ class StateRecorder:
         except Exception:
             pass
 
+        # Skip function/method definition lines — they are not execution steps
+        if code_line.startswith("def ") or code_line.startswith("async def "):
+            return
+
+        # Skip duplicate consecutive steps (same line + same depth — return double-fire)
+        if self._steps:
+            prev = self._steps[-1]
+            if prev.line_number == line_no and prev.depth == self._depth and prev.function_name == func_name:
+                return
+
         # Capture locals
         current_snapshots: Dict[str, VariableSnapshot] = {}
         try:
             for name, val in frame.f_locals.items():
                 if self.skip_private and name.startswith("_"):
                     continue
-                # Skip module/function/class objects (not interesting for state)
                 if callable(val) and not isinstance(val, type):
                     continue
                 if isinstance(val, type):
@@ -213,6 +236,8 @@ class StateRecorder:
         # Detect references between tracked vars
         self._detect_references(current_snapshots, frame)
 
+        current_call_id = self._call_stack[-1] if self._call_stack else 0
+
         step = ExecutionStep(
             step_index=self._step_index,
             file_path=file_path,
@@ -223,6 +248,8 @@ class StateRecorder:
             changed_vars=changed,
             new_vars=new_vars,
             removed_vars=removed_vars,
+            depth=self._depth,
+            call_id=current_call_id,
         )
 
         self._steps.append(step)

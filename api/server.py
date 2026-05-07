@@ -19,6 +19,8 @@ from pydantic import BaseModel
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
+from dynamic.semantic_narrator import SemanticNarrator
+
 from core.graph import CausalGraph
 from static.python_analyzer import PythonAnalyzer
 from static.config_linker import ConfigLinker
@@ -363,7 +365,44 @@ async def get_insight(req: InsightRequest):
                 "vars": var_states,
                 "changed": step.changed_vars,
                 "new_vars": step.new_vars,
+                "depth": step.depth,
+                "call_id": step.call_id,
             })
+
+        # Enrich with semantic narration (AST-based, rule-engine)
+        detected_patterns = []
+        try:
+            narrator = SemanticNarrator(req.code)
+            prev_depth = 0
+            events = []
+            for sd in steps_data:
+                event = narrator.analyze_step(
+                    sd.get("code", ""),
+                    sd.get("vars", {}),
+                    depth=sd.get("depth", 0),
+                    prev_depth=prev_depth,
+                    step_index=sd.get("index", 0),
+                    call_id=sd.get("call_id", 0),
+                )
+                events.append(event)
+                sd["event_type"] = event.event_type
+                sd["narration"] = event.narration
+                sd["semantic_tags"] = event.semantic_tags
+                sd["visual_priority"] = event.visual_priority
+                if event.pointer_move:
+                    sd["pointer_move"] = {
+                        "pointer": event.pointer_move.pointer,
+                        "from_object": event.pointer_move.from_object,
+                        "to_object": event.pointer_move.to_object,
+                        "via": event.pointer_move.via,
+                    }
+                prev_depth = sd.get("depth", 0)
+
+            # Cognition Engine: patterns → semantic lattice → temporal logic → narrative
+            intent_graphs = narrator.understand(events)
+            detected_patterns = [ig.to_dict() for ig in intent_graphs]
+        except Exception:
+            pass  # Graceful fallback — steps work without narration
 
         # Cache for explain endpoints
         session_id = str(uuid.uuid4())[:8]
@@ -395,6 +434,7 @@ async def get_insight(req: InsightRequest):
             "timeline": steps_data,
             "timeline_url": "/output/execution_timeline.html",
             "total_steps": len(steps_data),
+            "detected_patterns": detected_patterns,
         }
     except Exception as e:
         return {"success": False, "error": str(e), "error_type": type(e).__name__}
@@ -473,6 +513,8 @@ async def get_ds_viz(req: DSVizRequest):
                 "edges": edges,
                 "var_bindings": var_bindings,
                 "changed_objects": step.changed_objects,
+                "depth": step.depth,
+                "call_id": step.call_id,
             })
 
         return {
@@ -557,6 +599,7 @@ async def explain_code(req: ExplainRequest):
                 "code": step.code_line,
                 "vars": var_states,
                 "changed": step.changed_vars or step.new_vars,
+                "depth": step.depth,
             })
 
         # Format lineage for LLM
@@ -652,6 +695,7 @@ async def explain_steps(req: ExplainStepsRequest):
                     "vars": var_states,
                     "changed": step.changed_vars,
                     "new_vars": step.new_vars,
+                    "depth": step.depth,
                 })
             code = req.code
 
@@ -761,6 +805,7 @@ async def explain_step_focus(req: ExplainStepFocusRequest):
                     "code": step.code_line,
                     "vars": var_states,
                     "changed": step.changed_vars,
+                    "depth": step.depth,
                 })
             code = req.code
 
@@ -1214,6 +1259,7 @@ async def pattern_narrative(req: ExplainStepsRequest):
                     "index": step.step_index, "line": step.line_number,
                     "code": step.code_line, "vars": var_states,
                     "changed": step.changed_vars, "new_vars": list(step.new_vars),
+                    "depth": step.depth,
                 })
             code = req.code
 

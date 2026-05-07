@@ -6,6 +6,7 @@ import InsightPanel from './components/InsightPanel.vue'
 import TimelinePanel from './components/TimelinePanel.vue'
 import GraphPanel from './components/GraphPanel.vue'
 import DSVizPanel from './components/DSVizPanel.vue'
+import StackPanel from './components/StackPanel.vue'
 import ErrorToast from './components/ErrorToast.vue'
 import { useAnalysisStore } from './store/analysisStore'
 import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps, getPatternNarrative, getSubproblemGraph } from './api/analysis'
@@ -181,12 +182,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <!-- Tab bar -->
       <div class="tab-bar" v-if="store.hasResults">
         <button
-          v-for="tab in (['insight', 'dsviz', 'graph', 'timeline'] as const)"
+          v-for="tab in (['insight', 'stack', 'dsviz', 'graph', 'timeline'] as const)"
           :key="tab"
           :class="['tab-btn', { active: store.activeTab === tab }]"
           @click="store.activeTab = tab"
         >
-          {{ tab === 'insight' ? '分析洞察' : tab === 'dsviz' ? '数据结构' : tab === 'graph' ? '执行图' : '时间线' }}
+          {{ tab === 'insight' ? '分析洞察' : tab === 'stack' ? '执行栈' : tab === 'dsviz' ? '数据结构' : tab === 'graph' ? '执行图' : '时间线' }}
         </button>
       </div>
 
@@ -194,6 +195,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <div class="panels">
         <InsightPanel v-if="!store.hasResults && !store.loading" />
         <InsightPanel v-if="store.activeTab === 'insight' && store.hasResults" />
+        <StackPanel v-if="store.activeTab === 'stack' && store.hasResults" />
         <GraphPanel v-if="store.activeTab === 'graph' && store.hasResults" />
         <DSVizPanel v-if="store.activeTab === 'dsviz' && store.hasResults" />
         <TimelinePanel v-if="store.activeTab === 'timeline' && store.hasResults" />

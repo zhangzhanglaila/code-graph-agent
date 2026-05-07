@@ -2089,6 +2089,12 @@ onUnmounted(() => {
       </button>
     </div>
 
+    <!-- Semantic Narration -->
+    <div v-if="store.currentNarration" class="narration-bar">
+      <span class="narration-icon">💡</span>
+      <span class="narration-text">{{ store.currentNarration }}</span>
+    </div>
+
     <!-- AI Step Explanation -->
     <div
       v-if="activeExplanation"
@@ -3253,6 +3259,16 @@ onUnmounted(() => {
 
 <style scoped>
 .timeline-panel { display: flex; flex-direction: column; gap: 12px; }
+
+.narration-bar {
+  display: flex; align-items: center; gap: 8px;
+  background: linear-gradient(135deg, rgba(59,130,246,0.06), rgba(124,58,237,0.06));
+  border: 1px solid rgba(59,130,246,0.15);
+  border-left: 3px solid #3b82f6;
+  border-radius: 8px; padding: 8px 14px;
+}
+.narration-icon { font-size: 14px; flex-shrink: 0; }
+.narration-text { font-size: 13px; color: var(--text); line-height: 1.4; }
 
 .empty-state {
   display: flex;

@@ -4,6 +4,7 @@ Unlike StateRecorder which records value_repr, this captures:
 - Object identity (id())
 - Attribute references (.next, .prev, .left, .right)
 - Which objects reference which
+- Call-stack depth for recursive frame tracking
 """
 
 from __future__ import annotations
@@ -39,6 +40,9 @@ class DSStep:
     changed_objects: List[int] = field(default_factory=list)
     # Which references changed this step
     changed_refs: List[Tuple[int, str, int]] = field(default_factory=list)  # (from_id, attr, to_id)
+    # Call-stack info
+    depth: int = 0
+    call_id: int = 0
 
 
 @dataclass
@@ -114,11 +118,17 @@ class DSTracer:
         self._step_index = 0
         self._active = False
         self._tracked_classes: Set[str] = set()
+        self._depth = 0
+        self._call_counter = 0
+        self._call_stack: List[int] = []
 
     def start(self) -> None:
         self._active = True
         self.steps = []
         self._step_index = 0
+        self._depth = 0
+        self._call_counter = 0
+        self._call_stack = []
         sys.settrace(self._trace)
 
     def stop(self) -> None:
@@ -146,12 +156,20 @@ class DSTracer:
         if not self._should_trace(file_path):
             return None
 
-        if event == "line":
-            self._record_state(frame, file_path)
-        elif event == "call":
+        if event == "call":
+            self._depth += 1
+            self._call_counter += 1
+            self._call_stack.append(self._call_counter)
             self._record_state(frame, file_path)
             return self._trace
         elif event == "return":
+            self._record_state(frame, file_path)
+            self._depth = max(0, self._depth - 1)
+            if self._call_stack:
+                self._call_stack.pop()
+        elif event == "line":
+            self._record_state(frame, file_path)
+        elif event == "exception":
             self._record_state(frame, file_path)
 
         return self._trace
@@ -168,6 +186,16 @@ class DSTracer:
                 code_line = lines[line_no - 1].strip()
         except Exception:
             pass
+
+        # Skip function/method definition lines — they are not execution steps
+        if code_line.startswith("def ") or code_line.startswith("async def "):
+            return
+
+        # Skip duplicate consecutive steps (same line + same depth — return double-fire)
+        if self.steps:
+            prev = self.steps[-1]
+            if prev.line_number == line_no and prev.depth == self._depth and prev.function_name == func_name:
+                return
 
         # Collect all objects reachable from local variables
         all_objects: Dict[int, Any] = {}
@@ -219,6 +247,8 @@ class DSTracer:
                             if old_target != new_target:
                                 changed_refs.append((obj_id, attr, new_target))
 
+        current_call_id = self._call_stack[-1] if self._call_stack else 0
+
         step = DSStep(
             step_index=self._step_index,
             file_path=file_path,
@@ -229,6 +259,8 @@ class DSTracer:
             var_to_obj=var_to_obj,
             changed_objects=changed_objects,
             changed_refs=changed_refs,
+            depth=self._depth,
+            call_id=current_call_id,
         )
 
         self.steps.append(step)

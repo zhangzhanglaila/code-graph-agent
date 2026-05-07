@@ -1,5 +1,96 @@
 const API_BASE = ''
 
+export interface SemanticOperation {
+  op: string
+  structure: string
+  actors: string[]
+  direction: string
+  combines: string
+  terminates: string
+}
+
+export interface CognitiveNarrative {
+  headline: string
+  mechanism: string
+  strategy: string
+  temporal_facts: string[]
+  analogies: string[]
+  lattice_path: string[]
+  confidence: number
+}
+
+export interface TemporalFactData {
+  predicate: string
+  subject: string
+  confidence: number
+  description: string
+}
+
+export interface InvariantData {
+  name: string
+  predicate: string
+  category: string
+  confidence: number
+  description: string
+  holds: number
+  violations: number
+  depends_on: string[]
+}
+
+export interface CausalEdgeData {
+  cause: number
+  effect: number
+  type: string
+  variable?: string
+  confidence: number
+  description: string
+}
+
+export interface GoalData {
+  type: string
+  target: string
+  variable?: string
+  evidence: string[]
+  confidence: number
+  description: string
+}
+
+export interface CounterfactualData {
+  condition: string
+  consequence: string
+  severity: string
+  confidence: number
+  affected_invariant: string
+  category: string
+}
+
+export interface ComputationalMotifData {
+  motif: string
+  description: string
+  evidence: string[]
+  confidence: number
+  depth: number
+}
+
+export interface DetectedPattern {
+  pattern_name: string
+  display_name: string
+  description: string
+  start_step: number
+  end_step: number
+  confidence: number
+  key_steps: number[]
+  sub_patterns?: string[]
+  semantic?: SemanticOperation
+  narrative?: CognitiveNarrative
+  temporal?: TemporalFactData[]
+  invariants?: InvariantData[]
+  causal_edges?: CausalEdgeData[]
+  goals?: GoalData[]
+  counterfactuals?: CounterfactualData[]
+  motifs?: ComputationalMotifData[]
+}
+
 export interface InsightResponse {
   success?: boolean
   error?: string
@@ -18,6 +109,14 @@ export interface InsightResponse {
   timeline: StepData[]
   timeline_url: string
   total_steps: number
+  detected_patterns?: DetectedPattern[]
+}
+
+export interface PointerMoveData {
+  pointer: string
+  from_object?: string
+  to_object?: string
+  via: string
 }
 
 export interface StepData {
@@ -29,6 +128,14 @@ export interface StepData {
   vars: Record<string, { value: string; type: string; changed: boolean; is_new: boolean }>
   changed: string[]
   new_vars: string[]
+  depth?: number
+  call_id?: number
+  // Semantic IR fields (from AST narrator)
+  event_type?: string
+  narration?: string
+  semantic_tags?: string[]
+  visual_priority?: number
+  pointer_move?: PointerMoveData
 }
 
 export interface AnalyzeResponse {

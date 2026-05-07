@@ -241,6 +241,32 @@ const selectedNode = computed(() => {
   if (selectedObj.value === null) return null
   return layoutNodes.value.find(n => n.id === selectedObj.value) || null
 })
+
+// Event type from timeline
+const currentEventType = computed(() => {
+  const step = store.timeline[dsStep.value]
+  return step?.event_type || store.semanticEventTypes[dsStep.value] || 'unknown'
+})
+
+const EVENT_LABELS: Record<string, string> = {
+  assignment: '赋值', condition: '判断', recursive_call: '递归调用',
+  return: '返回', pointer_move: '指针移动', pointer_update: '指针更新',
+  list_op: '列表操作', loop: '循环', function_call: '函数调用',
+  class_def: '类定义', function_def: '函数定义', pass: '跳过',
+  break: '跳出', continue: '继续',
+}
+const eventLabel = computed(() => EVENT_LABELS[currentEventType.value] || currentEventType.value)
+
+// Current pointer move
+const currentPointerMove = computed(() => {
+  const step = store.timeline[dsStep.value]
+  if (step?.pointer_move) return step.pointer_move
+  // Fallback: detect from code
+  const code = step?.code || ''
+  const m = code.match(/(\w+)\s*=\s*(\w+)\.(next|prev|left|right)/)
+  if (m) return { pointer: m[1], via: m[3] }
+  return null
+})
 </script>
 
 <template>
@@ -262,10 +288,21 @@ const selectedNode = computed(() => {
         <button class="ctrl-btn" @click="nextDsStep" :disabled="dsStep >= Math.max(0, totalSteps - 1)">&rarr;</button>
       </div>
 
-      <!-- Code line -->
+      <!-- Code line + narration -->
       <div class="ds-code" v-if="currentData">
         <span class="ds-code-file">line {{ currentData.line }}</span>
         <code>{{ currentData.code }}</code>
+      </div>
+      <div v-if="store.currentNarration" class="ds-narration">
+        <span class="narration-icon">💡</span>
+        <span>{{ store.currentNarration }}</span>
+        <span v-if="currentEventType && currentEventType !== 'unknown'" :class="['event-badge', `evt-${currentEventType}`]">{{ eventLabel }}</span>
+      </div>
+
+      <!-- Pointer transition indicator -->
+      <div v-if="currentPointerMove" class="pointer-indicator">
+        <span class="ptr-icon">➜</span>
+        <span class="ptr-text">{{ currentPointerMove.pointer }} → .{{ currentPointerMove.via }}</span>
       </div>
 
       <!-- Variable diff -->
@@ -390,6 +427,45 @@ const selectedNode = computed(() => {
 }
 .ds-code code { color: var(--text); margin-left: 8px; }
 .ds-code-file { color: var(--primary); font-size: 11px; }
+
+.ds-narration {
+  display: flex; align-items: center; gap: 6px;
+  background: linear-gradient(135deg, rgba(59,130,246,0.06), rgba(124,58,237,0.06));
+  border: 1px solid rgba(59,130,246,0.15);
+  border-left: 3px solid #3b82f6;
+  border-radius: 6px; padding: 6px 12px;
+  font-size: 12px; color: var(--text);
+}
+.narration-icon { font-size: 13px; }
+
+.event-badge {
+  margin-left: auto; font-size: 10px; font-weight: 700;
+  padding: 1px 8px; border-radius: 4px; white-space: nowrap;
+}
+.evt-assignment { background: rgba(148,163,184,0.12); color: #64748b; }
+.evt-condition { background: rgba(234,179,8,0.12); color: #ca8a04; }
+.evt-recursive_call { background: rgba(124,58,237,0.12); color: #7c3aed; }
+.evt-return { background: rgba(34,197,94,0.12); color: #16a34a; }
+.evt-pointer_move { background: rgba(251,114,153,0.12); color: #e11d48; }
+.evt-pointer_update { background: rgba(251,114,153,0.12); color: #e11d48; }
+.evt-list_op { background: rgba(0,161,214,0.12); color: #00a1d6; }
+.evt-loop { background: rgba(251,191,36,0.12); color: #d97706; }
+.evt-function_call { background: rgba(59,130,246,0.12); color: #2563eb; }
+
+.pointer-indicator {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(251,114,153,0.06);
+  border: 1px solid rgba(251,114,153,0.2);
+  border-left: 3px solid #e11d48;
+  border-radius: 6px; padding: 5px 12px;
+  font-size: 12px; animation: ptrPulse 0.6s ease;
+}
+.ptr-icon { color: #e11d48; font-weight: 700; }
+.ptr-text { color: var(--text); font-family: monospace; }
+@keyframes ptrPulse {
+  0% { background: rgba(251,114,153,0.15); }
+  100% { background: rgba(251,114,153,0.06); }
+}
 
 .ds-canvas {
   flex: 1; position: relative; min-height: 300px;
