@@ -3212,13 +3212,28 @@ class ConstraintGraph:
         self._rules: List[ConstraintRule] = self._build_rules()
         self._stratified: List[StratifiedRule] = stratify_rules(self._rules)
         self._stratum_stats: Dict[int, int] = {}  # stratum → facts derived
+        self._conflicts: List[Dict[str, Any]] = []  # P12: detected contradictions
+
+        # P11: Build fact-kind → rule index for incremental propagation
+        self._kind_to_rules: Dict[FactKind, List[ConstraintRule]] = {}
+        for rule in self._rules:
+            for req in rule.requires:
+                if req.kind not in self._kind_to_rules:
+                    self._kind_to_rules[req.kind] = []
+                if rule not in self._kind_to_rules[req.kind]:
+                    self._kind_to_rules[req.kind].append(rule)
 
     def add_fact(self, fact: SemanticFact) -> str:
-        """Add a fact to the graph. Canonicalizes first (P9). Returns the fact's ID."""
+        """Add a fact to the graph. Canonicalizes first (P9). Returns the fact's ID.
+
+        P12: Also checks for conflicts (contradictory facts).
+        """
         fact = canonicalize(fact)  # P9: normalize
         fid = fact.id
         if fid not in self.facts:
             self.facts[fid] = fact
+            # P12: Conflict detection
+            self._detect_conflicts(fact)
         else:
             # Merge: keep higher confidence, union steps
             existing = self.facts[fid]
@@ -3293,6 +3308,104 @@ class ConstraintGraph:
                         self.derivation_chain[derived.id] = list(derived.derived_from_facts)
                         new_facts.append(derived)
         return new_facts
+
+    # ─── P11: Incremental Fixpoint (Delta Propagation) ─────────
+
+    def incremental_fixed_point(self, initial_facts: List[SemanticFact],
+                                max_iterations: int = 10) -> int:
+        """Incremental fixpoint: only re-evaluate rules affected by new facts.
+
+        Instead of batch re-computation (O(rules × facts)), this uses
+        delta propagation: new facts → affected rules → new derived facts → repeat.
+
+        This is the scalable version of fixed_point().
+        """
+        # Seed: add initial facts and collect the delta
+        delta: List[SemanticFact] = []
+        for f in initial_facts:
+            fid = self.add_fact(f)
+            if fid in self.facts:
+                delta.append(self.facts[fid])
+
+        total_new = 0
+        for _ in range(max_iterations):
+            if not delta:
+                break
+
+            # Find rules affected by delta facts
+            affected_rules = self._find_affected_rules(delta)
+
+            # Apply only affected rules (per stratum)
+            next_delta: List[SemanticFact] = []
+            for stratum in range(7):
+                stratum_rules = [
+                    r for r in affected_rules
+                    if any(sr.rule is r and sr.stratum == stratum
+                           for sr in self._stratified)
+                ]
+                if not stratum_rules:
+                    continue
+                new_facts = self._apply_rules_subset(stratum_rules)
+                next_delta.extend(new_facts)
+                self._stratum_stats[stratum] = self._stratum_stats.get(stratum, 0) + len(new_facts)
+
+            total_new += len(next_delta)
+            delta = next_delta
+
+        return total_new
+
+    def _find_affected_rules(self, delta: List[SemanticFact]) -> List[ConstraintRule]:
+        """Find rules whose requirements overlap with the delta facts.
+
+        Uses the kind → rules index for O(1) lookup per fact kind.
+        """
+        affected = set()
+        for fact in delta:
+            for rule in self._kind_to_rules.get(fact.kind, []):
+                affected.add(id(rule))
+        return [r for r in self._rules if id(r) in affected]
+
+    # ─── P12: Conflict Detection (Contradiction Lattice) ───────
+
+    def _detect_conflicts(self, new_fact: SemanticFact) -> None:
+        """Check if a new fact contradicts existing facts.
+
+        Detected conflicts:
+        - Same variable, same kind, opposite direction (increasing vs decreasing)
+        - Same variable, incompatible kinds (MONOTONIC vs CONSTANT)
+        """
+        if new_fact.kind == FactKind.MONOTONIC:
+            # Check for opposite monotonicity on same variable
+            opposite = 'decreasing' if new_fact.relation == 'increasing' else 'increasing'
+            opposite_id = f'monotonic:{new_fact.subject}:{opposite}:None'
+            if opposite_id in self.facts:
+                self._conflicts.append({
+                    'type': 'contradictory_monotonicity',
+                    'subject': new_fact.subject,
+                    'fact_a': new_fact.id,
+                    'fact_b': opposite_id,
+                    'description': f'{new_fact.subject} 同时被标记为递增和递减',
+                    'severity': 'critical',
+                })
+
+        if new_fact.kind == FactKind.CONSTANT:
+            # Check if variable is also monotonic (contradiction)
+            for direction in ('increasing', 'decreasing'):
+                mono_id = f'monotonic:{new_fact.subject}:{direction}:None'
+                if mono_id in self.facts:
+                    self._conflicts.append({
+                        'type': 'constant_vs_monotonic',
+                        'subject': new_fact.subject,
+                        'fact_a': new_fact.id,
+                        'fact_b': mono_id,
+                        'description': f'{new_fact.subject} 同时被标记为常量和单调变化',
+                        'severity': 'warning',
+                    })
+
+    @property
+    def conflicts(self) -> List[Dict[str, Any]]:
+        """Return detected conflicts."""
+        return self._conflicts
 
     # ─── P8: Provenance & Explainability ───────────────────────
 
@@ -3828,6 +3941,7 @@ class ConstraintGraph:
             'by_kind': by_kind,
             'rules_applied': len(self.derivation_chain),
             'strata': strata,
+            'conflicts': len(self._conflicts),
         }
 
 
@@ -4010,14 +4124,15 @@ class ConstraintEngine:
                 match: PatternMatch) -> Dict[str, Any]:
         """Full compilation: events → cognition.
 
+        P11: Uses incremental fixed-point (delta propagation) for scalability.
+
         Returns dict with goals, invariants, counterfactuals, and graph summary.
         """
         # Phase 1: Extract primitive facts from observations
         observed_facts = ConstraintGraph.extract_facts(events, match)
-        self.graph.add_facts(observed_facts)
 
-        # Phase 2: Derive higher-level facts through fixed-point iteration
-        self.graph.fixed_point(max_iterations=10)
+        # Phase 2: P11 incremental fixpoint — only re-evaluate affected rules
+        self.graph.incremental_fixed_point(observed_facts, max_iterations=10)
 
         # Phase 3: Extract cognition from derived facts
         return {
@@ -4025,6 +4140,7 @@ class ConstraintEngine:
             'invariants': self.graph.extract_invariants(),
             'counterfactuals': self.graph.extract_counterfactuals(),
             'summary': self.graph.summary(),
+            'conflicts': self.graph.conflicts,
         }
 
 
@@ -4055,6 +4171,7 @@ class IntentGraph:
     motifs: List[ComputationalMotif] = field(default_factory=list)
     constraint_summary: Dict[str, Any] = field(default_factory=dict)
     reasoning_dag: Dict[str, Any] = field(default_factory=dict)  # P8: provenance DAG
+    conflicts: List[Dict[str, Any]] = field(default_factory=list)  # P12: contradictions
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -4150,6 +4267,7 @@ class IntentGraph:
             ],
             'constraint_summary': self.constraint_summary,
             'reasoning_dag': self.reasoning_dag,
+            'conflicts': self.conflicts,
         }
 
 
@@ -4197,6 +4315,7 @@ class CognitionEngine:
             invariants_c = constraint_result['invariants']
             counterfactuals_c = constraint_result['counterfactuals']
             constraint_summary = constraint_result['summary']
+            conflicts = constraint_result.get('conflicts', [])
 
             # ── Phase 2: Heuristic enrichment (merge, don't replace) ──
             # Heuristics may find things the constraint rules don't cover yet
@@ -4231,6 +4350,7 @@ class CognitionEngine:
                 motifs=motifs,
                 constraint_summary=constraint_summary,
                 reasoning_dag=reasoning_dag,
+                conflicts=conflicts,
             ))
 
         return intent_graphs
@@ -4281,3 +4401,1947 @@ def _op_str(op: Any) -> str:
         ast.And: 'and', ast.Or: 'or',
     }
     return op_map.get(op, '?')
+
+
+# ─── P13: Goal-Action Layer (Agentization) ───────────────────────
+
+class ActionType:
+    """Categories of actionable suggestions."""
+    OPTIMIZE = 'optimize'       # Performance improvement
+    DEBUG = 'debug'             # Investigate potential bug
+    REFACTOR = 'refactor'       # Code structure improvement
+    VERIFY = 'verify'           # Correctness verification
+    ADD_MEMO = 'add_memo'       # Add memoization/caching
+    ADD_GUARD = 'add_guard'     # Add boundary/safety check
+    SIMPLIFY = 'simplify'       # Simplify logic
+    EXTRACT = 'extract'         # Extract pattern into helper
+
+
+ACTION_TYPE_LABELS = {
+    ActionType.OPTIMIZE: '优化',
+    ActionType.DEBUG: '调试',
+    ActionType.REFACTOR: '重构',
+    ActionType.VERIFY: '验证',
+    ActionType.ADD_MEMO: '缓存',
+    ActionType.ADD_GUARD: '防护',
+    ActionType.SIMPLIFY: '简化',
+    ActionType.EXTRACT: '提取',
+}
+
+
+@dataclass
+class Action:
+    """A concrete, actionable suggestion derived from cognitive analysis.
+
+    P13: This bridges the gap between "understanding" and "doing."
+    Each action is a specific, implementable recommendation with
+    preconditions, expected outcomes, and priority scoring.
+    """
+    action_type: str                     # ActionType constant
+    title: str                           # Short, imperative title
+    description: str                     # Detailed explanation
+    priority: float = 0.5                # 0-1, higher = more urgent
+    confidence: float = 0.8              # 0-1, how sure we are
+    target_line: Optional[int] = None    # Code line to modify
+    target_variable: Optional[str] = None  # Variable involved
+    evidence: List[str] = field(default_factory=list)
+    preconditions: List[str] = field(default_factory=list)
+    expected_outcome: str = ''
+    effort: str = 'medium'               # 'low', 'medium', 'high'
+    impact: str = 'medium'               # 'low', 'medium', 'high'
+    from_goal: Optional[str] = None      # Source goal type
+    from_invariant: Optional[str] = None  # Source invariant
+    from_counterfactual: Optional[str] = None  # Source counterfactual
+
+
+class ActionSynthesizer:
+    """P13: Converts cognitive analysis into actionable suggestions.
+
+    This is the "decision layer" that bridges reasoning → action.
+    It takes the IntentGraph (goals, invariants, counterfactuals, motifs,
+    conflicts) and produces a prioritized list of concrete actions.
+
+    Architecture:
+        IntentGraph → ActionSynthesizer.synthesize() → Action[]
+
+    Each action has:
+    - type: what kind of action
+    - priority: how urgent (derived from confidence × impact)
+    - preconditions: what must be true
+    - expected_outcome: what will improve
+    - evidence: why we recommend this
+    """
+
+    def synthesize(self, intent: IntentGraph,
+                   events: List[ExecutionEvent]) -> List[Action]:
+        """Full action synthesis pipeline.
+
+        Returns actions sorted by priority (highest first).
+        """
+        actions: List[Action] = []
+
+        # Phase 1: Goal-driven actions
+        actions.extend(self._actions_from_goals(intent.goals, events))
+
+        # Phase 2: Invariant-driven actions
+        actions.extend(self._actions_from_invariants(intent.invariants, events))
+
+        # Phase 3: Counterfactual-driven actions
+        actions.extend(self._actions_from_counterfactuals(
+            intent.counterfactuals, intent.invariants))
+
+        # Phase 4: Motif-driven actions
+        actions.extend(self._actions_from_motifs(intent.motifs, events))
+
+        # Phase 5: Conflict-driven actions
+        actions.extend(self._actions_from_conflicts(intent.conflicts))
+
+        # Phase 6: Pattern-specific actions
+        actions.extend(self._actions_from_pattern(intent.pattern, events))
+
+        # Deduplicate and sort by priority
+        actions = self._deduplicate(actions)
+        actions.sort(key=lambda a: a.priority, reverse=True)
+
+        return actions
+
+    def _actions_from_goals(self, goals: List[Goal],
+                            events: List[ExecutionEvent]) -> List[Action]:
+        """Convert optimization goals into concrete actions."""
+        actions = []
+
+        for goal in goals:
+            if goal.goal_type == 'minimize':
+                # Minimization goal → optimization opportunity
+                actions.append(Action(
+                    action_type=ActionType.OPTIMIZE,
+                    title=f'优化 {goal.target} 的计算',
+                    description=f'检测到最小化目标: {goal.description}。考虑使用记忆化或动态规划减少重复计算。',
+                    priority=goal.confidence * 0.8,
+                    confidence=goal.confidence,
+                    target_variable=goal.target,
+                    evidence=goal.evidence,
+                    preconditions=[f'{goal.target} 存在重复计算'],
+                    expected_outcome=f'减少 {goal.target} 的时间复杂度',
+                    effort='medium',
+                    impact='high',
+                    from_goal=goal.goal_type,
+                ))
+
+            elif goal.goal_type == 'maximize':
+                # Maximization goal → accumulation optimization
+                actions.append(Action(
+                    action_type=ActionType.OPTIMIZE,
+                    title=f'优化 {goal.target} 的累积过程',
+                    description=f'检测到最大化目标: {goal.description}。'
+                                f'考虑使用更高效的累积策略。',
+                    priority=goal.confidence * 0.7,
+                    confidence=goal.confidence,
+                    target_variable=goal.target,
+                    evidence=goal.evidence,
+                    preconditions=[f'{goal.target} 存在累积操作'],
+                    expected_outcome=f'提升 {goal.target} 的计算效率',
+                    effort='medium',
+                    impact='medium',
+                    from_goal=goal.goal_type,
+                ))
+
+            elif goal.goal_type == 'converge':
+                # Convergence goal → termination verification
+                actions.append(Action(
+                    action_type=ActionType.VERIFY,
+                    title=f'验证 {goal.target} 的收敛性',
+                    description=f'检测到收敛目标: {goal.description}。'
+                                f'建议验证终止条件是否正确。',
+                    priority=goal.confidence * 0.6,
+                    confidence=goal.confidence,
+                    target_variable=goal.target,
+                    evidence=goal.evidence,
+                    preconditions=[f'{goal.target} 存在收敛行为'],
+                    expected_outcome=f'确保 {goal.target} 正确终止',
+                    effort='low',
+                    impact='high',
+                    from_goal=goal.goal_type,
+                ))
+
+            elif goal.goal_type == 'preserve':
+                # Preservation goal → invariant check
+                actions.append(Action(
+                    action_type=ActionType.VERIFY,
+                    title=f'验证 {goal.target} 的不变性',
+                    description=f'检测到保持目标: {goal.description}。'
+                                f'建议添加断言验证不变量。',
+                    priority=goal.confidence * 0.7,
+                    confidence=goal.confidence,
+                    target_variable=goal.target,
+                    evidence=goal.evidence,
+                    preconditions=[f'{goal.target} 应保持不变'],
+                    expected_outcome=f'确保 {goal.target} 不被意外修改',
+                    effort='low',
+                    impact='medium',
+                    from_goal=goal.goal_type,
+                ))
+
+        return actions
+
+    def _actions_from_invariants(self, invariants: List[Invariant],
+                                 events: List[ExecutionEvent]) -> List[Action]:
+        """Convert invariants into verification/guard actions."""
+        actions = []
+
+        for inv in invariants:
+            if inv.violated_by:
+                # Violated invariant → debug action
+                actions.append(Action(
+                    action_type=ActionType.DEBUG,
+                    title=f'修复不变量违反: {inv.name}',
+                    description=f'不变量 {inv.predicate} 在步骤 {inv.violated_by} 被违反。'
+                                f'{inv.description}',
+                    priority=inv.confidence * 0.9,  # High priority for violations
+                    confidence=inv.confidence,
+                    evidence=[inv.description],
+                    preconditions=[f'不变量 {inv.name} 应成立'],
+                    expected_outcome=f'修复 {inv.name} 的违反',
+                    effort='medium',
+                    impact='high',
+                    from_invariant=inv.name,
+                ))
+            else:
+                # Holding invariant → add guard
+                if inv.category in ('loop', 'bound'):
+                    actions.append(Action(
+                        action_type=ActionType.ADD_GUARD,
+                        title=f'添加断言: {inv.name}',
+                        description=f'不变量 {inv.predicate} 始终成立。'
+                                    f'建议添加断言以确保未来修改不会破坏它。',
+                        priority=inv.confidence * 0.4,  # Lower priority for guards
+                        confidence=inv.confidence,
+                        evidence=[inv.description],
+                        preconditions=[f'不变量 {inv.name} 当前成立'],
+                        expected_outcome=f'防止 {inv.name} 被意外破坏',
+                        effort='low',
+                        impact='medium',
+                        from_invariant=inv.name,
+                    ))
+
+        return actions
+
+    def _actions_from_counterfactuals(
+            self, counterfactuals: List[Counterfactual],
+            invariants: List[Invariant]) -> List[Action]:
+        """Convert counterfactuals into preventive actions."""
+        actions = []
+
+        for cf in counterfactuals:
+            if cf.severity == 'high':
+                # High severity → add guard
+                actions.append(Action(
+                    action_type=ActionType.ADD_GUARD,
+                    title=f'防护: {cf.condition}',
+                    description=f'如果 {cf.condition}，则 {cf.consequence}。'
+                                f'建议添加防护措施。',
+                    priority=cf.confidence * 0.8,
+                    confidence=cf.confidence,
+                    evidence=[f'反事实分析: {cf.description}'],
+                    preconditions=[cf.condition],
+                    expected_outcome=f'防止 {cf.consequence}',
+                    effort='low',
+                    impact='high',
+                    from_counterfactual=cf.condition,
+                ))
+
+            elif cf.severity == 'medium':
+                # Medium severity → verify
+                actions.append(Action(
+                    action_type=ActionType.VERIFY,
+                    title=f'验证: {cf.condition}',
+                    description=f'如果 {cf.condition}，则 {cf.consequence}。'
+                                f'建议验证此场景是否可能发生。',
+                    priority=cf.confidence * 0.5,
+                    confidence=cf.confidence,
+                    evidence=[f'反事实分析: {cf.description}'],
+                    preconditions=[cf.condition],
+                    expected_outcome=f'确认 {cf.condition} 不会发生',
+                    effort='low',
+                    impact='medium',
+                    from_counterfactual=cf.condition,
+                ))
+
+        return actions
+
+    def _actions_from_motifs(self, motifs: List[ComputationalMotif],
+                             events: List[ExecutionEvent]) -> List[Action]:
+        """Convert computational motifs into refactoring actions."""
+        actions = []
+
+        for motif in motifs:
+            if motif.motif == 'divide_and_conquer':
+                # D&C → suggest memoization if not already cached
+                actions.append(Action(
+                    action_type=ActionType.ADD_MEMO,
+                    title='添加记忆化',
+                    description=f'检测到分治模式: {motif.description}。'
+                                f'考虑添加记忆化以避免重复计算。',
+                    priority=motif.confidence * 0.8,
+                    confidence=motif.confidence,
+                    evidence=motif.evidence,
+                    preconditions=['存在分治递归', '存在重叠子问题'],
+                    expected_outcome='将指数复杂度降为多项式',
+                    effort='low',
+                    impact='high',
+                ))
+
+            elif motif.motif == 'greedy_choice':
+                # Greedy → verify correctness
+                actions.append(Action(
+                    action_type=ActionType.VERIFY,
+                    title='验证贪心选择性质',
+                    description=f'检测到贪心模式: {motif.description}。'
+                                f'建议验证贪心选择的正确性。',
+                    priority=motif.confidence * 0.6,
+                    confidence=motif.confidence,
+                    evidence=motif.evidence,
+                    preconditions=['存在贪心选择'],
+                    expected_outcome='确认贪心策略的正确性',
+                    effort='low',
+                    impact='high',
+                ))
+
+            elif motif.motif == 'dynamic_programming':
+                # DP → suggest space optimization
+                actions.append(Action(
+                    action_type=ActionType.OPTIMIZE,
+                    title='优化 DP 空间复杂度',
+                    description=f'检测到动态规划模式: {motif.description}。'
+                                f'考虑使用滚动数组优化空间。',
+                    priority=motif.confidence * 0.5,
+                    confidence=motif.confidence,
+                    evidence=motif.evidence,
+                    preconditions=['存在 DP 表'],
+                    expected_outcome='减少空间复杂度',
+                    effort='medium',
+                    impact='medium',
+                ))
+
+            elif motif.motif == 'backtracking':
+                # Backtracking → suggest pruning
+                actions.append(Action(
+                    action_type=ActionType.OPTIMIZE,
+                    title='添加回溯剪枝',
+                    description=f'检测到回溯模式: {motif.description}。'
+                                f'考虑添加剪枝条件减少搜索空间。',
+                    priority=motif.confidence * 0.7,
+                    confidence=motif.confidence,
+                    evidence=motif.evidence,
+                    preconditions=['存在回溯搜索'],
+                    expected_outcome='减少搜索空间，提升性能',
+                    effort='medium',
+                    impact='high',
+                ))
+
+        return actions
+
+    def _actions_from_conflicts(self, conflicts: List[Dict[str, Any]]) -> List[Action]:
+        """Convert conflicts into debug actions."""
+        actions = []
+
+        for conflict in conflicts:
+            actions.append(Action(
+                action_type=ActionType.DEBUG,
+                title=f'解决冲突: {conflict.get("subject", "未知")}',
+                description=f'检测到矛盾: {conflict.get("relation_a", "?")} '
+                            f'与 {conflict.get("relation_b", "?")} '
+                            f'关于 {conflict.get("subject", "未知")}。',
+                priority=0.9,  # Conflicts are always high priority
+                confidence=0.95,
+                evidence=[f'冲突类型: {conflict.get("kind", "未知")}'],
+                preconditions=['存在语义矛盾'],
+                expected_outcome='解决逻辑矛盾',
+                effort='high',
+                impact='high',
+            ))
+
+        return actions
+
+    def _actions_from_pattern(self, pattern: PatternMatch,
+                              events: List[ExecutionEvent]) -> List[Action]:
+        """Generate pattern-specific actions."""
+        actions = []
+
+        if pattern.pattern_name == 'recursive_fibonacci':
+            # Fibonacci-specific: suggest matrix exponentiation
+            actions.append(Action(
+                action_type=ActionType.OPTIMIZE,
+                title='使用矩阵快速幂优化',
+                description='斐波那契递归可以使用矩阵快速幂将 O(2^n) 优化到 O(log n)。',
+                priority=0.7,
+                confidence=0.9,
+                evidence=['检测到斐波那契递归模式'],
+                preconditions=['递归斐波那契'],
+                expected_outcome='时间复杂度从 O(2^n) 降至 O(log n)',
+                effort='medium',
+                impact='high',
+            ))
+
+        elif pattern.pattern_name == 'bubble_sort':
+            # Bubble sort → suggest better algorithm
+            actions.append(Action(
+                action_type=ActionType.REFACTOR,
+                title='替换为更高效的排序算法',
+                description='冒泡排序 O(n²) 可以替换为归并排序或快速排序 O(n log n)。',
+                priority=0.8,
+                confidence=0.95,
+                evidence=['检测到冒泡排序模式'],
+                preconditions=['使用冒泡排序'],
+                expected_outcome='时间复杂度从 O(n²) 降至 O(n log n)',
+                effort='medium',
+                impact='high',
+            ))
+
+        elif pattern.pattern_name == 'linear_search':
+            # Linear search → suggest hash map
+            actions.append(Action(
+                action_type=ActionType.OPTIMIZE,
+                title='使用哈希表优化查找',
+                description='线性查找 O(n) 可以使用哈希表优化到 O(1)。',
+                priority=0.6,
+                confidence=0.8,
+                evidence=['检测到线性查找模式'],
+                preconditions=['存在重复查找'],
+                expected_outcome='查找复杂度从 O(n) 降至 O(1)',
+                effort='low',
+                impact='high',
+            ))
+
+        return actions
+
+    def _deduplicate(self, actions: List[Action]) -> List[Action]:
+        """Remove duplicate actions, keeping highest priority."""
+        seen: Dict[Tuple[str, str], Action] = {}
+
+        for action in actions:
+            key = (action.action_type, action.title)
+            if key not in seen or action.priority > seen[key].priority:
+                seen[key] = action
+
+        return list(seen.values())
+
+
+# ─── Updated IntentGraph with P13 Actions ────────────────────────
+
+# Re-open IntentGraph to add actions field (dataclass allows this pattern)
+# We'll add it via __post_init__ or by modifying the class
+
+# Monkey-patch: add actions field to IntentGraph
+IntentGraph.__dataclass_fields__['actions'] = field(
+    default_factory=list,
+    metadata={'type': List[Action]}
+)
+IntentGraph.actions = field(default_factory=list)
+
+# Update to_dict to include actions
+_original_to_dict = IntentGraph.to_dict
+
+def _to_dict_with_actions(self) -> Dict[str, Any]:
+    result = _original_to_dict(self)
+    result['actions'] = [
+        {
+            'action_type': a.action_type,
+            'title': a.title,
+            'description': a.description,
+            'priority': a.priority,
+            'confidence': a.confidence,
+            'target_line': a.target_line,
+            'target_variable': a.target_variable,
+            'evidence': a.evidence,
+            'preconditions': a.preconditions,
+            'expected_outcome': a.expected_outcome,
+            'effort': a.effort,
+            'impact': a.impact,
+            'from_goal': a.from_goal,
+            'from_invariant': a.from_invariant,
+            'from_counterfactual': a.from_counterfactual,
+        }
+        for a in (self.actions if hasattr(self, 'actions') else [])
+    ]
+    return result
+
+IntentGraph.to_dict = _to_dict_with_actions
+
+
+# ─── Updated CognitionEngine with P13 Action Synthesis ────────────
+
+# Store original understand method
+_original_understand = CognitionEngine.understand
+
+def _understand_with_actions(self, matches: List[PatternMatch],
+                              events: List[ExecutionEvent]) -> List[IntentGraph]:
+    """Extended understand: adds action synthesis to intent graphs."""
+    # Call original understand
+    intent_graphs = _original_understand(self, matches, events)
+
+    # P13: Synthesize actions for each intent graph
+    action_synthesizer = ActionSynthesizer()
+    for intent in intent_graphs:
+        intent.actions = action_synthesizer.synthesize(intent, events)
+
+    return intent_graphs
+
+CognitionEngine.understand = _understand_with_actions
+
+
+# ─── P14: Execution & Feedback Loop Layer ─────────────────────────
+
+import time
+import hashlib
+import json
+
+
+@dataclass
+class ExecutionMetrics:
+    """Metrics captured at a point in time."""
+    step_count: int = 0
+    time_complexity: str = ''           # e.g., 'O(n^2)'
+    space_complexity: str = ''          # e.g., 'O(n)'
+    invariant_violations: int = 0
+    cache_hits: int = 0
+    cache_misses: int = 0
+    recursive_depth: int = 0
+    total_calls: int = 0
+    unique_subproblems: int = 0
+    execution_time_ms: float = 0.0
+
+    def delta(self, other: 'ExecutionMetrics') -> Dict[str, float]:
+        """Compute improvement metrics (positive = better)."""
+        return {
+            'step_reduction': self.step_count - other.step_count,
+            'violation_reduction': self.invariant_violations - other.invariant_violations,
+            'cache_improvement': (self.cache_hits - other.cache_hits) if self.cache_hits else 0,
+            'depth_reduction': self.recursive_depth - other.recursive_depth,
+            'call_reduction': self.total_calls - other.total_calls,
+            'time_improvement': self.execution_time_ms - other.execution_time_ms,
+        }
+
+    def overall_improvement(self) -> float:
+        """Single score: positive = improved, negative = degraded."""
+        # Normalize each metric to [-1, 1] range
+        scores = []
+        if self.step_count > 0:
+            scores.append(min(1.0, self.step_reduction / max(1, self.step_count)))
+        if self.invariant_violations >= 0:
+            scores.append(1.0 if self.violation_reduction > 0 else (-1.0 if self.violation_reduction < 0 else 0))
+        if self.total_calls > 0:
+            scores.append(min(1.0, self.call_reduction / max(1, self.total_calls)))
+        return sum(scores) / len(scores) if scores else 0.0
+
+
+@dataclass
+class ActionExecution:
+    """Tracks the outcome of applying an action.
+
+    P14: This is the "observation" in the observe→reason→act→observe loop.
+    Each execution records what happened so the system can learn.
+    """
+    execution_id: str                    # Unique ID
+    action_type: str                     # ActionType constant
+    action_title: str                    # Human-readable title
+    pre_metrics: ExecutionMetrics        # Metrics before action
+    post_metrics: ExecutionMetrics       # Metrics after action
+    success: bool                        # Did the action help?
+    delta_metrics: Dict[str, float]      # Improvement measurements
+    confidence_delta: float              # How much confidence changed
+    timestamp: float                     # When executed
+    code_before: str                     # Code snapshot before
+    code_after: str                      # Code snapshot after
+    user_feedback: Optional[str] = None  # 'accepted', 'rejected', 'modified'
+    notes: str = ''                      # User notes
+
+
+class ActionOutcomeMemory:
+    """P14: Stores action executions and computes success rates.
+
+    This is the "experience" of the system — it remembers what worked
+    and what didn't, enabling adaptive policy updates.
+
+    Architecture:
+        ActionExecution[] → ActionOutcomeMemory → success_rates
+        success_rates → AdaptivePolicy → adjusted priorities
+    """
+
+    def __init__(self):
+        self.executions: List[ActionExecution] = []
+        self._success_rates: Dict[str, float] = {}  # action_type → rate
+        self._title_success: Dict[str, float] = {}   # action_title → rate
+        self._pattern_success: Dict[str, List[float]] = {}  # pattern → [rates]
+
+    def record(self, execution: ActionExecution):
+        """Record an action execution outcome."""
+        self.executions.append(execution)
+        self._update_rates(execution)
+
+    def _update_rates(self, execution: ActionExecution):
+        """Incrementally update success rates."""
+        # Update action_type rate
+        at = execution.action_type
+        type_execs = [e for e in self.executions if e.action_type == at]
+        self._success_rates[at] = sum(1 for e in type_execs if e.success) / len(type_execs)
+
+        # Update title rate (more specific)
+        title = execution.action_title
+        title_execs = [e for e in self.executions if e.action_title == title]
+        self._title_success[title] = sum(1 for e in title_execs if e.success) / len(title_execs)
+
+    def success_rate(self, action_type: str) -> float:
+        """Get historical success rate for an action type."""
+        return self._success_rates.get(action_type, 0.5)  # default: 50%
+
+    def title_success_rate(self, action_title: str) -> float:
+        """Get historical success rate for a specific action title."""
+        return self._title_success.get(action_title, None)
+
+    def similar_executions(self, action_type: str,
+                           action_title: str) -> List[ActionExecution]:
+        """Find similar past executions for learning."""
+        return [
+            e for e in self.executions
+            if e.action_type == action_type or e.action_title == action_title
+        ]
+
+    def best_actions(self, top_k: int = 5) -> List[Tuple[str, float]]:
+        """Get the most successful action types."""
+        sorted_rates = sorted(
+            self._success_rates.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        return sorted_rates[:top_k]
+
+    def worst_actions(self, top_k: int = 5) -> List[Tuple[str, float]]:
+        """Get the least successful action types."""
+        sorted_rates = sorted(
+            self._success_rates.items(),
+            key=lambda x: x[1]
+        )
+        return sorted_rates[:top_k]
+
+    def summary(self) -> Dict[str, Any]:
+        """Get memory summary."""
+        return {
+            'total_executions': len(self.executions),
+            'success_rates': dict(self._success_rates),
+            'title_success_rates': dict(self._title_success),
+            'best_actions': self.best_actions(),
+            'worst_actions': self.worst_actions(),
+        }
+
+
+class AdaptivePolicy:
+    """P14: Adjusts action priorities based on historical success.
+
+    This is the "learning" component — it transforms static priorities
+    into adaptive ones that improve over time.
+
+    Formula:
+        adjusted_priority = base_priority * success_weight * recency_weight
+
+    Where:
+        success_weight = f(historical_success_rate)
+        recency_weight = f(time_since_last_execution)
+    """
+
+    def __init__(self, memory: ActionOutcomeMemory):
+        self.memory = memory
+        self.exploration_rate = 0.1  # ε for ε-greedy exploration
+
+    def adjust_priority(self, action: Action,
+                        base_priority: float) -> float:
+        """Adjust action priority based on historical success.
+
+        Returns adjusted priority in [0, 1].
+        """
+        # Get historical success rate
+        type_rate = self.memory.success_rate(action.action_type)
+        title_rate = self.memory.title_success_rate(action.title)
+
+        # Use title rate if available, otherwise type rate
+        success_rate = title_rate if title_rate is not None else type_rate
+
+        # Success weight: scale by historical performance
+        # If success_rate = 0.8, weight = 1.6 (boost)
+        # If success_rate = 0.2, weight = 0.4 (suppress)
+        success_weight = 0.5 + success_rate  # maps [0,1] → [0.5, 1.5]
+
+        # Recency weight: boost recently successful actions
+        recency_weight = self._recency_weight(action)
+
+        # Exploration bonus: occasionally boost unexplored actions
+        exploration_bonus = self._exploration_bonus(action)
+
+        # Final adjusted priority
+        adjusted = base_priority * success_weight * recency_weight + exploration_bonus
+
+        return max(0.0, min(1.0, adjusted))
+
+    def _recency_weight(self, action: Action) -> float:
+        """Weight based on how recently this action type was executed."""
+        similar = self.memory.similar_executions(action.action_type, action.title)
+        if not similar:
+            return 1.2  # Boost unexplored actions
+
+        # Time since last execution
+        last_exec = max(similar, key=lambda e: e.timestamp)
+        hours_since = (time.time() - last_exec.timestamp) / 3600
+
+        # Decay: recent executions get normal weight, old ones get boost
+        if hours_since < 1:
+            return 1.0  # Recent, normal weight
+        elif hours_since < 24:
+            return 1.1  # Somewhat old, slight boost
+        else:
+            return 1.2  # Old, boost to re-explore
+
+    def _exploration_bonus(self, action: Action) -> float:
+        """Small bonus for unexplored actions (ε-greedy)."""
+        similar = self.memory.similar_executions(action.action_type, action.title)
+        if not similar:
+            return self.exploration_rate  # Boost unexplored
+        return 0.0
+
+    def update_from_outcome(self, execution: ActionExecution):
+        """Update policy based on execution outcome."""
+        # The memory already tracks success rates
+        # This method can be extended for more sophisticated learning
+        pass
+
+
+class ExecutionFeedbackLoop:
+    """P14: Orchestrates the observe→reason→act→observe cycle.
+
+    This is the "execution engine" that closes the loop:
+    1. Observe: Capture pre-execution metrics
+    2. Reason: Generate actions (P13)
+    3. Act: User applies action (external)
+    4. Observe: Capture post-execution metrics
+    5. Learn: Update policy based on outcome
+
+    The system doesn't execute code directly — it tracks what the user
+    does and learns from the outcomes.
+    """
+
+    def __init__(self):
+        self.memory = ActionOutcomeMemory()
+        self.policy = AdaptivePolicy(self.memory)
+        self._pending_executions: Dict[str, Action] = {}  # action_id → action
+
+    def prepare_execution(self, action: Action,
+                          pre_metrics: ExecutionMetrics,
+                          code_before: str) -> str:
+        """Prepare an action for execution tracking.
+
+        Returns execution_id for tracking.
+        """
+        execution_id = self._generate_id(action, pre_metrics)
+        self._pending_executions[execution_id] = action
+        return execution_id
+
+    def record_outcome(self, execution_id: str,
+                       post_metrics: ExecutionMetrics,
+                       code_after: str,
+                       user_feedback: Optional[str] = None,
+                       notes: str = '') -> ActionExecution:
+        """Record the outcome of an executed action.
+
+        This is called after the user applies the action and re-runs the code.
+        """
+        action = self._pending_executions.pop(execution_id, None)
+        if not action:
+            raise ValueError(f'Unknown execution_id: {execution_id}')
+
+        # Compute delta metrics
+        pre_metrics = self._get_pre_metrics(execution_id)
+        delta = post_metrics.delta(pre_metrics) if pre_metrics else {}
+        success = post_metrics.overall_improvement() > 0 if pre_metrics else False
+
+        # Create execution record
+        execution = ActionExecution(
+            execution_id=execution_id,
+            action_type=action.action_type,
+            action_title=action.title,
+            pre_metrics=pre_metrics or ExecutionMetrics(),
+            post_metrics=post_metrics,
+            success=success,
+            delta_metrics=delta,
+            confidence_delta=0.0,  # Will be computed by policy
+            timestamp=time.time(),
+            code_before='',  # Could be captured
+            code_after=code_after,
+            user_feedback=user_feedback,
+            notes=notes,
+        )
+
+        # Record in memory
+        self.memory.record(execution)
+
+        # Update policy
+        self.policy.update_from_outcome(execution)
+
+        return execution
+
+    def get_adjusted_actions(self, actions: List[Action]) -> List[Action]:
+        """Re-rank actions based on learned policy.
+
+        This is the key method: it transforms static P13 actions
+        into P14 adaptive actions.
+        """
+        adjusted = []
+        for action in actions:
+            # Get base priority from P13
+            base_priority = action.priority
+
+            # Adjust based on historical success
+            adjusted_priority = self.policy.adjust_priority(action, base_priority)
+
+            # Create adjusted action
+            adjusted_action = Action(
+                action_type=action.action_type,
+                title=action.title,
+                description=action.description,
+                priority=adjusted_priority,
+                confidence=action.confidence,
+                target_line=action.target_line,
+                target_variable=action.target_variable,
+                evidence=action.evidence.copy(),
+                preconditions=action.preconditions.copy(),
+                expected_outcome=action.expected_outcome,
+                effort=action.effort,
+                impact=action.impact,
+                from_goal=action.from_goal,
+                from_invariant=action.from_invariant,
+                from_counterfactual=action.from_counterfactual,
+            )
+
+            # Add learning context to evidence
+            similar = self.memory.similar_executions(action.action_type, action.title)
+            if similar:
+                success_count = sum(1 for e in similar if e.success)
+                adjusted_action.evidence.append(
+                    f'历史记录: {len(similar)} 次执行, {success_count} 次成功 '
+                    f'({success_count/len(similar)*100:.0f}% 成功率)'
+                )
+
+            adjusted.append(adjusted_action)
+
+        # Re-sort by adjusted priority
+        adjusted.sort(key=lambda a: a.priority, reverse=True)
+        return adjusted
+
+    def _generate_id(self, action: Action,
+                     metrics: ExecutionMetrics) -> str:
+        """Generate unique execution ID."""
+        content = f'{action.action_type}:{action.title}:{time.time()}'
+        return hashlib.md5(content.encode()).hexdigest()[:12]
+
+    def _get_pre_metrics(self, execution_id: str) -> Optional[ExecutionMetrics]:
+        """Retrieve pre-execution metrics."""
+        # In a real system, this would be stored
+        # For now, return None (metrics will be computed from delta)
+        return None
+
+    def summary(self) -> Dict[str, Any]:
+        """Get feedback loop summary."""
+        return {
+            'memory': self.memory.summary(),
+            'pending_executions': len(self._pending_executions),
+            'policy': {
+                'exploration_rate': self.policy.exploration_rate,
+            },
+        }
+
+
+# ─── MetricsExtractor: Derives metrics from execution events ─────
+
+class MetricsExtractor:
+    """Extracts ExecutionMetrics from execution events.
+
+    This bridges the gap between "execution events" and "metrics"
+    that the feedback loop needs.
+    """
+
+    @staticmethod
+    def extract(events: List[ExecutionEvent]) -> ExecutionMetrics:
+        """Extract metrics from execution events."""
+        if not events:
+            return ExecutionMetrics()
+
+        return ExecutionMetrics(
+            step_count=len(events),
+            recursive_depth=max((e.depth or 0) for e in events),
+            total_calls=sum(1 for e in events if e.event_type == 'call'),
+            invariant_violations=0,  # Would need invariant checking
+            cache_hits=0,  # Would need cache tracking
+            cache_misses=0,
+            unique_subproblems=0,
+            execution_time_ms=0.0,
+        )
+
+    @staticmethod
+    def extract_from_insight(insight_result: Dict[str, Any]) -> ExecutionMetrics:
+        """Extract metrics from insight API result."""
+        return ExecutionMetrics(
+            step_count=insight_result.get('total_steps', 0),
+            time_complexity=insight_result.get('insight', {}).get('explanation_levels', {}).get('complexity', ''),
+            total_calls=insight_result.get('total_steps', 0),
+        )
+
+
+# ─── Updated CognitionEngine with P14 Feedback Loop ──────────────
+
+# Global feedback loop instance
+_feedback_loop = ExecutionFeedbackLoop()
+
+def get_feedback_loop() -> ExecutionFeedbackLoop:
+    """Get the global feedback loop instance."""
+    return _feedback_loop
+
+def _understand_with_feedback(self, matches: List[PatternMatch],
+                               events: List[ExecutionEvent]) -> List[IntentGraph]:
+    """Extended understand: adds P14 adaptive action ranking."""
+    # Call P13 understand (adds actions)
+    intent_graphs = _understand_with_actions(self, matches, events)
+
+    # P14: Re-rank actions based on learned policy
+    for intent in intent_graphs:
+        if intent.actions:
+            intent.actions = _feedback_loop.get_adjusted_actions(intent.actions)
+
+    return intent_graphs
+
+# Apply P14 patch (overwrites P13 patch)
+CognitionEngine.understand = _understand_with_feedback
+
+
+# ─── P15: Memory Consolidation Layer ─────────────────────────────
+
+import threading
+from collections import defaultdict
+from enum import Enum
+
+
+class ConceptLifecycle(Enum):
+    """Lifecycle states for concepts.
+
+    P16: Concepts move through states as they are validated or invalidated.
+    This prevents concept drift and ensures only reliable knowledge persists.
+
+    Transitions:
+        EMERGING → VALIDATED (enough evidence, high success rate)
+        EMERGING → INVALIDATED (low success rate, counter-examples)
+        VALIDATED → DEPRECATED (success rate declining)
+        VALIDATED → INVALIDATED (critical counter-example)
+        DEPRECATED → INVALIDATED (continued decline)
+        ANY → EMERGING (new evidence contradicts state)
+    """
+    EMERGING = 'emerging'        # New concept, accumulating evidence
+    VALIDATED = 'validated'      # Proven reliable, high confidence
+    DEPRECATED = 'deprecated'    # Declining performance, being phased out
+    INVALIDATED = 'invalidated'  # Proven wrong, should not be used
+
+
+@dataclass
+class Concept:
+    """An abstracted rule extracted from experience.
+
+    P15: This is the "knowledge unit" — a generalizable insight
+    that transcends individual executions.
+
+    Example:
+        pattern: "recursion + overlapping subproblems"
+        action: "add memoization"
+        confidence: 0.92
+        evidence_count: 47
+    """
+    concept_id: str                      # Unique identifier
+    name: str                            # Human-readable name
+    description: str                     # What this concept means
+    pattern: str                         # When to apply (semantic pattern)
+    action_type: str                     # What action to take
+    action_template: str                 # Action title template
+    confidence: float                    # How reliable (0-1)
+    evidence_count: int                  # How many executions support this
+    success_rate: float                  # Historical success rate
+    examples: List[str] = field(default_factory=list)  # Execution IDs
+    tags: List[str] = field(default_factory=list)       # Semantic tags
+    created_at: float = 0.0             # When first learned
+    last_used: float = 0.0              # When last applied
+    use_count: int = 0                  # How many times applied
+    lifecycle: ConceptLifecycle = ConceptLifecycle.EMERGING  # P16: lifecycle state
+
+
+@dataclass
+class ConceptCluster:
+    """A cluster of related concepts for compression."""
+    cluster_id: str
+    concepts: List[Concept]
+    centroid_pattern: str                # Representative pattern
+    centroid_action: str                 # Representative action
+    avg_confidence: float
+    total_evidence: int
+
+
+class ExperienceBuffer:
+    """Collects raw execution records for pattern extraction.
+
+    P15: This is the "experience memory" — a buffer of raw
+    execution records that will be consolidated into concepts.
+
+    Features:
+    - Fixed-size FIFO buffer (prevents memory explosion)
+    - Indexing by action_type for fast retrieval
+    - Clustering preparation
+    """
+
+    def __init__(self, max_size: int = 1000):
+        self.buffer: List[ActionExecution] = []
+        self.max_size = max_size
+        self._by_type: Dict[str, List[ActionExecution]] = defaultdict(list)
+        self._by_title: Dict[str, List[ActionExecution]] = defaultdict(list)
+
+    def add(self, execution: ActionExecution):
+        """Add execution to buffer."""
+        self.buffer.append(execution)
+        self._by_type[execution.action_type].append(execution)
+        self._by_title[execution.action_title].append(execution)
+
+        # Evict oldest if buffer full
+        if len(self.buffer) > self.max_size:
+            evicted = self.buffer.pop(0)
+            self._by_type[evicted.action_type].remove(evicted)
+            self._by_title[evicted.action_title].remove(evicted)
+
+    def get_by_type(self, action_type: str) -> List[ActionExecution]:
+        """Get executions by action type."""
+        return self._by_type.get(action_type, [])
+
+    def get_by_title(self, action_title: str) -> List[ActionExecution]:
+        """Get executions by action title."""
+        return self._by_title.get(action_title, [])
+
+    def get_successful(self) -> List[ActionExecution]:
+        """Get all successful executions."""
+        return [e for e in self.buffer if e.success]
+
+    def get_failed(self) -> List[ActionExecution]:
+        """Get all failed executions."""
+        return [e for e in self.buffer if not e.success]
+
+    def size(self) -> int:
+        return len(self.buffer)
+
+    def clear(self):
+        self.buffer.clear()
+        self._by_type.clear()
+        self._by_title.clear()
+
+
+class PatternExtractor:
+    """Extracts abstract patterns from experience buffer.
+
+    P15: This is the "abstraction engine" — it finds common
+    patterns across executions and creates concepts.
+
+    Techniques:
+    - Frequency analysis (what works often?)
+    - Context clustering (when does it work?)
+    - Success/failure correlation (what distinguishes success?)
+    """
+
+    def __init__(self, min_evidence: int = 3, min_confidence: float = 0.6):
+        self.min_evidence = min_evidence
+        self.min_confidence = min_confidence
+
+    def extract(self, buffer: ExperienceBuffer) -> List[Concept]:
+        """Extract concepts from experience buffer."""
+        concepts = []
+
+        # Phase 1: Extract from action types
+        concepts.extend(self._extract_from_types(buffer))
+
+        # Phase 2: Extract from action titles (more specific)
+        concepts.extend(self._extract_from_titles(buffer))
+
+        # Phase 3: Extract from success patterns
+        concepts.extend(self._extract_from_success_patterns(buffer))
+
+        # Deduplicate and filter
+        concepts = self._deduplicate(concepts)
+        concepts = [c for c in concepts if c.evidence_count >= self.min_evidence]
+
+        return concepts
+
+    def _extract_from_types(self, buffer: ExperienceBuffer) -> List[Concept]:
+        """Extract concepts from action type patterns."""
+        concepts = []
+
+        for action_type in set(e.action_type for e in buffer.buffer):
+            execs = buffer.get_by_type(action_type)
+            if len(execs) < self.min_evidence:
+                continue
+
+            success_count = sum(1 for e in execs if e.success)
+            success_rate = success_count / len(execs)
+
+            if success_rate >= self.min_confidence:
+                # This action type works well
+                concept = Concept(
+                    concept_id=f'type:{action_type}',
+                    name=f'{action_type} 策略',
+                    description=f'{action_type} 类型的操作成功率 {success_rate:.0%}',
+                    pattern=f'action_type == {action_type}',
+                    action_type=action_type,
+                    action_template=f'{ACTION_TYPE_LABELS.get(action_type, action_type)}: {{title}}',
+                    confidence=success_rate,
+                    evidence_count=len(execs),
+                    success_rate=success_rate,
+                    examples=[e.execution_id for e in execs[:5]],
+                    tags=[action_type],
+                    created_at=time.time(),
+                    last_used=max(e.timestamp for e in execs),
+                    use_count=0,
+                )
+                concepts.append(concept)
+
+        return concepts
+
+    def _extract_from_titles(self, buffer: ExperienceBuffer) -> List[Concept]:
+        """Extract concepts from action title patterns."""
+        concepts = []
+
+        for title in set(e.action_title for e in buffer.buffer):
+            execs = buffer.get_by_title(title)
+            if len(execs) < self.min_evidence:
+                continue
+
+            success_count = sum(1 for e in execs if e.success)
+            success_rate = success_count / len(execs)
+
+            if success_rate >= self.min_confidence:
+                # This specific action works well
+                action_type = execs[0].action_type
+                concept = Concept(
+                    concept_id=f'title:{hashlib.md5(title.encode()).hexdigest()[:8]}',
+                    name=title,
+                    description=f'"{title}" 成功率 {success_rate:.0%} ({len(execs)} 次执行)',
+                    pattern=f'action_title == "{title}"',
+                    action_type=action_type,
+                    action_template=title,
+                    confidence=success_rate,
+                    evidence_count=len(execs),
+                    success_rate=success_rate,
+                    examples=[e.execution_id for e in execs[:5]],
+                    tags=[action_type, 'specific'],
+                    created_at=time.time(),
+                    last_used=max(e.timestamp for e in execs),
+                    use_count=0,
+                )
+                concepts.append(concept)
+
+        return concepts
+
+    def _extract_from_success_patterns(self, buffer: ExperienceBuffer) -> List[Concept]:
+        """Extract concepts from success patterns (what works together)."""
+        concepts = []
+
+        # Find pairs of action types that often succeed together
+        successful = buffer.get_successful()
+        if len(successful) < self.min_evidence:
+            return concepts
+
+        # Group by execution context (simplified)
+        type_pairs = defaultdict(int)
+        for i, e1 in enumerate(successful):
+            for e2 in successful[i+1:]:
+                if e1.action_type != e2.action_type:
+                    pair = tuple(sorted([e1.action_type, e2.action_type]))
+                    type_pairs[pair] += 1
+
+        # Create concepts for frequent pairs
+        for pair, count in type_pairs.items():
+            if count >= self.min_evidence:
+                concept = Concept(
+                    concept_id=f'pair:{pair[0]}+{pair[1]}',
+                    name=f'{pair[0]} + {pair[1]} 组合',
+                    description=f'{pair[0]} 和 {pair[1]} 组合成功率高 ({count} 次)',
+                    pattern=f'action_type in {list(pair)}',
+                    action_type=pair[0],
+                    action_template=f'{pair[0]} + {pair[1]} 组合策略',
+                    confidence=0.8,  # Default for pairs
+                    evidence_count=count,
+                    success_rate=0.8,
+                    examples=[],
+                    tags=list(pair),
+                    created_at=time.time(),
+                    last_used=time.time(),
+                    use_count=0,
+                )
+                concepts.append(concept)
+
+        return concepts
+
+    def _deduplicate(self, concepts: List[Concept]) -> List[Concept]:
+        """Remove duplicate concepts."""
+        seen = {}
+        for concept in concepts:
+            key = concept.concept_id
+            if key not in seen or concept.confidence > seen[key].confidence:
+                seen[key] = concept
+        return list(seen.values())
+
+
+class ConceptMemory:
+    """Stores and manages abstracted concepts.
+
+    P15: This is the "long-term memory" — a knowledge base of
+    abstracted rules that persist across executions.
+
+    Features:
+    - Concept storage and retrieval
+    - Relevance scoring (which concepts apply to current context?)
+    - Aging and forgetting (outdated concepts fade)
+    - Compression (merge similar concepts)
+    """
+
+    def __init__(self, max_concepts: int = 500):
+        self.concepts: Dict[str, Concept] = {}
+        self.max_concepts = max_concepts
+        self._by_type: Dict[str, List[Concept]] = defaultdict(list)
+        self._by_tag: Dict[str, List[Concept]] = defaultdict(list)
+
+    def add(self, concept: Concept):
+        """Add or update a concept."""
+        if concept.concept_id in self.concepts:
+            # Update existing concept
+            existing = self.concepts[concept.concept_id]
+            existing.evidence_count += concept.evidence_count
+            existing.success_rate = (
+                (existing.success_rate * existing.evidence_count +
+                 concept.success_rate * concept.evidence_count) /
+                (existing.evidence_count + concept.evidence_count)
+            )
+            existing.confidence = min(0.95, existing.confidence + 0.01)
+            existing.last_used = time.time()
+        else:
+            # Add new concept
+            self.concepts[concept.concept_id] = concept
+            self._by_type[concept.action_type].append(concept)
+            for tag in concept.tags:
+                self._by_tag[tag].append(concept)
+
+        # Evict if full
+        if len(self.concepts) > self.max_concepts:
+            self._evict_oldest()
+
+    def get_relevant(self, context: Dict[str, Any],
+                     top_k: int = 5) -> List[Concept]:
+        """Get concepts relevant to current context."""
+        scores = []
+
+        for concept in self.concepts.values():
+            score = self._relevance_score(concept, context)
+            if score > 0:
+                scores.append((concept, score))
+
+        # Sort by relevance
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return [c for c, _ in scores[:top_k]]
+
+    def _relevance_score(self, concept: Concept,
+                         context: Dict[str, Any]) -> float:
+        """Compute relevance score for a concept in given context."""
+        score = concept.confidence
+
+        # Boost if action type matches
+        if 'action_type' in context:
+            if concept.action_type == context['action_type']:
+                score *= 1.5
+
+        # Boost if tags match
+        if 'tags' in context:
+            matching_tags = set(concept.tags) & set(context['tags'])
+            if matching_tags:
+                score *= (1 + 0.2 * len(matching_tags))
+
+        # Recency boost
+        hours_since_use = (time.time() - concept.last_used) / 3600
+        if hours_since_use < 24:
+            score *= 1.2
+        elif hours_since_use > 168:  # 1 week
+            score *= 0.8
+
+        # Evidence boost
+        if concept.evidence_count > 10:
+            score *= 1.3
+
+        return score
+
+    def _evict_oldest(self):
+        """Evict oldest, least-used concepts."""
+        if not self.concepts:
+            return
+
+        # Sort by last_used (oldest first)
+        sorted_concepts = sorted(
+            self.concepts.values(),
+            key=lambda c: (c.last_used, -c.use_count)
+        )
+
+        # Remove oldest 10%
+        evict_count = max(1, len(sorted_concepts) // 10)
+        for concept in sorted_concepts[:evict_count]:
+            del self.concepts[concept.concept_id]
+            self._by_type[concept.action_type].remove(concept)
+            for tag in concept.tags:
+                self._by_tag[tag].remove(concept)
+
+    def get_by_type(self, action_type: str) -> List[Concept]:
+        """Get concepts by action type."""
+        return self._by_type.get(action_type, [])
+
+    def get_by_tag(self, tag: str) -> List[Concept]:
+        """Get concepts by tag."""
+        return self._by_tag.get(tag, [])
+
+    def summary(self) -> Dict[str, Any]:
+        """Get memory summary."""
+        return {
+            'total_concepts': len(self.concepts),
+            'by_type': {k: len(v) for k, v in self._by_type.items()},
+            'avg_confidence': (
+                sum(c.confidence for c in self.concepts.values()) /
+                len(self.concepts) if self.concepts else 0
+            ),
+            'avg_evidence': (
+                sum(c.evidence_count for c in self.concepts.values()) /
+                len(self.concepts) if self.concepts else 0
+            ),
+        }
+
+
+class PolicyBiasInjector:
+    """Uses concepts to bias action generation.
+
+    P15: This is the "wisdom layer" — it injects learned knowledge
+    into the action synthesis process.
+
+    When generating actions, the injector:
+    1. Retrieves relevant concepts for current context
+    2. Boosts priority of actions matching successful concepts
+    3. Suppresses actions matching failed concepts
+    4. Suggests new actions based on concept templates
+    """
+
+    def __init__(self, concept_memory: ConceptMemory):
+        self.memory = concept_memory
+
+    def inject_bias(self, actions: List[Action],
+                    context: Dict[str, Any]) -> List[Action]:
+        """Inject concept-based bias into action priorities."""
+        relevant_concepts = self.memory.get_relevant(context)
+
+        if not relevant_concepts:
+            return actions  # No bias to inject
+
+        biased_actions = []
+        for action in actions:
+            # Find matching concepts
+            matching = [
+                c for c in relevant_concepts
+                if self._matches_concept(action, c)
+            ]
+
+            if matching:
+                # Compute bias from matching concepts
+                bias = self._compute_bias(matching)
+                adjusted_priority = action.priority * bias
+
+                # Create biased action
+                biased_action = Action(
+                    action_type=action.action_type,
+                    title=action.title,
+                    description=action.description,
+                    priority=min(1.0, adjusted_priority),
+                    confidence=action.confidence,
+                    target_line=action.target_line,
+                    target_variable=action.target_variable,
+                    evidence=action.evidence.copy(),
+                    preconditions=action.preconditions.copy(),
+                    expected_outcome=action.expected_outcome,
+                    effort=action.effort,
+                    impact=action.impact,
+                    from_goal=action.from_goal,
+                    from_invariant=action.from_invariant,
+                    from_counterfactual=action.from_counterfactual,
+                )
+
+                # Add concept evidence
+                for c in matching:
+                    biased_action.evidence.append(
+                        f'经验支持: {c.name} ({c.success_rate:.0%} 成功率, '
+                        f'{c.evidence_count} 次验证)'
+                    )
+
+                biased_actions.append(biased_action)
+            else:
+                biased_actions.append(action)
+
+        # Sort by biased priority
+        biased_actions.sort(key=lambda a: a.priority, reverse=True)
+        return biased_actions
+
+    def suggest_from_concepts(self, context: Dict[str, Any]) -> List[Action]:
+        """Suggest new actions based on concept templates."""
+        suggestions = []
+        relevant_concepts = self.memory.get_relevant(context, top_k=10)
+
+        for concept in relevant_concepts:
+            if concept.success_rate > 0.7 and concept.evidence_count > 5:
+                # High-confidence concept → suggest action
+                suggestion = Action(
+                    action_type=concept.action_type,
+                    title=concept.action_template.format(title=concept.name),
+                    description=f'基于历史经验: {concept.description}',
+                    priority=concept.confidence * 0.9,
+                    confidence=concept.confidence,
+                    evidence=[
+                        f'经验支持: {concept.evidence_count} 次执行, '
+                        f'{concept.success_rate:.0%} 成功率'
+                    ],
+                    preconditions=[concept.pattern],
+                    expected_outcome=f'预期成功率 {concept.success_rate:.0%}',
+                    effort='medium',
+                    impact='medium',
+                )
+                suggestions.append(suggestion)
+
+        return suggestions
+
+    def _matches_concept(self, action: Action, concept: Concept) -> bool:
+        """Check if an action matches a concept."""
+        # Match by action type
+        if action.action_type == concept.action_type:
+            return True
+
+        # Match by title similarity (simplified)
+        if concept.action_template in action.title:
+            return True
+
+        # Match by tags
+        action_tags = {action.action_type}
+        if action.from_goal:
+            action_tags.add(action.from_goal)
+        if action.from_invariant:
+            action_tags.add(action.from_invariant)
+
+        if set(concept.tags) & action_tags:
+            return True
+
+        return False
+
+    def _compute_bias(self, concepts: List[Concept]) -> float:
+        """Compute priority bias from matching concepts."""
+        if not concepts:
+            return 1.0
+
+        # Average success rate of matching concepts
+        avg_success = sum(c.success_rate for c in concepts) / len(concepts)
+
+        # Bias: >1.0 boosts, <1.0 suppresses
+        # If avg_success = 0.8, bias = 1.6 (strong boost)
+        # If avg_success = 0.3, bias = 0.6 (suppress)
+        return 0.5 + avg_success  # maps [0,1] → [0.5, 1.5]
+
+
+class MemoryConsolidationEngine:
+    """P15: Orchestrates the full memory consolidation pipeline.
+
+    This is the "learning engine" that transforms raw experience
+    into abstracted knowledge.
+
+    Pipeline:
+        P14 Execution Memory
+              ↓
+        Experience Buffer
+              ↓
+        Pattern Extractor
+              ↓
+        Concept Memory
+              ↓
+        Policy Bias Injection (P13 + P14 share)
+    """
+
+    def __init__(self):
+        self.experience_buffer = ExperienceBuffer(max_size=2000)
+        self.pattern_extractor = PatternExtractor(min_evidence=3, min_confidence=0.6)
+        self.concept_memory = ConceptMemory(max_concepts=500)
+        self.bias_injector = PolicyBiasInjector(self.concept_memory)
+        self._consolidation_count = 0
+        self._last_consolidation = 0.0
+
+    def record_execution(self, execution: ActionExecution):
+        """Record an execution in the experience buffer."""
+        self.experience_buffer.add(execution)
+
+        # Trigger consolidation if buffer is full enough
+        if (self.experience_buffer.size() >= 50 and
+                time.time() - self._last_consolidation > 3600):  # 1 hour
+            self.consolidate()
+
+    def consolidate(self):
+        """Run the full consolidation pipeline."""
+        # Phase 1: Extract patterns from buffer
+        concepts = self.pattern_extractor.extract(self.experience_buffer)
+
+        # Phase 2: Add to concept memory
+        for concept in concepts:
+            self.concept_memory.add(concept)
+
+        # Phase 3: Update stats
+        self._consolidation_count += 1
+        self._last_consolidation = time.time()
+
+    def get_biased_actions(self, actions: List[Action],
+                           context: Dict[str, Any]) -> List[Action]:
+        """Get actions biased by learned concepts."""
+        return self.bias_injector.inject_bias(actions, context)
+
+    def get_concept_suggestions(self, context: Dict[str, Any]) -> List[Action]:
+        """Get action suggestions from concepts."""
+        return self.bias_injector.suggest_from_concepts(context)
+
+    def summary(self) -> Dict[str, Any]:
+        """Get consolidation summary."""
+        return {
+            'experience_buffer_size': self.experience_buffer.size(),
+            'consolidation_count': self._consolidation_count,
+            'last_consolidation': self._last_consolidation,
+            'concept_memory': self.concept_memory.summary(),
+        }
+
+
+# ─── Global Memory Consolidation Engine ──────────────────────────
+
+_consolidation_engine = MemoryConsolidationEngine()
+
+def get_consolidation_engine() -> MemoryConsolidationEngine:
+    """Get the global memory consolidation engine."""
+    return _consolidation_engine
+
+
+# ─── Updated CognitionEngine with P15 Memory Consolidation ───────
+
+def _understand_with_consolidation(self, matches: List[PatternMatch],
+                                    events: List[ExecutionEvent]) -> List[IntentGraph]:
+    """Extended understand: adds P15 memory consolidation."""
+    # Call P14 understand (adds adaptive actions)
+    intent_graphs = _understand_with_feedback(self, matches, events)
+
+    # P15: Bias actions based on consolidated concepts
+    for intent in intent_graphs:
+        if intent.actions:
+            # Build context for concept retrieval
+            context = {
+                'pattern_name': intent.pattern.pattern_name,
+                'action_types': [a.action_type for a in intent.actions],
+                'tags': [intent.pattern.pattern_name],
+            }
+
+            # Get concept-biased actions
+            intent.actions = _consolidation_engine.get_biased_actions(
+                intent.actions, context
+            )
+
+            # Add concept-based suggestions
+            suggestions = _consolidation_engine.get_concept_suggestions(context)
+            if suggestions:
+                # Merge suggestions (avoid duplicates)
+                existing_titles = {a.title for a in intent.actions}
+                for suggestion in suggestions:
+                    if suggestion.title not in existing_titles:
+                        intent.actions.append(suggestion)
+                        existing_titles.add(suggestion.title)
+
+                # Re-sort
+                intent.actions.sort(key=lambda a: a.priority, reverse=True)
+
+    return intent_graphs
+
+# Apply P15 patch (overwrites P14 patch)
+CognitionEngine.understand = _understand_with_consolidation
+
+
+# ─── P16: Concept Validation Layer ───────────────────────────────
+
+# Valid state transitions
+LIFECYCLE_TRANSITIONS = {
+    ConceptLifecycle.EMERGING: {ConceptLifecycle.VALIDATED, ConceptLifecycle.INVALIDATED},
+    ConceptLifecycle.VALIDATED: {ConceptLifecycle.DEPRECATED, ConceptLifecycle.INVALIDATED},
+    ConceptLifecycle.DEPRECATED: {ConceptLifecycle.INVALIDATED},
+    ConceptLifecycle.INVALIDATED: set(),  # Terminal state
+}
+
+
+@dataclass
+class ConceptValidationRecord:
+    """Record of a concept validation check."""
+    concept_id: str
+    timestamp: float
+    old_state: ConceptLifecycle
+    new_state: ConceptLifecycle
+    reason: str
+    evidence_count: int
+    success_rate: float
+    counter_examples: List[str] = field(default_factory=list)
+
+
+class CounterExampleDetector:
+    """Detects executions that contradict a concept.
+
+    P16: This is the "immune system" — it finds evidence that a
+    concept is wrong, preventing concept drift.
+
+    A counter-example is an execution where:
+    1. The concept predicted success, but execution failed
+    2. The concept predicted failure, but execution succeeded
+    3. The concept's pattern matched, but outcome was unexpected
+    """
+
+    def __init__(self, min_counter_examples: int = 3):
+        self.min_counter_examples = min_counter_examples
+
+    def detect(self, concept: Concept,
+               executions: List[ActionExecution]) -> List[ActionExecution]:
+        """Find counter-examples for a concept."""
+        counter_examples = []
+
+        for execution in executions:
+            if self._is_counter_example(concept, execution):
+                counter_examples.append(execution)
+
+        return counter_examples
+
+    def _is_counter_example(self, concept: Concept,
+                            execution: ActionExecution) -> bool:
+        """Check if an execution is a counter-example."""
+        # Check if execution matches concept pattern
+        if not self._matches_pattern(concept, execution):
+            return False  # Not relevant
+
+        # Counter-example: concept predicts success, but execution failed
+        if concept.success_rate > 0.5 and not execution.success:
+            return True
+
+        # Counter-example: concept predicts failure, but execution succeeded
+        if concept.success_rate < 0.5 and execution.success:
+            return True
+
+        return False
+
+    def _matches_pattern(self, concept: Concept,
+                         execution: ActionExecution) -> bool:
+        """Check if execution matches concept's pattern."""
+        # Match by action type
+        if concept.action_type == execution.action_type:
+            return True
+
+        # Match by title
+        if concept.action_template in execution.action_title:
+            return True
+
+        # Match by tags
+        execution_tags = {execution.action_type}
+        if set(concept.tags) & execution_tags:
+            return True
+
+        return False
+
+
+class ConfidenceDecay:
+    """Reduces concept confidence over time without reinforcement.
+
+    P16: This prevents stale concepts from persisting indefinitely.
+    Concepts that aren't reinforced naturally decay.
+
+    Decay formula:
+        new_confidence = old_confidence * (1 - decay_rate * time_factor)
+
+    Where time_factor increases with time since last use.
+    """
+
+    def __init__(self, base_decay_rate: float = 0.01,
+                 max_decay: float = 0.5):
+        self.base_decay_rate = base_decay_rate
+        self.max_decay = max_decay
+
+    def apply(self, concept: Concept, current_time: float) -> float:
+        """Apply confidence decay to a concept."""
+        hours_since_use = (current_time - concept.last_used) / 3600
+
+        if hours_since_use < 1:
+            return concept.confidence  # No decay for recent use
+
+        # Time factor: increases with time
+        time_factor = min(1.0, hours_since_use / 168)  # Normalize to 1 week
+
+        # Decay amount
+        decay = self.base_decay_rate * time_factor
+        decay = min(decay, self.max_decay)
+
+        # Apply decay
+        new_confidence = concept.confidence * (1 - decay)
+        return max(0.0, new_confidence)
+
+    def should_deprecate(self, concept: Concept,
+                         current_time: float) -> bool:
+        """Check if concept should be deprecated."""
+        # Deprecate if confidence drops below threshold
+        if concept.confidence < 0.3:
+            return True
+
+        # Deprecate if not used for a long time
+        hours_since_use = (current_time - concept.last_used) / 3600
+        if hours_since_use > 720:  # 30 days
+            return True
+
+        return False
+
+
+class ConceptValidator:
+    """P16: Orchestrates concept validation pipeline.
+
+    This is the "quality control" for learned concepts.
+    It ensures only reliable knowledge persists.
+
+    Pipeline:
+        Concept + Executions → Counter-Example Detection
+                            → Confidence Decay
+                            → Lifecycle Transition
+                            → Concept Update/Invalidation
+    """
+
+    def __init__(self):
+        self.counter_example_detector = CounterExampleDetector(min_counter_examples=3)
+        self.confidence_decay = ConfidenceDecay(base_decay_rate=0.01)
+        self.validation_history: List[ConceptValidationRecord] = []
+
+    def validate(self, concept: Concept,
+                 executions: List[ActionExecution],
+                 current_time: float) -> ConceptLifecycle:
+        """Validate a concept against recent executions.
+
+        Returns the new lifecycle state.
+        """
+        # Phase 1: Apply confidence decay
+        new_confidence = self.confidence_decay.apply(concept, current_time)
+        concept.confidence = new_confidence
+
+        # Phase 2: Detect counter-examples
+        counter_examples = self.counter_example_detector.detect(concept, executions)
+
+        # Phase 3: Determine lifecycle transition
+        new_state = self._determine_state(concept, counter_examples, current_time)
+
+        # Phase 4: Record validation
+        if new_state != concept.lifecycle if hasattr(concept, 'lifecycle') else ConceptLifecycle.EMERGING:
+            self._record_validation(concept, new_state, counter_examples)
+
+        return new_state
+
+    def _determine_state(self, concept: Concept,
+                         counter_examples: List[ActionExecution],
+                         current_time: float) -> ConceptLifecycle:
+        """Determine the new lifecycle state."""
+        current_state = getattr(concept, 'lifecycle', ConceptLifecycle.EMERGING)
+
+        # Check for invalidation (critical counter-examples)
+        if len(counter_examples) >= self.counter_example_detector.min_counter_examples:
+            return ConceptLifecycle.INVALIDATED
+
+        # Check for deprecation (declining performance)
+        if self.confidence_decay.should_deprecate(concept, current_time):
+            if current_state == ConceptLifecycle.VALIDATED:
+                return ConceptLifecycle.DEPRECATED
+            elif current_state == ConceptLifecycle.EMERGING:
+                return ConceptLifecycle.INVALIDATED
+
+        # Check for validation (enough evidence, high success rate)
+        if current_state == ConceptLifecycle.EMERGING:
+            if (concept.evidence_count >= 10 and
+                    concept.success_rate >= 0.7):
+                return ConceptLifecycle.VALIDATED
+
+        return current_state
+
+    def _record_validation(self, concept: Concept,
+                           new_state: ConceptLifecycle,
+                           counter_examples: List[ActionExecution]):
+        """Record a validation event."""
+        record = ConceptValidationRecord(
+            concept_id=concept.concept_id,
+            timestamp=time.time(),
+            old_state=getattr(concept, 'lifecycle', ConceptLifecycle.EMERGING),
+            new_state=new_state,
+            reason=f'Counter-examples: {len(counter_examples)}',
+            evidence_count=concept.evidence_count,
+            success_rate=concept.success_rate,
+            counter_examples=[e.execution_id for e in counter_examples[:5]],
+        )
+        self.validation_history.append(record)
+
+    def get_validation_history(self, concept_id: str) -> List[ConceptValidationRecord]:
+        """Get validation history for a concept."""
+        return [r for r in self.validation_history if r.concept_id == concept_id]
+
+
+class ConceptInvalidator:
+    """Removes invalid concepts from memory.
+
+    P16: This is the "garbage collector" for bad knowledge.
+    It ensures concept memory stays clean.
+    """
+
+    def __init__(self):
+        self.invalidated_concepts: List[Concept] = []
+        self.invalidation_reasons: Dict[str, str] = {}
+
+    def invalidate(self, concept: Concept, reason: str):
+        """Invalidate a concept."""
+        concept.lifecycle = ConceptLifecycle.INVALIDATED
+        self.invalidated_concepts.append(concept)
+        self.invalidation_reasons[concept.concept_id] = reason
+
+    def is_invalid(self, concept: Concept) -> bool:
+        """Check if a concept is invalid."""
+        return getattr(concept, 'lifecycle', ConceptLifecycle.EMERGING) == ConceptLifecycle.INVALIDATED
+
+    def get_invalid_concepts(self) -> List[Concept]:
+        """Get all invalid concepts."""
+        return self.invalidated_concepts
+
+    def summary(self) -> Dict[str, Any]:
+        """Get invalidation summary."""
+        return {
+            'total_invalidated': len(self.invalidated_concepts),
+            'reasons': dict(self.invalidation_reasons),
+        }
+
+
+class ConceptValidationEngine:
+    """P16: Orchestrates the full concept validation pipeline.
+
+    This is the "immune system" of the cognitive architecture.
+    It ensures only validated knowledge persists.
+
+    Pipeline:
+        Concept Memory → Validation → Invalidation/Cleanup
+                                      ↓
+                              Clean Concept Memory
+    """
+
+    def __init__(self):
+        self.validator = ConceptValidator()
+        self.invalidator = ConceptInvalidator()
+        self._validation_count = 0
+        self._last_validation = 0.0
+
+    def validate_concept(self, concept: Concept,
+                         executions: List[ActionExecution]) -> ConceptLifecycle:
+        """Validate a single concept."""
+        new_state = self.validator.validate(
+            concept, executions, time.time()
+        )
+
+        # Update concept lifecycle
+        old_state = getattr(concept, 'lifecycle', ConceptLifecycle.EMERGING)
+        concept.lifecycle = new_state
+
+        # Handle state transitions
+        if new_state == ConceptLifecycle.INVALIDATED:
+            self.invalidator.invalidate(concept, 'Validation failed')
+        elif new_state == ConceptLifecycle.DEPRECATED:
+            concept.confidence *= 0.8  # Reduce confidence
+
+        return new_state
+
+    def validate_all(self, concept_memory: ConceptMemory,
+                     execution_buffer: ExperienceBuffer) -> Dict[str, ConceptLifecycle]:
+        """Validate all concepts in memory."""
+        results = {}
+        executions = execution_buffer.buffer
+
+        for concept_id, concept in concept_memory.concepts.items():
+            new_state = self.validate_concept(concept, executions)
+            results[concept_id] = new_state
+
+        # Clean up invalid concepts
+        self._cleanup_invalid(concept_memory)
+
+        self._validation_count += 1
+        self._last_validation = time.time()
+
+        return results
+
+    def _cleanup_invalid(self, concept_memory: ConceptMemory):
+        """Remove invalid concepts from memory."""
+        invalid_ids = [
+            cid for cid, concept in concept_memory.concepts.items()
+            if self.invalidator.is_invalid(concept)
+        ]
+
+        for cid in invalid_ids:
+            concept = concept_memory.concepts.pop(cid)
+            # Clean up indexes
+            concept_memory._by_type[concept.action_type] = [
+                c for c in concept_memory._by_type[concept.action_type]
+                if c.concept_id != cid
+            ]
+            for tag in concept.tags:
+                concept_memory._by_tag[tag] = [
+                    c for c in concept_memory._by_tag[tag]
+                    if c.concept_id != cid
+                ]
+
+    def summary(self) -> Dict[str, Any]:
+        """Get validation summary."""
+        return {
+            'validation_count': self._validation_count,
+            'last_validation': self._last_validation,
+            'invalidator': self.invalidator.summary(),
+            'validator_history_count': len(self.validator.validation_history),
+        }
+
+
+# ─── Global Concept Validation Engine ────────────────────────────
+
+_validation_engine = ConceptValidationEngine()
+
+def get_validation_engine() -> ConceptValidationEngine:
+    """Get the global concept validation engine."""
+    return _validation_engine
+
+
+# ─── Updated MemoryConsolidationEngine with P16 Validation ───────
+
+# Store original consolidate method
+_original_consolidate = MemoryConsolidationEngine.consolidate
+
+def _consolidate_with_validation(self):
+    """Extended consolidation: adds P16 concept validation."""
+    # Call original consolidation (extracts concepts)
+    _original_consolidate(self)
+
+    # P16: Validate all concepts
+    _validation_engine.validate_all(
+        self.concept_memory,
+        self.experience_buffer
+    )
+
+MemoryConsolidationEngine.consolidate = _consolidate_with_validation

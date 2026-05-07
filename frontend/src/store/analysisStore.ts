@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import type { InsightResponse, AnalyzeResponse, DSVizResponse, ExplainResponse, StepExplanation, FocusedExplanation, StepData, ControlEdge, LoopGroup, PatternNarrativeResponse, SubproblemGraphResponse, DetectedPattern } from '../api/analysis'
+import type { InsightResponse, AnalyzeResponse, DSVizResponse, ExplainResponse, StepExplanation, FocusedExplanation, StepData, ControlEdge, LoopGroup, PatternNarrativeResponse, SubproblemGraphResponse, DetectedPattern, GitHubAnalyzeResponse } from '../api/analysis'
 
 interface HistoryEntry {
   id: string
@@ -40,7 +40,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   // State
   const loading = ref(false)
   const error = ref('')
-  const activeTab = ref<'insight' | 'stack' | 'dsviz' | 'graph' | 'timeline'>('insight')
+  const activeTab = ref<'insight' | 'replay' | 'stack' | 'dsviz' | 'graph' | 'timeline' | 'github'>('insight')
   const sessionId = ref('')
   const showAllSteps = ref(false)
 
@@ -56,6 +56,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const focusLoading = ref(false)
   const patternResult = ref<PatternNarrativeResponse | null>(null)
   const subproblemGraph = ref<SubproblemGraphResponse | null>(null)
+  const githubResult = ref<GitHubAnalyzeResponse | null>(null)
+  const failureAttribution = ref<any>(null)
+  const importGraph = ref<any>(null)
 
   // Timeline state
   const currentStep = ref(0)
@@ -64,9 +67,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const explainMode = ref(false)
   const highlightedLine = ref(0)
 
-  // Clear editor highlight when leaving timeline/dsviz tabs
+  // Clear editor highlight when leaving timeline/dsviz/replay tabs
   watch(activeTab, (tab) => {
-    if (tab !== 'timeline' && tab !== 'dsviz') {
+    if (tab !== 'timeline' && tab !== 'dsviz' && tab !== 'replay') {
       highlightedLine.value = 0
     }
   })
@@ -641,6 +644,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
     focusedExplanation.value = null
     patternResult.value = null
     subproblemGraph.value = null
+    failureAttribution.value = null
+    importGraph.value = null
     sessionId.value = ''
     currentStep.value = 0
     explainMode.value = false
@@ -681,6 +686,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     insightResult, analyzeResult, dsVizResult, explainResult,
     stepExplanations, controlEdges, loopGroups,
     focusedExplanation, focusLoading, patternResult, subproblemGraph, explainMode,
+    githubResult, failureAttribution, importGraph,
     sessionId, showAllSteps, importantSteps,
     currentStep, isPlaying, playSpeed,
     highlightedLine,

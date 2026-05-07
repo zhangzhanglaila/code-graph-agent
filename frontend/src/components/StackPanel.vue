@@ -128,6 +128,62 @@ const reasoningSteps = computed(() => {
   return result
 })
 
+// Conflicts: get from current pattern
+const currentConflicts = computed(() => {
+  return currentPattern.value?.conflicts || []
+})
+
+// P13: Actions - get from current pattern
+const currentActions = computed(() => {
+  return currentPattern.value?.actions || []
+})
+
+const ACTION_TYPE_LABELS: Record<string, string> = {
+  optimize: '优化',
+  debug: '调试',
+  refactor: '重构',
+  verify: '验证',
+  add_memo: '缓存',
+  add_guard: '防护',
+  simplify: '简化',
+  extract: '提取',
+}
+
+const ACTION_TYPE_COLORS: Record<string, string> = {
+  optimize: '#3b82f6',
+  debug: '#ef4444',
+  refactor: '#8b5cf6',
+  verify: '#10b981',
+  add_memo: '#f59e0b',
+  add_guard: '#ec4899',
+  simplify: '#06b6d4',
+  extract: '#6366f1',
+}
+
+const EFFORT_LABELS: Record<string, string> = {
+  low: '低',
+  medium: '中',
+  high: '高',
+}
+
+const IMPACT_LABELS: Record<string, string> = {
+  low: '低',
+  medium: '中',
+  high: '高',
+}
+
+function priorityClass(p: number): string {
+  if (p >= 0.8) return 'priority-high'
+  if (p >= 0.5) return 'priority-medium'
+  return 'priority-low'
+}
+
+function priorityLabel(p: number): string {
+  if (p >= 0.8) return '高优先'
+  if (p >= 0.5) return '中优先'
+  return '低优先'
+}
+
 // Current frame lifecycle event
 const currentFrameEvent = computed(() => {
   const events = store.frameLifecycle
@@ -342,6 +398,67 @@ function stepRange(frame: { start_step: number; end_step: number | null }) {
           <span class="rs-kind">{{ step.fact.kind }}</span>
           <span class="rs-evidence">{{ step.fact.evidence }}</span>
           <span class="rs-source">{{ step.fact.source === 'observed' ? '观测' : '推导' }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Conflicts (contradictions) -->
+    <div v-if="currentConflicts.length" class="conflicts-panel">
+      <div class="conflicts-title">
+        <span class="conflicts-icon">⚡</span>
+        <span>冲突检测</span>
+        <span class="conflicts-count">{{ currentConflicts.length }} 个矛盾</span>
+      </div>
+      <div v-for="(c, i) in currentConflicts" :key="i" class="conflict-item">
+        <div class="conflict-header">
+          <span class="conflict-kind">{{ c.kind }}</span>
+          <span class="conflict-subject">{{ c.subject }}</span>
+        </div>
+        <div class="conflict-body">
+          <span class="conflict-fact fact-a">{{ c.relation_a }}</span>
+          <span class="conflict-vs">vs</span>
+          <span class="conflict-fact fact-b">{{ c.relation_b }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions (P13: Goal-Action Layer) -->
+    <div v-if="currentActions.length" class="actions-panel">
+      <div class="actions-title">
+        <span class="actions-icon">🎯</span>
+        <span>建议操作</span>
+        <span class="actions-count">{{ currentActions.length }} 条建议</span>
+      </div>
+      <div v-for="(a, i) in currentActions" :key="i"
+        class="action-card" :class="a.action_type"
+        :style="{ borderLeftColor: ACTION_TYPE_COLORS[a.action_type] }">
+        <div class="action-header">
+          <span class="action-type-badge" :style="{ background: ACTION_TYPE_COLORS[a.action_type] + '15', color: ACTION_TYPE_COLORS[a.action_type] }">
+            {{ ACTION_TYPE_LABELS[a.action_type] || a.action_type }}
+          </span>
+          <span class="action-title">{{ a.title }}</span>
+          <span class="action-priority" :class="priorityClass(a.priority)">
+            {{ priorityLabel(a.priority) }}
+          </span>
+        </div>
+        <div class="action-desc">{{ a.description }}</div>
+        <div class="action-meta">
+          <span class="action-effort" :class="a.effort">
+            工作量: {{ EFFORT_LABELS[a.effort] || a.effort }}
+          </span>
+          <span class="action-impact" :class="a.impact">
+            影响: {{ IMPACT_LABELS[a.impact] || a.impact }}
+          </span>
+          <span class="action-confidence">
+            置信度: {{ Math.round(a.confidence * 100) }}%
+          </span>
+        </div>
+        <div v-if="a.expected_outcome" class="action-outcome">
+          <span class="outcome-label">预期效果:</span>
+          <span class="outcome-text">{{ a.expected_outcome }}</span>
+        </div>
+        <div v-if="a.evidence?.length" class="action-evidence">
+          <span v-for="(ev, j) in a.evidence" :key="j" class="action-ev">{{ ev }}</span>
         </div>
       </div>
     </div>
@@ -951,4 +1068,146 @@ function stepRange(frame: { start_step: number; end_step: number | null }) {
   background: rgba(0,161,214,0.08); padding: 1px 6px; border-radius: 3px;
 }
 .ce-desc { font-size: 10px; color: var(--text-dim); line-height: 1.3; }
+
+/* Conflicts Panel */
+.conflicts-panel {
+  display: flex; flex-direction: column; gap: 6px;
+  background: linear-gradient(135deg, rgba(239,68,68,0.06), rgba(220,38,38,0.04));
+  border: 1px solid rgba(239,68,68,0.2);
+  border-left: 3px solid #ef4444;
+  border-radius: 8px; padding: 10px 14px;
+  animation: flSlide 0.3s ease;
+}
+.conflicts-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700; color: #ef4444;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.conflicts-icon { font-size: 14px; }
+.conflicts-count {
+  font-size: 9px; background: rgba(239,68,68,0.12);
+  padding: 1px 6px; border-radius: 3px; margin-left: auto;
+}
+.conflict-item {
+  background: rgba(239,68,68,0.04);
+  border: 1px solid rgba(239,68,68,0.12);
+  border-radius: 6px; padding: 6px 10px;
+}
+.conflict-header {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; margin-bottom: 3px;
+}
+.conflict-kind {
+  font-size: 9px; font-weight: 700; color: #ef4444;
+  background: rgba(239,68,68,0.08); padding: 1px 6px; border-radius: 3px;
+  text-transform: uppercase;
+}
+.conflict-subject { font-size: 10px; color: var(--highlight); font-family: monospace; }
+.conflict-body {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; margin-top: 4px;
+}
+.conflict-fact {
+  font-size: 10px; padding: 2px 6px; border-radius: 3px;
+  font-family: monospace;
+}
+.conflict-fact.fact-a { color: #ef4444; background: rgba(239,68,68,0.08); }
+.conflict-fact.fact-b { color: #f97316; background: rgba(249,115,22,0.08); }
+.conflict-vs {
+  font-size: 9px; color: var(--text-muted); font-weight: 700;
+}
+
+/* Actions Panel (P13: Goal-Action Layer) */
+.actions-panel {
+  display: flex; flex-direction: column; gap: 6px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.04), rgba(139,92,246,0.04));
+  border: 1px solid rgba(99,102,241,0.15);
+  border-left: 3px solid #6366f1;
+  border-radius: 8px; padding: 10px 14px;
+  animation: flSlide 0.3s ease;
+}
+.actions-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700; color: #6366f1;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.actions-icon { font-size: 14px; }
+.actions-count {
+  font-size: 9px; background: rgba(99,102,241,0.12);
+  padding: 1px 6px; border-radius: 3px; margin-left: auto;
+}
+.action-card {
+  background: rgba(148,163,184,0.04);
+  border: 1px solid rgba(148,163,184,0.12);
+  border-left: 3px solid;
+  border-radius: 6px; padding: 8px 10px;
+  transition: all 0.2s ease;
+}
+.action-card:hover {
+  background: rgba(148,163,184,0.08);
+  border-color: rgba(148,163,184,0.2);
+}
+.action-header {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; margin-bottom: 4px;
+}
+.action-type-badge {
+  font-size: 9px; font-weight: 700;
+  padding: 1px 6px; border-radius: 3px;
+  text-transform: uppercase;
+}
+.action-title {
+  font-size: 11px; font-weight: 600; color: var(--highlight);
+  flex: 1;
+}
+.action-priority {
+  font-size: 9px; font-weight: 700;
+  padding: 1px 6px; border-radius: 3px;
+}
+.action-priority.priority-high {
+  color: #ef4444; background: rgba(239,68,68,0.08);
+}
+.action-priority.priority-medium {
+  color: #f59e0b; background: rgba(245,158,11,0.08);
+}
+.action-priority.priority-low {
+  color: #10b981; background: rgba(16,185,129,0.08);
+}
+.action-desc {
+  font-size: 10px; color: var(--text); line-height: 1.4;
+  margin-bottom: 4px;
+}
+.action-meta {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 9px; color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.action-effort, .action-impact {
+  padding: 1px 4px; border-radius: 2px;
+}
+.action-effort.low, .action-impact.low { color: #10b981; background: rgba(16,185,129,0.06); }
+.action-effort.medium, .action-impact.medium { color: #f59e0b; background: rgba(245,158,11,0.06); }
+.action-effort.high, .action-impact.high { color: #ef4444; background: rgba(239,68,68,0.06); }
+.action-confidence {
+  color: var(--text-dim);
+}
+.action-outcome {
+  font-size: 10px; color: var(--text-dim);
+  margin-top: 3px; padding: 3px 6px;
+  background: rgba(34,197,94,0.04); border-radius: 3px;
+  border-left: 2px solid #22c55e;
+}
+.outcome-label {
+  font-weight: 600; color: #22c55e; margin-right: 4px;
+}
+.outcome-text { color: var(--text); }
+.action-evidence {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-top: 4px;
+}
+.action-ev {
+  font-size: 9px; color: var(--text-dim);
+  padding: 2px 6px; background: rgba(148,163,184,0.06);
+  border-radius: 3px; border-left: 2px solid #6366f1;
+}
 </style>

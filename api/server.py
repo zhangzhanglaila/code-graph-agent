@@ -2507,6 +2507,965 @@ async def health():
     return {"status": "ok"}
 
 
+# ─── GitHub Repository Analysis ──────────────────────────────────
+
+class GitHubAnalyzeRequest(BaseModel):
+    repo_url: str
+    file_path: str = ''  # Optional: specific file to analyze
+    func_name: str = ''  # Optional: specific function to analyze
+    max_files: int = 10  # Max files to analyze
+
+
+@app.post("/api/github_analyze")
+async def github_analyze(req: GitHubAnalyzeRequest):
+    """Analyze a GitHub repository.
+
+    Clones the repo, finds Python files, and analyzes them.
+    Returns a summary of the codebase structure and insights.
+    """
+    import subprocess
+    import tempfile
+    import glob
+
+    try:
+        # Create temp directory for clone
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Clone repo
+            clone_cmd = ['git', 'clone', '--depth', '1', req.repo_url, tmp_dir]
+            result = subprocess.run(
+                clone_cmd,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode != 0:
+                return {
+                    'success': False,
+                    'error': f'Failed to clone repo: {result.stderr}',
+                    'error_type': 'GitError'
+                }
+
+            # Find Python files
+            py_files = glob.glob(os.path.join(tmp_dir, '**', '*.py'), recursive=True)
+
+            if not py_files:
+                return {
+                    'success': False,
+                    'error': 'No Python files found in repository',
+                    'error_type': 'NoFiles'
+                }
+
+            # Limit files
+            py_files = py_files[:req.max_files]
+
+            # Analyze each file
+            analyses = []
+            for py_file in py_files:
+                try:
+                    with open(py_file, 'r', encoding='utf-8') as f:
+                        code = f.read()
+
+                    # Get relative path
+                    rel_path = os.path.relpath(py_file, tmp_dir)
+
+                    # Run insight analysis
+                    insight_result = get_insight_sync(code, rel_path)
+
+                    if insight_result.get('success', True):
+                        analyses.append({
+                            'file': rel_path,
+                            'code_lines': len(code.split('\n')),
+                            'insight': insight_result.get('insight', {}),
+                            'total_steps': insight_result.get('total_steps', 0),
+                            'func_name': insight_result.get('func_name', ''),
+                        })
+                except Exception as e:
+                    analyses.append({
+                        'file': os.path.relpath(py_file, tmp_dir),
+                        'error': str(e),
+                    })
+
+            # Generate summary
+            total_files = len(analyses)
+            total_lines = sum(a.get('code_lines', 0) for a in analyses)
+            total_steps = sum(a.get('total_steps', 0) for a in analyses)
+            successful = [a for a in analyses if 'error' not in a]
+
+            # Get top patterns
+            patterns = []
+            for a in successful:
+                insight = a.get('insight', {})
+                for p in insight.get('patterns', []):
+                    patterns.append(p.get('name', ''))
+
+            from collections import Counter
+            pattern_counts = Counter(patterns).most_common(5)
+
+            return {
+                'success': True,
+                'repo_url': req.repo_url,
+                'summary': {
+                    'total_files': total_files,
+                    'analyzed_files': len(successful),
+                    'total_lines': total_lines,
+                    'total_execution_steps': total_steps,
+                    'top_patterns': [
+                        {'name': p, 'count': c}
+                        for p, c in pattern_counts
+                    ],
+                },
+                'files': analyses,
+            }
+
+    except subprocess.TimeoutExpired:
+        return {
+            'success': False,
+            'error': 'Repository clone timed out (60s limit)',
+            'error_type': 'Timeout'
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__
+        }
+
+
+def get_insight_sync(code: str, file_path: str = '') -> dict:
+    """Synchronous version of insight analysis for GitHub repo scanning."""
+    func_file = None
+    try:
+        func_name = _extract_func_name(code, '')
+        if not func_name:
+            return {'success': False, 'error': 'No function found in code'}
+
+        module = _import_code_as_module(code)
+        func = getattr(module, func_name)
+        func_file = os.path.abspath(func.__code__.co_filename)
+
+        inferred_args, _ = infer_args(func, code)
+        result, timeline = record_function(func, *inferred_args, target_files={func_file})
+
+        insight = summarize_insight(timeline, result, func_name)
+
+        return {
+            'success': True,
+            'func_name': func_name,
+            'total_steps': len(timeline.steps),
+            'insight': {
+                'one_liner': insight.one_liner,
+                'algorithm_type': insight.algorithm_type,
+                'confidence': insight.confidence,
+                'patterns': [{'name': p.name, 'confidence': p.confidence, 'description': p.description} for p in insight.patterns],
+            },
+        }
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+    finally:
+        if func_file and os.path.exists(func_file):
+            try:
+                os.unlink(func_file)
+            except OSError:
+                pass
+
+
+# ─── Failure Attribution Engine ────────────────────────────────────
+
+class FailureAttribution:
+    """Analyzes execution timeline to detect WHY something went wrong.
+
+    Detects:
+    - State invariant violations
+    - Recursion termination failures
+    - Stale mutations (write-only variables)
+    - Infinite loops (repeating state)
+    - Unexpected control flow divergence
+    """
+
+    @staticmethod
+    def analyze(steps: list[dict]) -> dict:
+        import re
+        if not steps:
+            return {'success': False, 'error': 'No steps to analyze'}
+
+        findings = []
+        severity = 'healthy'  # healthy, warning, error, critical
+
+        # 1. Detect infinite loops (same variable state repeating)
+        state_hashes: dict[str, list[int]] = {}
+        for step in steps:
+            vars_snapshot = tuple(sorted(
+                (k, str(v.get('value', '')))
+                for k, v in (step.get('vars') or {}).items()
+            ))
+            h = hash(vars_snapshot)
+            key = str(h)
+            if key not in state_hashes:
+                state_hashes[key] = []
+            state_hashes[key].append(step.get('index', 0))
+
+        for key, indices in state_hashes.items():
+            if len(indices) >= 3:
+                severity = max(severity, 'error', key=lambda x: ['healthy', 'warning', 'error', 'critical'].index(x))
+                findings.append({
+                    'type': 'infinite_loop',
+                    'severity': 'error',
+                    'title': 'Potential infinite loop detected',
+                    'description': f'Variable state repeats at steps {indices[:5]} — execution may not terminate.',
+                    'steps': indices[:10],
+                    'suggestion': 'Check loop termination condition and ensure loop variable is being updated.',
+                })
+
+        # 2. Detect recursion without base case
+        depth_increases = 0
+        max_depth = 0
+        depth_sequence = []
+        for step in steps:
+            d = step.get('depth', 0)
+            depth_sequence.append(d)
+            max_depth = max(max_depth, d)
+
+        # Check if depth only increases (no returns)
+        increases = sum(1 for i in range(1, len(depth_sequence)) if depth_sequence[i] > depth_sequence[i-1])
+        decreases = sum(1 for i in range(1, len(depth_sequence)) if depth_sequence[i] < depth_sequence[i-1])
+
+        if max_depth > 5 and decreases == 0:
+            severity = max(severity, 'critical', key=lambda x: ['healthy', 'warning', 'error', 'critical'].index(x))
+            findings.append({
+                'type': 'recursion_no_base',
+                'severity': 'critical',
+                'title': 'Recursion without base case',
+                'description': f'Call depth increases to {max_depth} with no returns — missing base case or infinite recursion.',
+                'steps': [i for i, d in enumerate(depth_sequence) if d > 3],
+                'suggestion': 'Add a base case to terminate recursion (e.g., `if n <= 1: return n`).',
+            })
+        elif max_depth > 3 and decreases < increases * 0.3:
+            severity = max(severity, 'warning', key=lambda x: ['healthy', 'warning', 'error', 'critical'].index(x))
+            findings.append({
+                'type': 'deep_recursion',
+                'severity': 'warning',
+                'title': 'Deep recursion detected',
+                'description': f'Recursion depth reaches {max_depth} with few returns — may hit stack limit.',
+                'steps': [i for i, d in enumerate(depth_sequence) if d > 3],
+                'suggestion': 'Consider iterative approach or memoization to reduce recursion depth.',
+            })
+
+        # 3. Detect stale mutations (variables written but never read in any subsequent step)
+        var_writes: dict[str, list[int]] = {}
+        var_reads: dict[str, set[int]] = {}
+        for step in steps:
+            changed = step.get('changed', [])
+            new_vars = step.get('new_vars', [])
+            code = step.get('code', '')
+            idx = step.get('index', 0)
+            for v in changed + new_vars:
+                if v not in var_writes:
+                    var_writes[v] = []
+                var_writes[v].append(idx)
+            # Detect reads: variable name appears in code and is NOT being written this step
+            all_vars = list((step.get('vars') or {}).keys())
+            write_set = set(changed + new_vars)
+            # Split code at '=' to separate LHS (writes) from RHS (reads)
+            parts = code.split('=', 1)
+            rhs = parts[1] if len(parts) > 1 else code  # everything after first '='
+            for v in all_vars:
+                pattern = r'\b' + re.escape(v) + r'\b'
+                # A variable is "read" if it appears in the RHS, or in code that's not an assignment
+                is_read = bool(re.search(pattern, rhs)) or (len(parts) == 1 and re.search(pattern, code))
+                if is_read:
+                    if v not in var_reads:
+                        var_reads[v] = set()
+                    var_reads[v].add(idx)
+
+        for var, writes in var_writes.items():
+            reads = var_reads.get(var, set())
+            # Only flag if the variable is NEVER read in any step
+            if writes and not reads and len(writes) >= 2:
+                severity = max(severity, 'warning', key=lambda x: ['healthy', 'warning', 'error', 'critical'].index(x))
+                findings.append({
+                    'type': 'stale_mutation',
+                    'severity': 'warning',
+                    'title': f'Stale mutation: `{var}`',
+                    'description': f'Variable `{var}` is written {len(writes)} times but never read — the writes have no effect on output.',
+                    'steps': writes[:5],
+                    'suggestion': f'Either use `{var}` in the output or remove the unnecessary writes.',
+                })
+
+        # 4. Detect invariant violations (variable type changes)
+        var_types: dict[str, dict] = {}
+        for step in steps:
+            for name, snap in (step.get('vars') or {}).items():
+                t = snap.get('type', 'unknown')
+                if name not in var_types:
+                    var_types[name] = {'types': set(), 'steps': []}
+                if t not in var_types[name]['types']:
+                    var_types[name]['types'].add(t)
+                    var_types[name]['steps'].append(step.get('index', 0))
+
+        for name, info in var_types.items():
+            if len(info['types']) > 1:
+                type_list = list(info['types'])
+                # Filter out common acceptable transitions
+                acceptable = {('int', 'float'), ('float', 'int'), ('NoneType', 'int'), ('NoneType', 'str')}
+                pair = (type_list[0], type_list[1]) if len(type_list) == 2 else None
+                if pair and pair not in acceptable and (pair[1], pair[0]) not in acceptable:
+                    severity = max(severity, 'warning', key=lambda x: ['healthy', 'warning', 'error', 'critical'].index(x))
+                    findings.append({
+                        'type': 'type_instability',
+                        'severity': 'warning',
+                        'title': f'Type instability: `{name}`',
+                        'description': f'Variable `{name}` changes type from {" to ".join(type_list)} — may indicate a bug.',
+                        'steps': info['steps'][:5],
+                        'suggestion': f'Ensure `{name}` maintains consistent type throughout execution.',
+                    })
+
+        # 5. Detect unexpected control flow (conditions always true/false)
+        condition_results: dict[str, list[bool]] = {}
+        for step in steps:
+            code = step.get('code', '').strip()
+            if code.startswith('if ') or code.startswith('elif ') or code.startswith('while '):
+                cond_key = code[:50]
+                if cond_key not in condition_results:
+                    condition_results[cond_key] = []
+                # We can't know the result directly, but we can check if the next step is always the same line
+                # This is a heuristic — if condition always leads to same branch, it might be always true/false
+
+        # 6. Detect performance anomalies (many steps for simple operations)
+        if len(steps) > 100:
+            severity = max(severity, 'warning', key=lambda x: ['healthy', 'warning', 'error', 'critical'].index(x))
+            findings.append({
+                'type': 'performance',
+                'severity': 'warning',
+                'title': 'High execution step count',
+                'description': f'Execution has {len(steps)} steps — may indicate inefficient algorithm.',
+                'steps': [],
+                'suggestion': 'Consider optimizing with memoization, early termination, or more efficient data structures.',
+            })
+
+        # Generate summary
+        if not findings:
+            summary = 'Execution looks healthy — no anomalies detected.'
+        else:
+            critical = sum(1 for f in findings if f['severity'] == 'critical')
+            errors = sum(1 for f in findings if f['severity'] == 'error')
+            warnings = sum(1 for f in findings if f['severity'] == 'warning')
+            parts = []
+            if critical: parts.append(f'{critical} critical')
+            if errors: parts.append(f'{errors} errors')
+            if warnings: parts.append(f'{warnings} warnings')
+            summary = f'Found {", ".join(parts)} — execution may have issues.'
+
+        return {
+            'success': True,
+            'severity': severity,
+            'summary': summary,
+            'findings': findings,
+            'total_steps': len(steps),
+            'max_depth': max_depth,
+        }
+
+
+@app.post("/api/failure_attribution")
+async def failure_attribution(req: InsightRequest):
+    """Analyze execution for failure attribution — WHY something went wrong."""
+    func_file = None
+    try:
+        func_name = _extract_func_name(req.code, req.func_name)
+        if not func_name:
+            return {"success": False, "error": "No function found in code."}
+
+        module = _import_code_as_module(req.code)
+        func = getattr(module, func_name)
+        func_file = os.path.abspath(func.__code__.co_filename)
+        inferred_args, _ = infer_args(func, req.code)
+        result, timeline = record_function(func, *inferred_args, target_files={func_file})
+
+        # Build steps
+        steps_data = []
+        for step in timeline.steps:
+            var_states = {}
+            for name, snap in step.variables.items():
+                var_states[name] = {
+                    "value": snap.value_repr,
+                    "type": snap.value_type,
+                    "changed": name in step.changed_vars,
+                    "is_new": name in step.new_vars,
+                }
+            steps_data.append({
+                "index": step.step_index,
+                "line": step.line_number,
+                "code": step.code_line,
+                "func": step.function_name,
+                "vars": var_states,
+                "changed": step.changed_vars,
+                "new_vars": step.new_vars,
+                "depth": step.depth,
+            })
+
+        # Run failure attribution
+        attribution = FailureAttribution.analyze(steps_data)
+
+        return {
+            "success": True,
+            "func_name": func_name,
+            "attribution": attribution,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        if func_file and os.path.exists(func_file):
+            try:
+                os.unlink(func_file)
+            except OSError:
+                pass
+
+
+# ─── Cross-file Import Graph Engine ──────────────────────────────
+
+class ImportGraphBuilder:
+    """Analyzes Python files to build an import dependency graph.
+
+    Parses import statements to find:
+    - Which files import from which other files
+    - External dependencies
+    - Call chains across files
+    """
+
+    @staticmethod
+    def parse_imports(file_path: str, repo_root: str) -> dict:
+        """Parse a single Python file for import statements."""
+        import ast
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                source = f.read()
+            tree = ast.parse(source)
+        except (SyntaxError, UnicodeDecodeError):
+            return {'file': file_path, 'imports': [], 'from_imports': []}
+
+        rel_path = os.path.relpath(file_path, repo_root).replace('\\', '/')
+        module_name = rel_path.replace('/', '.').replace('.py', '')
+
+        imports = []
+        from_imports = []
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imports.append({
+                        'module': alias.name,
+                        'alias': alias.asname,
+                        'line': node.lineno,
+                    })
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ''
+                level = node.level  # number of dots in relative import
+                for alias in node.names:
+                    from_imports.append({
+                        'module': module,
+                        'name': alias.name,
+                        'alias': alias.asname,
+                        'level': level,
+                        'line': node.lineno,
+                        'is_relative': level > 0,
+                    })
+
+        return {
+            'file': rel_path,
+            'module': module_name,
+            'imports': imports,
+            'from_imports': from_imports,
+        }
+
+    @staticmethod
+    def build_graph(repo_root: str) -> dict:
+        """Build import graph for all Python files in a repo."""
+        import glob as glob_mod
+
+        py_files = glob_mod.glob(os.path.join(repo_root, '**', '*.py'), recursive=True)
+        if not py_files:
+            return {'success': False, 'error': 'No Python files found'}
+
+        # Parse all files
+        file_data = []
+        for f in py_files:
+            data = ImportGraphBuilder.parse_imports(f, repo_root)
+            file_data.append(data)
+
+        # Build module → file mapping
+        module_to_file = {}
+        for fd in file_data:
+            if fd.get('module'):
+                module_to_file[fd['module']] = fd['file']
+
+        # Build edges: importer → imported
+        nodes = []
+        edges = []
+        external_deps = set()
+
+        for fd in file_data:
+            nodes.append({
+                'id': fd['file'],
+                'module': fd.get('module', ''),
+                'import_count': len(fd['imports']) + len(fd['from_imports']),
+            })
+
+            # Resolve imports
+            for imp in fd['imports']:
+                target_module = imp['module']
+                if target_module in module_to_file:
+                    edges.append({
+                        'from': fd['file'],
+                        'to': module_to_file[target_module],
+                        'type': 'import',
+                        'line': imp['line'],
+                    })
+                else:
+                    external_deps.add(target_module.split('.')[0])
+
+            for imp in fd['from_imports']:
+                target_module = imp['module']
+                # Handle relative imports
+                if imp['is_relative']:
+                    # Resolve relative import
+                    base_parts = fd['module'].split('.')
+                    for _ in range(imp['level']):
+                        if base_parts:
+                            base_parts.pop()
+                    resolved = '.'.join(base_parts + [target_module]) if target_module else '.'.join(base_parts)
+                    if resolved in module_to_file:
+                        edges.append({
+                            'from': fd['file'],
+                            'to': module_to_file[resolved],
+                            'type': 'from_import',
+                            'name': imp['name'],
+                            'line': imp['line'],
+                        })
+                elif target_module in module_to_file:
+                    edges.append({
+                        'from': fd['file'],
+                        'to': module_to_file[target_module],
+                        'type': 'from_import',
+                        'name': imp['name'],
+                        'line': imp['line'],
+                    })
+                else:
+                    ext = target_module.split('.')[0]
+                    external_deps.add(ext)
+
+        # Compute stats
+        in_degree = {}
+        out_degree = {}
+        for e in edges:
+            out_degree[e['from']] = out_degree.get(e['from'], 0) + 1
+            in_degree[e['to']] = in_degree.get(e['to'], 0) + 1
+
+        # Find most imported files (highest in-degree)
+        most_imported = sorted(in_degree.items(), key=lambda x: -x[1])[:5]
+        # Find files with most imports (highest out-degree)
+        most_dependencies = sorted(out_degree.items(), key=lambda x: -x[1])[:5]
+
+        return {
+            'success': True,
+            'nodes': nodes,
+            'edges': edges,
+            'external_deps': sorted(external_deps),
+            'stats': {
+                'total_files': len(nodes),
+                'total_edges': len(edges),
+                'external_deps': len(external_deps),
+                'most_imported': [{'file': f, 'count': c} for f, c in most_imported],
+                'most_dependencies': [{'file': f, 'count': c} for f, c in most_dependencies],
+            },
+        }
+
+
+@app.post("/api/import_graph")
+async def import_graph(req: GitHubAnalyzeRequest):
+    """Build import dependency graph for a GitHub repository."""
+    import subprocess
+    import tempfile
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            clone_cmd = ['git', 'clone', '--depth', '1', req.repo_url, tmp_dir]
+            result = subprocess.run(
+                clone_cmd,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode != 0:
+                return {
+                    'success': False,
+                    'error': f'Failed to clone repo: {result.stderr}',
+                }
+
+            graph = ImportGraphBuilder.build_graph(tmp_dir)
+            graph['repo_url'] = req.repo_url
+            return graph
+
+    except subprocess.TimeoutExpired:
+        return {'success': False, 'error': 'Repository clone timed out'}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+# ─── P14: Execution Feedback Loop API ────────────────────────────
+
+class ActionOutcomeRequest(BaseModel):
+    execution_id: str
+    action_type: str
+    action_title: str
+    step_count_before: int = 0
+    step_count_after: int = 0
+    time_complexity_before: str = ''
+    time_complexity_after: str = ''
+    invariant_violations_before: int = 0
+    invariant_violations_after: int = 0
+    total_calls_before: int = 0
+    total_calls_after: int = 0
+    code_before: str = ''
+    code_after: str = ''
+    user_feedback: Optional[str] = None  # 'accepted', 'rejected', 'modified'
+    notes: str = ''
+
+
+@app.post("/api/action_outcome")
+async def record_action_outcome(req: ActionOutcomeRequest):
+    """P14: Record the outcome of applying an action.
+
+    This closes the observe→reason→act→observe loop.
+    The system learns from each action outcome to improve future suggestions.
+    """
+    from dynamic.semantic_narrator import (
+        get_feedback_loop, ExecutionMetrics
+    )
+
+    feedback_loop = get_feedback_loop()
+
+    # Create pre/post metrics
+    pre_metrics = ExecutionMetrics(
+        step_count=req.step_count_before,
+        time_complexity=req.time_complexity_before,
+        invariant_violations=req.invariant_violations_before,
+        total_calls=req.total_calls_before,
+    )
+    post_metrics = ExecutionMetrics(
+        step_count=req.step_count_after,
+        time_complexity=req.time_complexity_after,
+        invariant_violations=req.invariant_violations_after,
+        total_calls=req.total_calls_after,
+    )
+
+    # Record outcome
+    try:
+        execution = feedback_loop.record_outcome(
+            execution_id=req.execution_id,
+            post_metrics=post_metrics,
+            code_after=req.code_after,
+            user_feedback=req.user_feedback,
+            notes=req.notes,
+        )
+
+        return {
+            'success': True,
+            'execution_id': execution.execution_id,
+            'success': execution.success,
+            'delta_metrics': execution.delta_metrics,
+            'memory_summary': feedback_loop.memory.summary(),
+        }
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+@app.get("/api/feedback_loop_status")
+async def feedback_loop_status():
+    """P14: Get the current state of the feedback loop.
+
+    Returns memory summary, success rates, and policy state.
+    """
+    from dynamic.semantic_narrator import get_feedback_loop
+
+    feedback_loop = get_feedback_loop()
+    return {
+        'success': True,
+        'summary': feedback_loop.summary(),
+    }
+
+
+class PrepareExecutionRequest(BaseModel):
+    action_type: str
+    action_title: str
+    step_count: int = 0
+    time_complexity: str = ''
+    invariant_violations: int = 0
+    total_calls: int = 0
+    code_before: str = ''
+
+
+@app.post("/api/prepare_execution")
+async def prepare_execution(req: PrepareExecutionRequest):
+    """P14: Prepare an action for execution tracking.
+
+    Returns execution_id that should be passed to record_action_outcome.
+    """
+    from dynamic.semantic_narrator import (
+        get_feedback_loop, Action, ExecutionMetrics
+    )
+
+    feedback_loop = get_feedback_loop()
+
+    # Create action and metrics
+    action = Action(
+        action_type=req.action_type,
+        title=req.action_title,
+        description='',
+    )
+    pre_metrics = ExecutionMetrics(
+        step_count=req.step_count,
+        time_complexity=req.time_complexity,
+        invariant_violations=req.invariant_violations,
+        total_calls=req.total_calls,
+    )
+
+    execution_id = feedback_loop.prepare_execution(
+        action=action,
+        pre_metrics=pre_metrics,
+        code_before=req.code_before,
+    )
+
+    return {
+        'success': True,
+        'execution_id': execution_id,
+    }
+
+
+# ─── P15: Memory Consolidation API ───────────────────────────────
+
+@app.get("/api/consolidation_status")
+async def consolidation_status():
+    """P15: Get memory consolidation status.
+
+    Returns experience buffer size, concept memory stats, and consolidation history.
+    """
+    from dynamic.semantic_narrator import get_consolidation_engine
+
+    engine = get_consolidation_engine()
+    return {
+        'success': True,
+        'summary': engine.summary(),
+    }
+
+
+@app.post("/api/consolidate")
+async def trigger_consolidation():
+    """P15: Manually trigger memory consolidation.
+
+    Forces the system to analyze experience buffer and extract concepts.
+    """
+    from dynamic.semantic_narrator import get_consolidation_engine
+
+    engine = get_consolidation_engine()
+    engine.consolidate()
+
+    return {
+        'success': True,
+        'summary': engine.summary(),
+    }
+
+
+class ConceptQueryRequest(BaseModel):
+    action_type: str = ''
+    tags: List[str] = []
+    top_k: int = 10
+
+
+@app.post("/api/query_concepts")
+async def query_concepts(req: ConceptQueryRequest):
+    """P15: Query concept memory for relevant concepts.
+
+    Returns concepts matching the given context.
+    """
+    from dynamic.semantic_narrator import get_consolidation_engine
+
+    engine = get_consolidation_engine()
+    context = {}
+
+    if req.action_type:
+        context['action_type'] = req.action_type
+    if req.tags:
+        context['tags'] = req.tags
+
+    concepts = engine.concept_memory.get_relevant(context, top_k=req.top_k)
+
+    return {
+        'success': True,
+        'concepts': [
+            {
+                'concept_id': c.concept_id,
+                'name': c.name,
+                'description': c.description,
+                'pattern': c.pattern,
+                'action_type': c.action_type,
+                'confidence': c.confidence,
+                'evidence_count': c.evidence_count,
+                'success_rate': c.success_rate,
+                'tags': c.tags,
+                'use_count': c.use_count,
+            }
+            for c in concepts
+        ],
+    }
+
+
+@app.get("/api/concept_summary")
+async def concept_summary():
+    """P15: Get concept memory summary.
+
+    Returns aggregated stats about learned concepts.
+    """
+    from dynamic.semantic_narrator import get_consolidation_engine
+
+    engine = get_consolidation_engine()
+    memory = engine.concept_memory
+
+    # Get top concepts by confidence
+    top_concepts = sorted(
+        memory.concepts.values(),
+        key=lambda c: c.confidence,
+        reverse=True
+    )[:10]
+
+    return {
+        'success': True,
+        'summary': memory.summary(),
+        'top_concepts': [
+            {
+                'name': c.name,
+                'description': c.description,
+                'confidence': c.confidence,
+                'evidence_count': c.evidence_count,
+                'success_rate': c.success_rate,
+            }
+            for c in top_concepts
+        ],
+    }
+
+
+# ─── P16: Concept Validation API ─────────────────────────────────
+
+@app.get("/api/validation_status")
+async def validation_status():
+    """P16: Get concept validation status.
+
+    Returns validation history, invalidation stats, and lifecycle distribution.
+    """
+    from dynamic.semantic_narrator import get_validation_engine, get_consolidation_engine
+
+    validation_engine = get_validation_engine()
+    consolidation_engine = get_consolidation_engine()
+
+    # Get lifecycle distribution
+    lifecycle_counts = {}
+    for concept in consolidation_engine.concept_memory.concepts.values():
+        state = getattr(concept, 'lifecycle', 'emerging')
+        lifecycle_counts[state] = lifecycle_counts.get(state, 0) + 1
+
+    return {
+        'success': True,
+        'summary': validation_engine.summary(),
+        'lifecycle_distribution': lifecycle_counts,
+    }
+
+
+@app.post("/api/validate_concepts")
+async def validate_concepts():
+    """P16: Manually trigger concept validation.
+
+    Validates all concepts against recent executions.
+    """
+    from dynamic.semantic_narrator import get_validation_engine, get_consolidation_engine
+
+    validation_engine = get_validation_engine()
+    consolidation_engine = get_consolidation_engine()
+
+    results = validation_engine.validate_all(
+        consolidation_engine.concept_memory,
+        consolidation_engine.experience_buffer
+    )
+
+    return {
+        'success': True,
+        'results': {k: v.value for k, v in results.items()},
+        'summary': validation_engine.summary(),
+    }
+
+
+@app.get("/api/invalid_concepts")
+async def invalid_concepts():
+    """P16: Get all invalid concepts.
+
+    Returns concepts that have been invalidated by counter-examples.
+    """
+    from dynamic.semantic_narrator import get_validation_engine
+
+    validation_engine = get_validation_engine()
+    invalid = validation_engine.invalidator.get_invalid_concepts()
+
+    return {
+        'success': True,
+        'invalid_concepts': [
+            {
+                'concept_id': c.concept_id,
+                'name': c.name,
+                'description': c.description,
+                'confidence': c.confidence,
+                'evidence_count': c.evidence_count,
+                'success_rate': c.success_rate,
+                'reason': validation_engine.invalidator.invalidation_reasons.get(
+                    c.concept_id, 'unknown'
+                ),
+            }
+            for c in invalid
+        ],
+    }
+
+
+@app.get("/api/validation_history")
+async def validation_history(concept_id: str = ''):
+    """P16: Get validation history for a concept.
+
+    Returns lifecycle transitions and validation events.
+    """
+    from dynamic.semantic_narrator import get_validation_engine
+
+    validation_engine = get_validation_engine()
+
+    if concept_id:
+        history = validation_engine.validator.get_validation_history(concept_id)
+    else:
+        history = validation_engine.validator.validation_history[-50:]  # Last 50
+
+    return {
+        'success': True,
+        'history': [
+            {
+                'concept_id': r.concept_id,
+                'timestamp': r.timestamp,
+                'old_state': r.old_state.value,
+                'new_state': r.new_state.value,
+                'reason': r.reason,
+                'evidence_count': r.evidence_count,
+                'success_rate': r.success_rate,
+                'counter_examples': r.counter_examples,
+            }
+            for r in history
+        ],
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

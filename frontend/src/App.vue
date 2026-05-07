@@ -7,9 +7,11 @@ import TimelinePanel from './components/TimelinePanel.vue'
 import GraphPanel from './components/GraphPanel.vue'
 import DSVizPanel from './components/DSVizPanel.vue'
 import StackPanel from './components/StackPanel.vue'
+import GitHubPanel from './components/GitHubPanel.vue'
+import RuntimeReplayPanel from './components/RuntimeReplayPanel.vue'
 import ErrorToast from './components/ErrorToast.vue'
 import { useAnalysisStore } from './store/analysisStore'
-import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps, getPatternNarrative, getSubproblemGraph } from './api/analysis'
+import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps, getPatternNarrative, getSubproblemGraph, getFailureAttribution } from './api/analysis'
 
 const store = useAnalysisStore()
 const componentError = ref('')
@@ -98,12 +100,13 @@ async function runAnalysis() {
       store.explainResult = results[3].value
     }
 
-    // Phase 2: step explanations + pattern recognition + subproblem graph (uses cached session)
+    // Phase 2: step explanations + pattern recognition + subproblem graph + failure attribution
     if (store.sessionId) {
-      const [stepsRes, patternRes, subgraphRes] = await Promise.allSettled([
+      const [stepsRes, patternRes, subgraphRes, failureRes] = await Promise.allSettled([
         getExplainSteps(store.code, store.funcName, store.language, 'mock', '', store.sessionId),
         getPatternNarrative(store.code, store.funcName, store.language, store.sessionId),
         getSubproblemGraph(store.code, store.funcName, store.language),
+        getFailureAttribution(store.code, store.funcName, store.language),
       ])
 
       if (stepsRes.status === 'fulfilled') {
@@ -118,6 +121,10 @@ async function runAnalysis() {
 
       if (subgraphRes.status === 'fulfilled' && subgraphRes.value) {
         store.subproblemGraph = subgraphRes.value
+      }
+
+      if (failureRes.status === 'fulfilled' && failureRes.value?.success) {
+        store.failureAttribution = failureRes.value.attribution
       }
     }
 
@@ -180,25 +187,27 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       </div>
 
       <!-- Tab bar -->
-      <div class="tab-bar" v-if="store.hasResults">
+      <div class="tab-bar" v-if="store.hasResults || store.githubResult">
         <button
-          v-for="tab in (['insight', 'stack', 'dsviz', 'graph', 'timeline'] as const)"
+          v-for="tab in (['insight', 'replay', 'stack', 'dsviz', 'graph', 'timeline', 'github'] as const)"
           :key="tab"
           :class="['tab-btn', { active: store.activeTab === tab }]"
           @click="store.activeTab = tab"
         >
-          {{ tab === 'insight' ? '分析洞察' : tab === 'stack' ? '执行栈' : tab === 'dsviz' ? '数据结构' : tab === 'graph' ? '执行图' : '时间线' }}
+          {{ tab === 'insight' ? '分析洞察' : tab === 'replay' ? '执行回放' : tab === 'stack' ? '执行栈' : tab === 'dsviz' ? '数据结构' : tab === 'graph' ? '执行图' : tab === 'timeline' ? '时间线' : 'GitHub' }}
         </button>
       </div>
 
       <!-- Panels -->
       <div class="panels">
-        <InsightPanel v-if="!store.hasResults && !store.loading" />
+        <InsightPanel v-if="!store.hasResults && !store.loading && !store.githubResult" />
         <InsightPanel v-if="store.activeTab === 'insight' && store.hasResults" />
+        <RuntimeReplayPanel v-if="store.activeTab === 'replay' && store.hasResults" />
         <StackPanel v-if="store.activeTab === 'stack' && store.hasResults" />
         <GraphPanel v-if="store.activeTab === 'graph' && store.hasResults" />
         <DSVizPanel v-if="store.activeTab === 'dsviz' && store.hasResults" />
         <TimelinePanel v-if="store.activeTab === 'timeline' && store.hasResults" />
+        <GitHubPanel v-if="store.activeTab === 'github' && store.githubResult" />
       </div>
     </div>
   </div>

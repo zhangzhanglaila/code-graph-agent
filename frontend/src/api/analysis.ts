@@ -125,6 +125,35 @@ export interface DetectedPattern {
   motifs?: ComputationalMotifData[]
   constraint_summary?: ConstraintSummary
   reasoning_dag?: ReasoningDAG
+  conflicts?: ConflictData[]
+  actions?: ActionData[]
+}
+
+export interface ConflictData {
+  fact_a: string
+  fact_b: string
+  kind: string
+  relation_a: string
+  relation_b: string
+  subject: string
+}
+
+export interface ActionData {
+  action_type: string
+  title: string
+  description: string
+  priority: number
+  confidence: number
+  target_line?: number
+  target_variable?: string
+  evidence: string[]
+  preconditions: string[]
+  expected_outcome: string
+  effort: string
+  impact: string
+  from_goal?: string
+  from_invariant?: string
+  from_counterfactual?: string
 }
 
 export interface InsightResponse {
@@ -466,4 +495,363 @@ export async function getSubproblemGraph(code: string, funcName = '', language =
   const data = await res.json()
   if (!res.ok || data.success === false) return null
   return data
+}
+
+
+// ─── GitHub Repository Analysis ──────────────────────────────────
+
+export interface GitHubAnalyzeRequest {
+  repo_url: string
+  file_path?: string
+  func_name?: string
+  max_files?: number
+}
+
+export interface GitHubFileAnalysis {
+  file: string
+  code_lines?: number
+  insight?: {
+    one_liner?: string
+    algorithm_type?: string
+    confidence?: number
+    patterns?: { name: string; confidence: number; description: string }[]
+  }
+  total_steps?: number
+  func_name?: string
+  error?: string
+}
+
+export interface GitHubAnalyzeResponse {
+  success: boolean
+  error?: string
+  error_type?: string
+  repo_url?: string
+  summary?: {
+    total_files: number
+    analyzed_files: number
+    total_lines: number
+    total_execution_steps: number
+    top_patterns: { name: string; count: number }[]
+  }
+  files?: GitHubFileAnalysis[]
+}
+
+export async function analyzeGitHubRepo(req: GitHubAnalyzeRequest): Promise<GitHubAnalyzeResponse> {
+  const res = await fetch(`${API_BASE}/api/github_analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  return res.json()
+}
+
+
+// ─── Failure Attribution API ──────────────────────────────────────
+
+export interface FailureFinding {
+  type: string
+  severity: 'healthy' | 'warning' | 'error' | 'critical'
+  title: string
+  description: string
+  steps: number[]
+  suggestion: string
+}
+
+export interface FailureAttributionResult {
+  success: boolean
+  error?: string
+  func_name?: string
+  attribution?: {
+    success: boolean
+    severity: 'healthy' | 'warning' | 'error' | 'critical'
+    summary: string
+    findings: FailureFinding[]
+    total_steps: number
+    max_depth: number
+  }
+}
+
+export async function getFailureAttribution(code: string, funcName: string, language: string): Promise<FailureAttributionResult> {
+  const res = await fetch(`${API_BASE}/api/failure_attribution`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, language }),
+  })
+  return res.json()
+}
+
+
+// ─── Cross-file Import Graph API ─────────────────────────────────
+
+export interface ImportGraphNode {
+  id: string
+  module: string
+  import_count: number
+}
+
+export interface ImportGraphEdge {
+  from: string
+  to: string
+  type: 'import' | 'from_import'
+  name?: string
+  line?: number
+}
+
+export interface ImportGraphResult {
+  success: boolean
+  error?: string
+  repo_url?: string
+  nodes?: ImportGraphNode[]
+  edges?: ImportGraphEdge[]
+  external_deps?: string[]
+  stats?: {
+    total_files: number
+    total_edges: number
+    external_deps: number
+    most_imported: { file: string; count: number }[]
+    most_dependencies: { file: string; count: number }[]
+  }
+}
+
+export async function getImportGraph(req: GitHubAnalyzeRequest): Promise<ImportGraphResult> {
+  const res = await fetch(`${API_BASE}/api/import_graph`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  return res.json()
+}
+
+
+// ─── P14: Execution Feedback Loop API ────────────────────────────
+
+export interface ActionOutcomeRequest {
+  execution_id: string
+  action_type: string
+  action_title: string
+  step_count_before?: number
+  step_count_after?: number
+  time_complexity_before?: string
+  time_complexity_after?: string
+  invariant_violations_before?: number
+  invariant_violations_after?: number
+  total_calls_before?: number
+  total_calls_after?: number
+  code_before?: string
+  code_after?: string
+  user_feedback?: 'accepted' | 'rejected' | 'modified'
+  notes?: string
+}
+
+export interface ActionOutcomeResponse {
+  success: boolean
+  execution_id?: string
+  delta_metrics?: Record<string, number>
+  memory_summary?: {
+    total_executions: number
+    success_rates: Record<string, number>
+    title_success_rates: Record<string, number>
+    best_actions: [string, number][]
+    worst_actions: [string, number][]
+  }
+  error?: string
+}
+
+export interface FeedbackLoopStatus {
+  success: boolean
+  summary?: {
+    memory: {
+      total_executions: number
+      success_rates: Record<string, number>
+      title_success_rates: Record<string, number>
+      best_actions: [string, number][]
+      worst_actions: [string, number][]
+    }
+    pending_executions: number
+    policy: {
+      exploration_rate: number
+    }
+  }
+}
+
+export async function recordActionOutcome(req: ActionOutcomeRequest): Promise<ActionOutcomeResponse> {
+  const res = await fetch(`${API_BASE}/api/action_outcome`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  return res.json()
+}
+
+export async function getFeedbackLoopStatus(): Promise<FeedbackLoopStatus> {
+  const res = await fetch(`${API_BASE}/api/feedback_loop_status`)
+  return res.json()
+}
+
+export interface PrepareExecutionRequest {
+  action_type: string
+  action_title: string
+  step_count?: number
+  time_complexity?: string
+  invariant_violations?: number
+  total_calls?: number
+  code_before?: string
+}
+
+export interface PrepareExecutionResponse {
+  success: boolean
+  execution_id?: string
+}
+
+export async function prepareExecution(req: PrepareExecutionRequest): Promise<PrepareExecutionResponse> {
+  const res = await fetch(`${API_BASE}/api/prepare_execution`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  return res.json()
+}
+
+
+// ─── P15: Memory Consolidation API ───────────────────────────────
+
+export interface ConsolidationStatus {
+  success: boolean
+  summary?: {
+    experience_buffer_size: number
+    consolidation_count: number
+    last_consolidation: number
+    concept_memory: {
+      total_concepts: number
+      by_type: Record<string, number>
+      avg_confidence: number
+      avg_evidence: number
+    }
+  }
+}
+
+export interface ConceptData {
+  concept_id: string
+  name: string
+  description: string
+  pattern: string
+  action_type: string
+  confidence: number
+  evidence_count: number
+  success_rate: number
+  tags: string[]
+  use_count: number
+}
+
+export interface ConceptQueryRequest {
+  action_type?: string
+  tags?: string[]
+  top_k?: number
+}
+
+export interface ConceptQueryResponse {
+  success: boolean
+  concepts?: ConceptData[]
+}
+
+export interface ConceptSummaryResponse {
+  success: boolean
+  summary?: {
+    total_concepts: number
+    by_type: Record<string, number>
+    avg_confidence: number
+    avg_evidence: number
+  }
+  top_concepts?: {
+    name: string
+    description: string
+    confidence: number
+    evidence_count: number
+    success_rate: number
+  }[]
+}
+
+export async function getConsolidationStatus(): Promise<ConsolidationStatus> {
+  const res = await fetch(`${API_BASE}/api/consolidation_status`)
+  return res.json()
+}
+
+export async function triggerConsolidation(): Promise<{ success: boolean; summary?: any }> {
+  const res = await fetch(`${API_BASE}/api/consolidate`, { method: 'POST' })
+  return res.json()
+}
+
+export async function queryConcepts(req: ConceptQueryRequest): Promise<ConceptQueryResponse> {
+  const res = await fetch(`${API_BASE}/api/query_concepts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  return res.json()
+}
+
+export async function getConceptSummary(): Promise<ConceptSummaryResponse> {
+  const res = await fetch(`${API_BASE}/api/concept_summary`)
+  return res.json()
+}
+
+
+// ─── P16: Concept Validation API ─────────────────────────────────
+
+export interface ValidationStatus {
+  success: boolean
+  summary?: {
+    validation_count: number
+    last_validation: number
+    invalidator: {
+      total_invalidated: number
+      reasons: Record<string, string>
+    }
+    validator_history_count: number
+  }
+  lifecycle_distribution?: Record<string, number>
+}
+
+export interface InvalidConcept {
+  concept_id: string
+  name: string
+  description: string
+  confidence: number
+  evidence_count: number
+  success_rate: number
+  reason: string
+}
+
+export interface ValidationHistoryEntry {
+  concept_id: string
+  timestamp: number
+  old_state: string
+  new_state: string
+  reason: string
+  evidence_count: number
+  success_rate: number
+  counter_examples: string[]
+}
+
+export async function getValidationStatus(): Promise<ValidationStatus> {
+  const res = await fetch(`${API_BASE}/api/validation_status`)
+  return res.json()
+}
+
+export async function validateConcepts(): Promise<{ success: boolean; results?: Record<string, string>; summary?: any }> {
+  const res = await fetch(`${API_BASE}/api/validate_concepts`, { method: 'POST' })
+  return res.json()
+}
+
+export async function getInvalidConcepts(): Promise<{ success: boolean; invalid_concepts?: InvalidConcept[] }> {
+  const res = await fetch(`${API_BASE}/api/invalid_concepts`)
+  return res.json()
+}
+
+export async function getValidationHistory(conceptId?: string): Promise<{ success: boolean; history?: ValidationHistoryEntry[] }> {
+  const url = conceptId
+    ? `${API_BASE}/api/validation_history?concept_id=${conceptId}`
+    : `${API_BASE}/api/validation_history`
+  const res = await fetch(url)
+  return res.json()
 }

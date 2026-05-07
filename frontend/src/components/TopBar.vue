@@ -1,11 +1,52 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useAnalysisStore } from '../store/analysisStore'
+import { analyzeGitHubRepo, getImportGraph } from '../api/analysis'
 
 const store = useAnalysisStore()
 const emit = defineEmits<{
   analyze: []
   demo: [name: string]
 }>()
+
+const githubUrl = ref('')
+const githubLoading = ref(false)
+const githubError = ref('')
+
+async function analyzeGithub() {
+  if (!githubUrl.value.trim()) return
+
+  githubLoading.value = true
+  githubError.value = ''
+
+  try {
+    const result = await analyzeGitHubRepo({
+      repo_url: githubUrl.value.trim(),
+      max_files: 5,
+    })
+
+    if (result.success && result.files) {
+      // Load first analyzed file into editor
+      const firstFile = result.files.find(f => !f.error)
+      if (firstFile) {
+        // We need to get the code from the file - for now, show summary
+        store.githubResult = result
+        store.activeTab = 'github'
+      }
+
+      // Fetch import graph in background
+      getImportGraph({ repo_url: githubUrl.value.trim(), max_files: 20 })
+        .then(graph => { store.importGraph = graph })
+        .catch(() => {})
+    } else {
+      githubError.value = result.error || 'Analysis failed'
+    }
+  } catch (e: any) {
+    githubError.value = e.message
+  } finally {
+    githubLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -17,6 +58,26 @@ const emit = defineEmits<{
     </div>
 
     <div class="actions">
+      <!-- GitHub URL input -->
+      <div class="github-group">
+        <input
+          v-model="githubUrl"
+          type="text"
+          placeholder="GitHub 仓库 URL"
+          class="github-input"
+          @keyup.enter="analyzeGithub"
+        />
+        <button
+          class="btn btn-secondary btn-sm"
+          :disabled="githubLoading || !githubUrl.trim()"
+          @click="analyzeGithub"
+        >
+          <span v-if="githubLoading" class="animate-pulse">分析中...</span>
+          <span v-else>分析仓库</span>
+        </button>
+        <span v-if="githubError" class="github-error">{{ githubError }}</span>
+      </div>
+
       <div class="demo-group">
         <span class="demo-label">试试：</span>
         <button class="btn btn-secondary btn-sm" @click="emit('demo', 'fibonacci')">Fibonacci</button>
@@ -90,5 +151,35 @@ const emit = defineEmits<{
 .btn-sm {
   padding: 4px 12px;
   font-size: 12px;
+}
+
+.github-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.github-input {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  width: 200px;
+}
+
+.github-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.github-error {
+  font-size: 11px;
+  color: var(--error);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
