@@ -601,6 +601,41 @@ export interface ControlEdge {
   condition_reads?: string[]
 }
 
+export interface CallGraphEntry {
+  call_id: number
+  parent_call_id: number | null
+  function: string
+  args: Record<string, string>
+  return_value: string | null
+  depth: number
+  start_line: number
+  end_line: number | null
+}
+
+export interface ParameterBindingEntry {
+  call_id: number
+  caller_var: string
+  callee_param: string
+  is_alias: boolean
+  caller_step: number
+}
+
+export interface ReturnBindingEntry {
+  call_id: number
+  return_step: number
+  caller_step: number
+  assigned_to: string | null
+}
+
+export interface DataDependencyEntry {
+  source_step: number
+  target_step: number
+  variable: string
+  source_version: number
+  target_version: number
+  dependency_type: string
+}
+
 export interface CausalChainResult {
   success: boolean
   error?: string
@@ -616,6 +651,28 @@ export interface CausalChainResult {
     control_edges?: ControlEdge[]
     graph_stats?: { total_edges: number; unique_vars: number; max_fan_in: number; versioned?: boolean }
   }
+  call_graph?: CallGraphEntry[]
+  parameter_bindings?: ParameterBindingEntry[]
+  return_bindings?: ReturnBindingEntry[]
+  data_dependencies?: DataDependencyEntry[]
+  block_meta?: Record<string, { parent: number; indent: number; condition_step: number }>
+  pdg_stats?: {
+    nodes: number
+    edges: number
+    edge_kinds: Record<string, number>
+    variables: number
+    max_depth: number
+    functions: number
+  }
+  backward_slice?: {
+    target_step: number
+    target_var: string
+    steps: number[]
+    root_causes: number[]
+    depth_map: Record<string, number>
+    explanation: string[]
+    edge_count: number
+  }
 }
 
 export async function getCausalChain(code: string, funcName: string, language: string): Promise<CausalChainResult> {
@@ -623,6 +680,130 @@ export async function getCausalChain(code: string, funcName: string, language: s
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language }),
+  })
+  return res.json()
+}
+
+
+// ─── Backward Slice API ─────────────────────────────────────────
+
+export interface SliceEdge {
+  from: number
+  to: number
+  var: string
+  type: 'data' | 'control' | 'parameter'
+  source_version?: number
+  target_version?: number
+}
+
+export interface BackwardSliceResult {
+  success: boolean
+  error?: string
+  func_name?: string
+  target_step?: number
+  target_var?: string
+  slice_steps?: number[]
+  slice_edges?: SliceEdge[]
+  root_causes?: number[]
+  depth_map?: Record<string, number>
+  explanation?: string[]
+  steps?: Array<{
+    index: number
+    line: number
+    code: string
+    func: string
+    vars: Record<string, { value: string; type: string; changed: boolean; memory_id: number }>
+    depth: number
+    call_id: number
+    ast_reads: string[]
+    ast_writes: string[]
+    ssa_versions: Record<string, number>
+  }>
+  total_timeline_steps?: number
+  slice_size?: number
+  pdg_stats?: {
+    nodes: number
+    edges: number
+    edge_kinds: Record<string, number>
+    variables: number
+    max_depth: number
+    functions: number
+  }
+}
+
+export async function getBackwardSlice(code: string, funcName: string, language: string): Promise<BackwardSliceResult> {
+  const res = await fetch(`${API_BASE}/api/backward_slice`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, language }),
+  })
+  return res.json()
+}
+
+
+// ─── Unified Query API ───────────────────────────────────────────
+
+export interface NarrativeSegment {
+  role: string
+  heading: string
+  content: string
+  priority: number
+}
+
+export interface Narrative {
+  title: string
+  summary: string
+  segments: NarrativeSegment[]
+  variable_stories: Array<{
+    name: string
+    story: string
+    versions: number
+    first_value: string
+    last_value: string
+  }>
+  metadata: Record<string, unknown>
+}
+
+export interface SemanticFact {
+  kind: string
+  subject: string
+  description: string
+  evidence: number[]
+  confidence: number
+  metadata: Record<string, unknown>
+}
+
+export interface QueryResult {
+  success: boolean
+  error?: string
+  type?: string
+  [key: string]: unknown
+}
+
+export async function query(
+  code: string,
+  funcName: string,
+  language: string,
+  query: Record<string, unknown>
+): Promise<QueryResult> {
+  const res = await fetch(`${API_BASE}/api/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, language, query }),
+  })
+  return res.json()
+}
+
+export async function textQuery(
+  code: string,
+  funcName: string,
+  language: string,
+  text: string
+): Promise<QueryResult> {
+  const res = await fetch(`${API_BASE}/api/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, language, text }),
   })
   return res.json()
 }

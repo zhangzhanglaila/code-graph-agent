@@ -25,6 +25,10 @@ from core.graph import CausalGraph
 from static.python_analyzer import PythonAnalyzer
 from static.config_linker import ConfigLinker
 from dynamic.state_recorder import record_function
+from dynamic.pdg import RuntimePDG
+from dynamic.semantic_facts import FactExtractor
+from dynamic.narrative import NarrativeEngine
+from dynamic.query_dsl import parse_query, QueryExecutor
 from dynamic.ds_tracer import trace_ds_function
 from dynamic.exception_parser import ExceptionParser
 from fusion.merge_engine import MergeEngine
@@ -372,9 +376,12 @@ async def get_insight(req: InsightRequest):
                 "alias_groups": step.alias_groups,
                 "container_deltas": step.container_deltas,
                 "depth": step.depth,
-                    "indent": step.indent,
-                    "block_id": step.block_id,
+                "indent": step.indent,
+                "block_id": step.block_id,
                 "call_id": step.call_id,
+                "ast_reads": step.ast_reads,
+                "ast_writes": step.ast_writes,
+                "ssa_versions": step.ssa_versions,
             })
 
         # Enrich with semantic narration (AST-based, rule-engine)
@@ -3342,19 +3349,367 @@ async def causal_chain(req: InsightRequest):
                 "alias_groups": step.alias_groups,
                 "container_deltas": step.container_deltas,
                 "depth": step.depth,
-                    "indent": step.indent,
-                    "block_id": step.block_id,
+                "indent": step.indent,
+                "block_id": step.block_id,
+                "ast_reads": step.ast_reads,
+                "ast_writes": step.ast_writes,
+                "ssa_versions": step.ssa_versions,
             })
 
         # Run causal chain analysis with block structure
         analysis = CausalChainEngine.analyze(steps_data, block_meta=timeline.block_meta)
+
+        # Build call graph from events
+        call_graph = []
+        for evt in timeline.call_events:
+            call_graph.append({
+                "call_id": evt.call_id,
+                "parent_call_id": evt.parent_call_id,
+                "function": evt.function_name,
+                "args": {k: v["value"] for k, v in evt.args.items()},
+                "return_value": evt.return_value["value"] if evt.return_value else None,
+                "depth": evt.depth,
+                "start_line": evt.start_line,
+                "end_line": evt.end_line,
+            })
+
+        # Build parameter bindings
+        param_bindings = []
+        for pb in timeline.parameter_bindings:
+            param_bindings.append({
+                "call_id": pb.call_id,
+                "caller_var": pb.caller_var,
+                "callee_param": pb.callee_param,
+                "is_alias": pb.is_alias,
+                "caller_step": pb.caller_step,
+            })
+
+        # Build return bindings
+        ret_bindings = []
+        for rb in timeline.return_bindings:
+            ret_bindings.append({
+                "call_id": rb.call_id,
+                "return_step": rb.return_step,
+                "caller_step": rb.caller_step,
+                "assigned_to": rb.assigned_to,
+            })
+
+        # Build data dependencies
+        data_deps = []
+        for dd in timeline.data_dependencies:
+            data_deps.append({
+                "source_step": dd.source_step,
+                "target_step": dd.target_step,
+                "variable": dd.variable,
+                "source_version": dd.source_version,
+                "target_version": dd.target_version,
+                "dependency_type": dd.dependency_type,
+            })
+
+        # Build PDG and run backward slice from last step
+        pdg = RuntimePDG.from_timeline(timeline)
+        pdg_stats = pdg.stats()
+
+        # Auto-slice from last step
+        backward = None
+        if timeline.steps:
+            last = timeline.steps[-1]
+            target_var = last.ast_reads[0] if last.ast_reads else (last.ast_writes[0] if last.ast_writes else '')
+            slice_result = pdg.backward_slice(last.step_index, target_var)
+            backward = {
+                'target_step': last.step_index,
+                'target_var': target_var,
+                'steps': slice_result.steps,
+                'root_causes': slice_result.root_causes,
+                'depth_map': {str(k): v for k, v in slice_result.depth_map.items()},
+                'explanation': slice_result.explanation,
+                'edge_count': len(slice_result.edges),
+            }
 
         return {
             "success": True,
             "func_name": func_name,
             "causal_chain": analysis,
             "block_meta": {str(k): v for k, v in timeline.block_meta.items()},
+            "call_graph": call_graph,
+            "parameter_bindings": param_bindings,
+            "return_bindings": ret_bindings,
+            "data_dependencies": data_deps,
+            "pdg_stats": pdg_stats,
+            "backward_slice": backward,
         }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        if func_file and os.path.exists(func_file):
+            try:
+                os.unlink(func_file)
+            except OSError:
+                pass
+
+
+@app.post("/api/backward_slice")
+async def backward_slice(req: InsightRequest):
+    """Dynamic backward slicing — trace from a target step back to root causes."""
+    func_file = None
+    try:
+        func_name = _extract_func_name(req.code, req.func_name)
+        if not func_name:
+            return {"success": False, "error": "No function found in code."}
+
+        module = _import_code_as_module(req.code)
+        func = getattr(module, func_name)
+        func_file = os.path.abspath(func.__code__.co_filename)
+        inferred_args, _ = infer_args(func, req.code)
+        result, timeline = record_function(func, *inferred_args, target_files={func_file})
+
+        # Build PDG
+        pdg = RuntimePDG.from_timeline(timeline)
+
+        # Default target: last step + last read var
+        target_step = len(timeline.steps) - 1
+        target_var = ''
+        if timeline.steps:
+            last_step = timeline.steps[-1]
+            if last_step.ast_reads:
+                target_var = last_step.ast_reads[0]
+            elif last_step.ast_writes:
+                target_var = last_step.ast_writes[0]
+
+        # Allow overriding via func_name field (format: "step:var")
+        if ':' in (req.func_name or ''):
+            parts = req.func_name.split(':')
+            if parts[0].isdigit():
+                target_step = int(parts[0])
+            if len(parts) > 1:
+                target_var = parts[1]
+
+        slice_result = pdg.backward_slice(target_step, target_var)
+
+        # Build steps data for the slice
+        steps_data = []
+        for step in timeline.steps:
+            if step.step_index not in slice_result.steps:
+                continue
+            var_states = {}
+            for name, snap in step.variables.items():
+                vv = slice_result.steps  # just for reference
+                var_states[name] = {
+                    "value": snap.value_repr,
+                    "type": snap.value_type,
+                    "changed": name in step.changed_vars,
+                    "memory_id": snap.memory_id,
+                }
+            steps_data.append({
+                "index": step.step_index,
+                "line": step.line_number,
+                "code": step.code_line,
+                "func": step.function_name,
+                "vars": var_states,
+                "depth": step.depth,
+                "call_id": step.call_id,
+                "ast_reads": step.ast_reads,
+                "ast_writes": step.ast_writes,
+                "ssa_versions": step.ssa_versions,
+            })
+
+        return {
+            "success": True,
+            "func_name": func_name,
+            "target_step": target_step,
+            "target_var": target_var,
+            "slice_steps": slice_result.steps,
+            "slice_edges": [
+                {'from': e.source, 'to': e.target, 'var': e.var, 'type': e.kind}
+                for e in slice_result.edges
+            ],
+            "root_causes": slice_result.root_causes,
+            "depth_map": {str(k): v for k, v in slice_result.depth_map.items()},
+            "explanation": slice_result.explanation,
+            "steps": steps_data,
+            "total_timeline_steps": len(timeline.steps),
+            "slice_size": len(slice_result.steps),
+            "pdg_stats": pdg.stats(),
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        if func_file and os.path.exists(func_file):
+            try:
+                os.unlink(func_file)
+            except OSError:
+                pass
+
+
+# ─── Unified Query API ───────────────────────────────────────────
+
+class QueryRequest(BaseModel):
+    code: str
+    query: dict = {}  # {"type": "backward_slice"|"forward_impact"|..., ...}
+    text: str = ""    # Natural language query: "WHY result", "TRACE memo", etc.
+    func_name: str = ""
+    language: str = "python"
+
+
+@app.post("/api/query")
+async def unified_query(req: QueryRequest):
+    """Unified query endpoint — supports both structured and NL queries.
+
+    Structured queries:
+      {"type": "backward_slice", "target_step": 25, "target_var": "total"}
+      {"type": "forward_impact", "source_step": 0, "source_var": "arr"}
+      {"type": "explain_variable", "var": "a"}
+      {"type": "facts"}
+      {"type": "stats"}
+
+    Natural language queries (via text field):
+      "WHY result"        — backward slice from result
+      "TRACE memo"        — variable evolution story
+      "IMPACT arr"        — forward impact from arr
+      "SHOW mutations"    — find mutation facts
+      "ROOTS total"       — find root causes
+      "COMPARE 5 25"      — compare two steps
+      "STATS"             — graph statistics
+      "HELP"              — show available commands
+    """
+    func_file = None
+    try:
+        func_name = _extract_func_name(req.code, req.func_name)
+        if not func_name:
+            return {"success": False, "error": "No function found in code."}
+
+        module = _import_code_as_module(req.code)
+        func = getattr(module, func_name)
+        func_file = os.path.abspath(func.__code__.co_filename)
+        inferred_args, _ = infer_args(func, req.code)
+        result, timeline = record_function(func, *inferred_args, target_files={func_file})
+
+        pdg = RuntimePDG.from_timeline(timeline)
+        extractor = FactExtractor(pdg)
+        facts = extractor.extract_all()
+        engine = NarrativeEngine(pdg, facts)
+        executor = QueryExecutor(pdg, facts, engine)
+
+        # Natural language query via text field
+        if req.text:
+            parsed = parse_query(req.text)
+            result = executor.execute(parsed)
+            return result
+
+        qtype = req.query.get('type', '')
+
+        if qtype == 'backward_slice':
+            target_step = req.query.get('target_step', len(timeline.steps) - 1)
+            target_var = req.query.get('target_var', '')
+            if not target_var and timeline.steps:
+                last = timeline.steps[target_step] if target_step < len(timeline.steps) else timeline.steps[-1]
+                target_var = last.ast_reads[0] if last.ast_reads else ''
+            sr = pdg.backward_slice(target_step, target_var)
+            narrative = engine.explain_backward_slice(sr)
+            return {
+                "success": True,
+                "type": "backward_slice",
+                "target_step": target_step,
+                "target_var": target_var,
+                "steps": sr.steps,
+                "root_causes": sr.root_causes,
+                "depth_map": {str(k): v for k, v in sr.depth_map.items()},
+                "edge_count": len(sr.edges),
+                "narrative": narrative.to_dict(),
+                "pdg_stats": pdg.stats(),
+            }
+
+        elif qtype == 'forward_impact':
+            source_step = req.query.get('source_step', 0)
+            source_var = req.query.get('source_var', '')
+            sr = pdg.forward_impact(source_step, source_var)
+            narrative = engine.explain_impact(sr)
+            return {
+                "success": True,
+                "type": "forward_impact",
+                "source_step": source_step,
+                "source_var": source_var,
+                "steps": sr.steps,
+                "leaf_nodes": sr.root_causes,
+                "depth_map": {str(k): v for k, v in sr.depth_map.items()},
+                "narrative": narrative.to_dict(),
+            }
+
+        elif qtype == 'explain_variable':
+            var = req.query.get('var', '')
+            narrative = engine.explain_variable(var)
+            return {
+                "success": True,
+                "type": "explain_variable",
+                "var": var,
+                "narrative": narrative.to_dict(),
+                "history": [
+                    {"step": sid, "version": vv.version, "value": vv.value, "type": vv.type}
+                    for sid, vv in pdg.get_variable_history(var)
+                ],
+            }
+
+        elif qtype == 'explain_slice':
+            target_step = req.query.get('target_step', len(timeline.steps) - 1)
+            target_var = req.query.get('target_var', '')
+            if not target_var and timeline.steps:
+                last = timeline.steps[target_step] if target_step < len(timeline.steps) else timeline.steps[-1]
+                target_var = last.ast_reads[0] if last.ast_reads else ''
+            sr = pdg.backward_slice(target_step, target_var)
+            narrative = engine.explain_backward_slice(sr)
+            return {
+                "success": True,
+                "type": "explain_slice",
+                "narrative": narrative.to_dict(),
+                "text": narrative.to_text(),
+            }
+
+        elif qtype == 'facts':
+            return {
+                "success": True,
+                "type": "facts",
+                "facts": [f.to_dict() for f in facts],
+                "count": len(facts),
+            }
+
+        elif qtype == 'stats':
+            return {
+                "success": True,
+                "type": "stats",
+                "pdg": pdg.stats(),
+                "timeline_steps": len(timeline.steps),
+                "data_dependencies": len(timeline.data_dependencies),
+            }
+
+        elif qtype == 'variable_history':
+            var = req.query.get('var', '')
+            history = pdg.get_variable_history(var)
+            return {
+                "success": True,
+                "type": "variable_history",
+                "var": var,
+                "history": [
+                    {"step": sid, "version": vv.version, "value": vv.value, "type": vv.type, "memory_id": vv.memory_id}
+                    for sid, vv in history
+                ],
+            }
+
+        elif qtype == 'version_chain':
+            var = req.query.get('var', '')
+            chain = pdg.get_version_chain(var)
+            return {
+                "success": True,
+                "type": "version_chain",
+                "var": var,
+                "chain": [
+                    {"source": e.source, "target": e.target, "source_version": e.source_version, "target_version": e.target_version}
+                    for e in chain
+                ],
+            }
+
+        else:
+            return {"success": False, "error": f"Unknown query type: {qtype}"}
+
     except Exception as e:
         return {"success": False, "error": str(e)}
     finally:

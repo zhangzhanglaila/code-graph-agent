@@ -40,7 +40,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   // State
   const loading = ref(false)
   const error = ref('')
-  const activeTab = ref<'insight' | 'replay' | 'stack' | 'dsviz' | 'graph' | 'timeline' | 'github'>('insight')
+  const activeTab = ref<'insight' | 'replay' | 'console' | 'semantics' | 'stack' | 'dsviz' | 'graph' | 'timeline' | 'github'>('insight')
   const sessionId = ref('')
   const showAllSteps = ref(false)
 
