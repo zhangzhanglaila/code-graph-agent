@@ -253,6 +253,22 @@ function findingStepsInRange(finding: any): boolean {
   if (!finding.steps?.length) return false
   return finding.steps.includes(replayStep.value)
 }
+
+// ─── Causal Chain ────────────────────────────────────────────────
+const causal = computed(() => store.causalChain)
+const causalChainLinks = computed(() => causal.value?.causal_chain || [])
+const causalSentences = computed(() => causal.value?.causal_sentences || [])
+const causalDistance = computed(() => causal.value?.causal_distance || 0)
+const divergencePoint = computed(() => causal.value?.divergence_point)
+
+function isCausalStep(stepIdx: number): boolean {
+  return causalChainLinks.value.some((l: any) => l.step === stepIdx)
+}
+
+function getCausalRole(stepIdx: number): string {
+  const link = causalChainLinks.value.find((l: any) => l.step === stepIdx)
+  return link?.role || ''
+}
 </script>
 
 <template>
@@ -353,6 +369,8 @@ function findingStepsInRange(finding: any): boolean {
                 prev: prevStep?.line === i + 1 && currentStep?.line !== i + 1,
                 jumpTarget: lineJumps.isJump && lineJumps.to === i + 1,
                 jumpSource: lineJumps.isJump && lineJumps.from === i + 1,
+                causalRoot: causalChainLinks.some(l => l.line === i + 1 && l.role === 'root_cause'),
+                causalContrib: causalChainLinks.some(l => l.line === i + 1 && l.role === 'contributor'),
               }]"
             >
               <span class="line-num">{{ i + 1 }}</span>
@@ -478,6 +496,47 @@ function findingStepsInRange(finding: any): boolean {
               />
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Causal Chain Visualization -->
+      <div v-if="causalChainLinks.length > 0" class="causal-bar">
+        <div class="causal-header">
+          <span class="causal-icon">🔗</span>
+          <span class="causal-title">Causal Chain</span>
+          <span class="causal-distance">distance: {{ causalDistance }}</span>
+        </div>
+
+        <!-- Chain links -->
+        <div class="causal-chain">
+          <div
+            v-for="(link, i) in causalChainLinks"
+            :key="i"
+            :class="['causal-link', `role-${link.role}`]"
+            @click="replayStep = link.step"
+          >
+            <span class="link-role">{{ link.role === 'root_cause' ? 'ROOT' : link.role === 'failure_point' ? 'FAIL' : '→' }}</span>
+            <span class="link-var">`{{ link.version || link.var }}`</span>
+            <span class="link-eq">=</span>
+            <span class="link-value">{{ link.value?.slice(0, 20) }}</span>
+            <span class="link-step">step {{ link.step }}</span>
+            <span class="link-line">L{{ link.line }}</span>
+          </div>
+        </div>
+
+        <!-- Causal sentences -->
+        <div v-if="causalSentences.length" class="causal-sentences">
+          <div v-for="(s, i) in causalSentences" :key="i" class="causal-sentence">
+            {{ s }}
+          </div>
+        </div>
+
+        <!-- Divergence point -->
+        <div v-if="divergencePoint" class="divergence-point">
+          <span class="divergence-icon">⚠</span>
+          <span class="divergence-text">
+            Divergence at step {{ divergencePoint.step }}: `{{ divergencePoint.var }}` = {{ divergencePoint.value }}
+          </span>
         </div>
       </div>
 
@@ -1263,5 +1322,157 @@ function findingStepsInRange(finding: any): boolean {
   color: var(--text-muted);
   font-family: monospace;
   margin-top: 4px;
+}
+
+/* ─── Code line causal highlights ─────────────────────── */
+.code-line.causalRoot {
+  background: rgba(239, 68, 68, 0.1);
+  border-left: 3px solid #ef4444;
+  padding-left: 5px;
+}
+
+.code-line.causalContrib {
+  background: rgba(245, 158, 11, 0.08);
+  border-left: 3px solid #f59e0b;
+  padding-left: 5px;
+}
+
+/* ─── Causal chain bar ────────────────────────────────── */
+.causal-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(59, 130, 246, 0.03);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-radius: 6px;
+}
+
+.causal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.causal-icon {
+  font-size: 16px;
+}
+
+.causal-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.causal-distance {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+  font-family: monospace;
+}
+
+.causal-chain {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.causal-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: monospace;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.causal-link:hover {
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.causal-link.role-root_cause {
+  border-left: 3px solid #ef4444;
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.causal-link.role-contributor {
+  border-left: 3px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.03);
+}
+
+.causal-link.role-failure_point {
+  border-left: 3px solid var(--primary);
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.link-role {
+  font-size: 9px;
+  font-weight: 700;
+  min-width: 30px;
+  color: var(--text-muted);
+}
+
+.role-root_cause .link-role { color: #ef4444; }
+.role-failure_point .link-role { color: var(--primary); }
+
+.link-var {
+  color: #8b5cf6;
+  font-weight: 600;
+}
+
+.link-eq {
+  color: var(--text-muted);
+}
+
+.link-value {
+  color: #10b981;
+}
+
+.link-step {
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.link-line {
+  color: var(--text-muted);
+  min-width: 24px;
+  text-align: right;
+}
+
+.causal-sentences {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  background: rgba(148, 163, 184, 0.04);
+  border-radius: 4px;
+}
+
+.causal-sentence {
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.divergence-point {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(239, 68, 68, 0.06);
+  border-radius: 4px;
+}
+
+.divergence-icon {
+  color: #ef4444;
+}
+
+.divergence-text {
+  font-size: 11px;
+  color: #ef4444;
+  font-family: monospace;
 }
 </style>

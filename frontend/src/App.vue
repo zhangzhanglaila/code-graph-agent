@@ -11,7 +11,7 @@ import GitHubPanel from './components/GitHubPanel.vue'
 import RuntimeReplayPanel from './components/RuntimeReplayPanel.vue'
 import ErrorToast from './components/ErrorToast.vue'
 import { useAnalysisStore } from './store/analysisStore'
-import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps, getPatternNarrative, getSubproblemGraph, getFailureAttribution } from './api/analysis'
+import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps, getPatternNarrative, getSubproblemGraph, getFailureAttribution, getCausalChain } from './api/analysis'
 
 const store = useAnalysisStore()
 const componentError = ref('')
@@ -102,11 +102,12 @@ async function runAnalysis() {
 
     // Phase 2: step explanations + pattern recognition + subproblem graph + failure attribution
     if (store.sessionId) {
-      const [stepsRes, patternRes, subgraphRes, failureRes] = await Promise.allSettled([
+      const [stepsRes, patternRes, subgraphRes, failureRes, causalRes] = await Promise.allSettled([
         getExplainSteps(store.code, store.funcName, store.language, 'mock', '', store.sessionId),
         getPatternNarrative(store.code, store.funcName, store.language, store.sessionId),
         getSubproblemGraph(store.code, store.funcName, store.language),
         getFailureAttribution(store.code, store.funcName, store.language),
+        getCausalChain(store.code, store.funcName, store.language),
       ])
 
       if (stepsRes.status === 'fulfilled') {
@@ -125,6 +126,10 @@ async function runAnalysis() {
 
       if (failureRes.status === 'fulfilled' && failureRes.value?.success) {
         store.failureAttribution = failureRes.value.attribution
+      }
+
+      if (causalRes.status === 'fulfilled' && causalRes.value?.success) {
+        store.causalChain = causalRes.value.causal_chain
       }
     }
 

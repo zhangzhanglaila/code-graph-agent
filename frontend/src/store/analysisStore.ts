@@ -59,6 +59,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const githubResult = ref<GitHubAnalyzeResponse | null>(null)
   const failureAttribution = ref<any>(null)
   const importGraph = ref<any>(null)
+  const causalChain = ref<any>(null)
 
   // Timeline state
   const currentStep = ref(0)
@@ -646,6 +647,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     subproblemGraph.value = null
     failureAttribution.value = null
     importGraph.value = null
+    causalChain.value = null
     sessionId.value = ''
     currentStep.value = 0
     explainMode.value = false
@@ -686,7 +688,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     insightResult, analyzeResult, dsVizResult, explainResult,
     stepExplanations, controlEdges, loopGroups,
     focusedExplanation, focusLoading, patternResult, subproblemGraph, explainMode,
-    githubResult, failureAttribution, importGraph,
+    githubResult, failureAttribution, importGraph, causalChain,
     sessionId, showAllSteps, importantSteps,
     currentStep, isPlaying, playSpeed,
     highlightedLine,

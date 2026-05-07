@@ -581,6 +581,53 @@ export async function getFailureAttribution(code: string, funcName: string, lang
 }
 
 
+// ─── Causal Chain API ────────────────────────────────────────────
+
+export interface CausalLink {
+  step: number
+  var: string
+  version?: string
+  value: string
+  code: string
+  line: number
+  depth: number
+  role: 'root_cause' | 'contributor' | 'failure_point'
+}
+
+export interface ControlEdge {
+  condition_step: number
+  branch_step: number
+  condition_code: string
+  condition_reads?: string[]
+}
+
+export interface CausalChainResult {
+  success: boolean
+  error?: string
+  func_name?: string
+  causal_chain?: {
+    success: boolean
+    failure_point?: { type: string; step: number; code: string; line: number }
+    target_var?: string
+    causal_chain?: CausalLink[]
+    causal_sentences?: string[]
+    causal_distance?: number
+    divergence_point?: CausalLink | null
+    control_edges?: ControlEdge[]
+    graph_stats?: { total_edges: number; unique_vars: number; max_fan_in: number; versioned?: boolean }
+  }
+}
+
+export async function getCausalChain(code: string, funcName: string, language: string): Promise<CausalChainResult> {
+  const res = await fetch(`${API_BASE}/api/causal_chain`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, language }),
+  })
+  return res.json()
+}
+
+
 // ─── Cross-file Import Graph API ─────────────────────────────────
 
 export interface ImportGraphNode {

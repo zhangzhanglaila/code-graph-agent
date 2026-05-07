@@ -355,6 +355,8 @@ async def get_insight(req: InsightRequest):
                     "type": snap.value_type,
                     "changed": name in step.changed_vars,
                     "is_new": name in step.new_vars,
+                    "memory_id": snap.memory_id,
+                    "is_alias_of": snap.is_reference_to,
                 }
             steps_data.append({
                 "index": step.step_index,
@@ -365,7 +367,13 @@ async def get_insight(req: InsightRequest):
                 "vars": var_states,
                 "changed": step.changed_vars,
                 "new_vars": step.new_vars,
+                "mutated": step.mutated_vars,
+                "rebound": step.rebound_vars,
+                "alias_groups": step.alias_groups,
+                "container_deltas": step.container_deltas,
                 "depth": step.depth,
+                    "indent": step.indent,
+                    "block_id": step.block_id,
                 "call_id": step.call_id,
             })
 
@@ -514,6 +522,8 @@ async def get_ds_viz(req: DSVizRequest):
                 "var_bindings": var_bindings,
                 "changed_objects": step.changed_objects,
                 "depth": step.depth,
+                    "indent": step.indent,
+                    "block_id": step.block_id,
                 "call_id": step.call_id,
             })
 
@@ -600,6 +610,8 @@ async def explain_code(req: ExplainRequest):
                 "vars": var_states,
                 "changed": step.changed_vars or step.new_vars,
                 "depth": step.depth,
+                    "indent": step.indent,
+                    "block_id": step.block_id,
             })
 
         # Format lineage for LLM
@@ -696,6 +708,8 @@ async def explain_steps(req: ExplainStepsRequest):
                     "changed": step.changed_vars,
                     "new_vars": step.new_vars,
                     "depth": step.depth,
+                    "indent": step.indent,
+                    "block_id": step.block_id,
                 })
             code = req.code
 
@@ -806,6 +820,8 @@ async def explain_step_focus(req: ExplainStepFocusRequest):
                     "vars": var_states,
                     "changed": step.changed_vars,
                     "depth": step.depth,
+                    "indent": step.indent,
+                    "block_id": step.block_id,
                 })
             code = req.code
 
@@ -1260,6 +1276,8 @@ async def pattern_narrative(req: ExplainStepsRequest):
                     "code": step.code_line, "vars": var_states,
                     "changed": step.changed_vars, "new_vars": list(step.new_vars),
                     "depth": step.depth,
+                    "indent": step.indent,
+                    "block_id": step.block_id,
                 })
             code = req.code
 
@@ -2891,6 +2909,8 @@ async def failure_attribution(req: InsightRequest):
                     "type": snap.value_type,
                     "changed": name in step.changed_vars,
                     "is_new": name in step.new_vars,
+                    "memory_id": snap.memory_id,
+                    "is_alias_of": snap.is_reference_to,
                 }
             steps_data.append({
                 "index": step.step_index,
@@ -2900,7 +2920,13 @@ async def failure_attribution(req: InsightRequest):
                 "vars": var_states,
                 "changed": step.changed_vars,
                 "new_vars": step.new_vars,
+                "mutated": step.mutated_vars,
+                "rebound": step.rebound_vars,
+                "alias_groups": step.alias_groups,
+                "container_deltas": step.container_deltas,
                 "depth": step.depth,
+                    "indent": step.indent,
+                    "block_id": step.block_id,
             })
 
         # Run failure attribution
@@ -2910,6 +2936,424 @@ async def failure_attribution(req: InsightRequest):
             "success": True,
             "func_name": func_name,
             "attribution": attribution,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        if func_file and os.path.exists(func_file):
+            try:
+                os.unlink(func_file)
+            except OSError:
+                pass
+
+
+# ─── Causal Chain Engine ──────────────────────────────────────────
+
+class CausalChainEngine:
+    """SSA-like versioned causal chain engine.
+
+    Key upgrade from v1: each variable assignment creates a new VERSION.
+    x = 1  →  x#1
+    x = 2  →  x#2
+    x = 3  →  x#3
+
+    Edges connect specific versions: x#1 → y#1, x#2 → z#1
+    This eliminates ambiguity in loops, reassignment, and mutation.
+
+    Architecture:
+    1. SSA versioning: track var versions (x#1, x#2, ...)
+    2. Versioned dependency graph: edges between specific versions
+    3. Control dependency tracking: condition → branch nodes
+    4. Backward slice: trace versioned dependencies from failure
+    5. Causal chain: ordered sequence with version provenance
+    """
+
+    PYTHON_KEYWORDS = {
+        'if', 'else', 'elif', 'for', 'while', 'return', 'def', 'class',
+        'import', 'from', 'as', 'with', 'try', 'except', 'finally',
+        'and', 'or', 'not', 'in', 'is', 'True', 'False', 'None',
+        'range', 'len', 'int', 'str', 'float', 'list', 'dict', 'set',
+        'sorted', 'sum', 'min', 'max', 'abs', 'append', 'extend',
+        'print', 'type', 'isinstance', 'enumerate', 'zip', 'map', 'filter',
+    }
+
+    @staticmethod
+    def build_dependency_graph(steps: list[dict], block_meta: dict = None) -> dict:
+        """Build SSA-like versioned dependency graph.
+
+        Each variable write creates a new version: var#N
+        Edges connect specific versions: var#N → var#M
+
+        Args:
+            steps: execution trace steps
+            block_meta: block_id → {parent, indent, condition_step} from tracer
+
+        Returns:
+        - versions: {var#N: {var, version, step, value, code, line}}
+        - current_version: {var: var#N} — latest version of each var
+        - step_versions: {step: {reads: [var#N], writes: [var#N]}}
+        - edges: [{from: var#N, to: var#M, step_from, step_to, type}]
+        - control_edges: [{condition_step, branch_step, condition_code, block_id}]
+        - var_version_count: {var: count} — how many versions exist
+        """
+        import re
+
+        versions = {}          # var#N → metadata
+        current_version = {}   # var → var#N (latest version)
+        var_version_count = {} # var → count of versions
+        step_versions = {}     # step → {reads, writes}
+        edges = []
+        control_edges = []
+        if block_meta is None:
+            block_meta = {}
+
+        for step in steps:
+            idx = step.get('index', 0)
+            code = step.get('code', '').strip()
+            changed = step.get('changed', [])
+            new_vars = step.get('new_vars', [])
+            all_vars = list((step.get('vars') or {}).keys())
+            line = step.get('line', 0)
+
+            writes = list(set(changed + new_vars))
+            write_set = set(writes)
+
+            # Parse RHS for reads — use versioned names
+            # With SSA, x#1 → x#2 is valid even when x is on both sides
+            parts = code.split('=', 1)
+            rhs = parts[1] if len(parts) > 1 else code
+            rhs_tokens = set(re.findall(r'\b([a-zA-Z_]\w*)\b', rhs))
+            read_vars = [v for v in all_vars if v in rhs_tokens and v not in CausalChainEngine.PYTHON_KEYWORDS]
+
+            # Create versioned read names (use current version of each read var)
+            read_versions = []
+            for v in read_vars:
+                ver = current_version.get(v)
+                if ver:
+                    read_versions.append(ver)
+
+            # Create versioned write names (increment version)
+            write_versions = []
+            for v in writes:
+                count = var_version_count.get(v, 0) + 1
+                var_version_count[v] = count
+                ver_name = f'{v}#{count}'
+                current_version[v] = ver_name
+                write_versions.append(ver_name)
+
+                # Record version metadata
+                val = (step.get('vars') or {}).get(v, {}).get('value', '')
+                versions[ver_name] = {
+                    'var': v,
+                    'version': count,
+                    'step': idx,
+                    'value': val,
+                    'code': code,
+                    'line': line,
+                }
+
+            step_versions[idx] = {
+                'reads': read_versions,
+                'writes': write_versions,
+                'code': code,
+                'line': line,
+            }
+
+            # Create edges: read_version → write_version
+            for rv in read_versions:
+                for wv in write_versions:
+                    edges.append({
+                        'from': rv,
+                        'to': wv,
+                        'step_from': versions[rv]['step'],
+                        'step_to': idx,
+                        'type': 'data_flow',
+                    })
+
+            # Control dependency: use block_id from tracer's indent-based block tracking
+            block_id = step.get('block_id', 0)
+            if block_id and block_meta:
+                block_info = block_meta.get(block_id, {})
+                cond_step = block_info.get('condition_step', -1)
+                if cond_step >= 0 and cond_step != idx:
+                    cond_code = steps[cond_step].get('code', '') if cond_step < len(steps) else ''
+                    cond_reads = step_versions.get(cond_step, {}).get('reads', [])
+                    control_edges.append({
+                        'condition_step': cond_step,
+                        'branch_step': idx,
+                        'condition_code': cond_code,
+                        'condition_reads': cond_reads,
+                        'block_id': block_id,
+                    })
+
+        return {
+            'versions': versions,
+            'current_version': current_version,
+            'var_version_count': var_version_count,
+            'step_versions': step_versions,
+            'edges': edges,
+            'control_edges': control_edges,
+        }
+
+    @staticmethod
+    def backward_slice(
+        target_step: int,
+        target_var: str,
+        dep_graph: dict,
+        max_depth: int = 20,
+    ) -> list[dict]:
+        """Backward slice using SSA versioned graph.
+
+        Traces: target_var#N → its writer's reads → their writers → ...
+        Returns ordered causal chain from root → target.
+        """
+        versions = dep_graph['versions']
+        edges = dep_graph['edges']
+        step_versions = dep_graph['step_versions']
+        current_version = dep_graph['current_version']
+
+        # Find the version of target_var at target_step
+        # Look for the latest version of target_var written at or before target_step
+        target_ver = None
+        for ver_name, ver_meta in sorted(versions.items(), key=lambda x: -x[1]['step']):
+            if ver_meta['var'] == target_var and ver_meta['step'] <= target_step:
+                target_ver = ver_name
+                break
+
+        if not target_ver:
+            target_ver = current_version.get(target_var)
+        if not target_ver:
+            return []
+
+        # Build reverse adjacency: to_ver → [from_ver]
+        reverse = {}
+        for e in edges:
+            if e['to'] not in reverse:
+                reverse[e['to']] = []
+            reverse[e['to']].append(e)
+
+        # BFS backward through versioned graph
+        visited = set()
+        chain = []
+        queue = [(target_ver, 0)]
+        visited.add(target_ver)
+
+        while queue:
+            ver_name, depth = queue.pop(0)
+            if depth > max_depth:
+                continue
+
+            ver_meta = versions.get(ver_name)
+            if not ver_meta:
+                continue
+
+            chain.append({
+                'step': ver_meta['step'],
+                'var': ver_meta['var'],
+                'version': ver_name,
+                'value': ver_meta['value'],
+                'code': ver_meta['code'],
+                'line': ver_meta['line'],
+                'depth': depth,
+                'role': 'root' if depth == 0 else 'contributor',
+            })
+
+            # Find what this version reads (predecessors in the graph)
+            for e in reverse.get(ver_name, []):
+                from_ver = e['from']
+                if from_ver not in visited:
+                    visited.add(from_ver)
+                    queue.append((from_ver, depth + 1))
+
+        # Sort by step index (root first)
+        chain.sort(key=lambda x: x['step'])
+        if chain:
+            chain[-1]['role'] = 'failure_point'
+            chain[0]['role'] = 'root_cause'
+        return chain
+
+    @staticmethod
+    def detect_failure_point(steps: list[dict]) -> dict | None:
+        """Detect the failure point in execution."""
+        if not steps:
+            return None
+
+        last_step = steps[-1]
+        code = last_step.get('code', '')
+
+        if 'return' in code:
+            return_vars = list((last_step.get('vars') or {}).keys())
+            return {
+                'type': 'return',
+                'step': last_step.get('index', 0),
+                'code': code,
+                'line': last_step.get('line', 0),
+                'vars': return_vars,
+            }
+
+        for step in reversed(steps[-5:]):
+            code = step.get('code', '')
+            if 'Error' in code or 'raise' in code or 'except' in code:
+                return {
+                    'type': 'exception',
+                    'step': step.get('index', 0),
+                    'code': code,
+                    'line': step.get('line', 0),
+                }
+
+        return {
+            'type': 'end',
+            'step': last_step.get('index', 0),
+            'code': code,
+            'line': last_step.get('line', 0),
+        }
+
+    @staticmethod
+    def analyze(steps: list[dict], focus_var: str = '', block_meta: dict = None) -> dict:
+        """Full causal chain analysis with SSA versioning."""
+        if not steps:
+            return {'success': False, 'error': 'No steps to analyze'}
+
+        # 1. Build dependency graph
+        dep_graph = CausalChainEngine.build_dependency_graph(steps, block_meta=block_meta)
+        edges = dep_graph.get('edges', [])
+
+        # 2. Detect failure point
+        failure = CausalChainEngine.detect_failure_point(steps)
+        if not failure:
+            return {'success': False, 'error': 'Could not detect failure point'}
+
+        # 3. Determine target variable
+        if focus_var:
+            target_var = focus_var
+        elif failure.get('vars'):
+            target_var = failure['vars'][-1]  # last var at failure point
+        else:
+            # Find the most-written variable in the last 5 steps
+            recent_vars = {}
+            for step in steps[-5:]:
+                for v in step.get('changed', []) + step.get('new_vars', []):
+                    recent_vars[v] = recent_vars.get(v, 0) + 1
+            if recent_vars:
+                target_var = max(recent_vars, key=recent_vars.get)
+            else:
+                return {'success': False, 'error': 'Could not determine target variable'}
+
+        # 4. Backward slice
+        chain = CausalChainEngine.backward_slice(
+            failure['step'], target_var, dep_graph
+        )
+
+        # 5. Generate human-readable causal sentences using actual edges
+        edge_lookup: dict[str, list[str]] = {}
+        for e in edges:
+            edge_lookup.setdefault(e['to'], []).append(e['from'])
+
+        chain_versions = {link.get('version', link['var']) for link in chain}
+        sentences = []
+        for i, link in enumerate(chain):
+            ver = link.get('version', link['var'])
+            preds_in_chain = [p for p in edge_lookup.get(ver, []) if p in chain_versions]
+            if i == 0 and not preds_in_chain:
+                sentences.append(f'Root cause: `{ver}` = {link["value"]} at step {link["step"]} (line {link["line"]})')
+            elif i == len(chain) - 1:
+                if preds_in_chain:
+                    sentences.append(f'Failure point: `{ver}` (← {", ".join(preds_in_chain)}) at step {link["step"]} (line {link["line"]})')
+                else:
+                    sentences.append(f'Failure point: `{ver}` at step {link["step"]} (line {link["line"]})')
+            else:
+                if preds_in_chain:
+                    sentences.append(f'`{ver}` (← {", ".join(preds_in_chain)}) via `{link["code"][:50]}`')
+                else:
+                    sentences.append(f'`{ver}` = {link["value"]} via `{link["code"][:50]}`')
+
+        # 6. Compute causal distance
+        causal_distance = len(chain)
+
+        # 7. Find divergence point (first step where things went wrong)
+        divergence = None
+        for i, link in enumerate(chain):
+            val = link.get('value', '')
+            if val in ('None', '', '[]', '{}', '0', 'False') and i > 0:
+                divergence = link
+                break
+
+        # 8. Graph stats from SSA structure
+        fan_in: dict[str, int] = {}
+        for e in edges:
+            fan_in[e['to']] = fan_in.get(e['to'], 0) + 1
+
+        return {
+            'success': True,
+            'failure_point': failure,
+            'target_var': target_var,
+            'causal_chain': chain,
+            'causal_sentences': sentences,
+            'causal_distance': causal_distance,
+            'divergence_point': divergence,
+            'control_edges': dep_graph.get('control_edges', []),
+            'graph_stats': {
+                'total_edges': len(edges),
+                'unique_vars': len(dep_graph.get('versions', {})),
+                'max_fan_in': max(fan_in.values(), default=0),
+                'versioned': True,
+            },
+        }
+
+
+@app.post("/api/causal_chain")
+async def causal_chain(req: InsightRequest):
+    """Analyze execution for causal chain — backward slicing from failure to root cause."""
+    func_file = None
+    try:
+        func_name = _extract_func_name(req.code, req.func_name)
+        if not func_name:
+            return {"success": False, "error": "No function found in code."}
+
+        module = _import_code_as_module(req.code)
+        func = getattr(module, func_name)
+        func_file = os.path.abspath(func.__code__.co_filename)
+        inferred_args, _ = infer_args(func, req.code)
+        result, timeline = record_function(func, *inferred_args, target_files={func_file})
+
+        # Build steps
+        steps_data = []
+        for step in timeline.steps:
+            var_states = {}
+            for name, snap in step.variables.items():
+                var_states[name] = {
+                    "value": snap.value_repr,
+                    "type": snap.value_type,
+                    "changed": name in step.changed_vars,
+                    "is_new": name in step.new_vars,
+                    "memory_id": snap.memory_id,
+                    "is_alias_of": snap.is_reference_to,
+                }
+            steps_data.append({
+                "index": step.step_index,
+                "line": step.line_number,
+                "code": step.code_line,
+                "func": step.function_name,
+                "vars": var_states,
+                "changed": step.changed_vars,
+                "new_vars": step.new_vars,
+                "mutated": step.mutated_vars,
+                "rebound": step.rebound_vars,
+                "alias_groups": step.alias_groups,
+                "container_deltas": step.container_deltas,
+                "depth": step.depth,
+                    "indent": step.indent,
+                    "block_id": step.block_id,
+            })
+
+        # Run causal chain analysis with block structure
+        analysis = CausalChainEngine.analyze(steps_data, block_meta=timeline.block_meta)
+
+        return {
+            "success": True,
+            "func_name": func_name,
+            "causal_chain": analysis,
+            "block_meta": {str(k): v for k, v in timeline.block_meta.items()},
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
