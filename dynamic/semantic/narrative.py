@@ -1,30 +1,32 @@
-"""Layer 2+3: Narrative Planning + Natural Language Realization.
+"""Narrative View Layer — Planner + Renderer + backward-compat facade.
 
-Takes semantic facts and produces human-readable explanations.
+Architecture:
+    NarrativePlanner — consumes EvidenceCollection, outputs ExplanationIR (graph-free)
+    NarrativeRenderer — converts ExplanationIR → Narrative (zero graph access)
+    NarrativeEngine — facade that builds evidence + delegates to Planner + Renderer
 
-Layer 2 — Narrative Planning:
-    Decides WHAT to say and in WHAT ORDER.
-    Plans a narrative structure (not just dumping facts).
-
-Layer 3 — Natural Language Realization:
-    Converts planned narrative into fluent text.
-    Uses templates + variable evolution data.
+Narrative does NOT own semantics. It only consumes semantic results.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
-from collections import defaultdict
+from typing import Any, Dict, List, Set
+
+from dynamic.semantic.evidence import EvidenceCollection, DataFlowChain, ResolvedStep
+from dynamic.semantic.explanation import EvidenceUnit, ExplanationIR
 
 
-@dataclass
+# ── Legacy output types (kept for backward compatibility) ────────
+
 class NarrativeSegment:
     """One segment of a planned narrative."""
-    role: str           # 'setup' | 'flow' | 'branch' | 'loop' | 'result' | 'root_cause'
-    heading: str        # short heading for this segment
-    content: str        # the narrative text
-    facts: List[int]    # indices into the facts list
-    priority: int = 0   # lower = more important
+    __slots__ = ('role', 'heading', 'content', 'facts', 'priority')
+
+    def __init__(self, role: str, heading: str, content: str, facts: list, priority: int = 0):
+        self.role = role
+        self.heading = heading
+        self.content = content
+        self.facts = facts
+        self.priority = priority
 
     def to_dict(self) -> dict:
         return {
@@ -35,14 +37,16 @@ class NarrativeSegment:
         }
 
 
-@dataclass
 class Narrative:
     """A complete explanation narrative."""
-    title: str
-    summary: str                    # one-line summary
-    segments: List[NarrativeSegment]
-    variable_stories: List[dict]    # per-variable evolution stories
-    metadata: dict = field(default_factory=dict)
+    __slots__ = ('title', 'summary', 'segments', 'variable_stories', 'metadata')
+
+    def __init__(self, title: str, summary: str, segments: list, variable_stories: list, metadata: dict = None):
+        self.title = title
+        self.summary = summary
+        self.segments = segments
+        self.variable_stories = variable_stories
+        self.metadata = metadata or {}
 
     def to_dict(self) -> dict:
         return {
@@ -69,8 +73,328 @@ class Narrative:
         return '\n'.join(lines)
 
 
+# ── Planner: EvidenceCollection → ExplanationIR (graph-free) ─────
+
+class NarrativePlanner:
+    """Selects and organizes evidence into ExplanationIR.
+
+    ZERO graph/model references. Consumes only EvidenceCollection.
+    """
+
+    def plan_backward_slice(self, evidence: EvidenceCollection) -> ExplanationIR:
+        """Plan explanation for a backward slice."""
+        units: List[EvidenceUnit] = []
+        uid = 0
+        target = evidence.target
+
+        if not target or not target.code:
+            return ExplanationIR(
+                title="Explanation",
+                summary="No target step found.",
+                units=[],
+                variable_stories=[],
+            )
+
+        var = evidence.target_var
+
+        # 1. Target
+        if var:
+            desc = f"We want to understand why `{var}` has its value at step #{target.id}: `{target.code}`"
+        else:
+            desc = f"We want to understand what determines the result of step #{target.id}: `{target.code}`"
+        units.append(EvidenceUnit(
+            id=f"eu-{uid}", kind='target', heading='Target', description=desc,
+            step_ids=[target.id], variables=[var] if var else [],
+        ))
+        uid += 1
+
+        # 2. Root causes
+        if evidence.root_causes:
+            lines = []
+            for rc in evidence.root_causes:
+                if rc.code:
+                    lines.append(f"  #{rc.id}: `{rc.code}` (line {rc.line})")
+            if lines:
+                units.append(EvidenceUnit(
+                    id=f"eu-{uid}", kind='root_cause', heading='Root Causes',
+                    description="The root causes of this value are:\n" + '\n'.join(lines),
+                    step_ids=[rc.id for rc in evidence.root_causes],
+                ))
+                uid += 1
+
+        # 3. Data flows
+        for flow in evidence.data_flows:
+            desc = self._describe_data_flow(flow)
+            units.append(EvidenceUnit(
+                id=f"eu-{uid}", kind='data_flow', heading=f'Data Flow: {flow.variable}',
+                description=desc, variables=[flow.variable],
+                step_ids=[s.id for s in flow.steps],
+            ))
+            uid += 1
+
+        # 4. Loop facts
+        for fact in evidence.loop_facts:
+            units.append(EvidenceUnit(
+                id=f"eu-{uid}", kind='loop', heading='Loop',
+                description=fact.description, evidence_facts=[fact.index],
+                step_ids=fact.evidence_steps,
+            ))
+            uid += 1
+        for fact in evidence.accumulation_facts:
+            units.append(EvidenceUnit(
+                id=f"eu-{uid}", kind='loop', heading=f'Accumulation: {fact.subject}',
+                description=fact.description, evidence_facts=[fact.index],
+                step_ids=fact.evidence_steps,
+            ))
+            uid += 1
+
+        # 5. Control conditions
+        for cond in evidence.control_conditions:
+            if cond.description:
+                units.append(EvidenceUnit(
+                    id=f"eu-{uid}", kind='branch', heading='Control',
+                    description=cond.description,
+                    step_ids=[cond.condition_step.id],
+                ))
+                uid += 1
+
+        # 6. Result
+        units.append(EvidenceUnit(
+            id=f"eu-{uid}", kind='result', heading='Result',
+            description=f"The final result at step #{target.id} is determined by {evidence.step_count} preceding steps.",
+            step_ids=[target.id],
+        ))
+
+        # Variable stories
+        variable_stories = self._build_variable_stories(evidence.variable_evolutions)
+
+        # Summary
+        n_roots = evidence.root_cause_count
+        n_steps = evidence.step_count
+        root_verb = 'are' if n_roots != 1 else 'is'
+        root_suffix = 's' if n_roots != 1 else ''
+        if var:
+            summary = (
+                f"`{var}` at step #{target.id} is determined by {n_steps} steps. "
+                f"The root cause{root_suffix} {root_verb} {n_roots} source{root_suffix}."
+            )
+        else:
+            summary = f"Step #{target.id} depends on {n_steps} steps with {n_roots} root cause{root_suffix}."
+
+        return ExplanationIR(
+            title=f"Why does `{target.code}` produce its value?",
+            summary=summary,
+            units=units,
+            variable_stories=variable_stories,
+            metadata=evidence.metadata,
+        )
+
+    def plan_variable(self, evidence: EvidenceCollection) -> ExplanationIR:
+        """Plan explanation for a variable's evolution."""
+        var_name = evidence.target_var
+        if not evidence.variable_evolutions:
+            return ExplanationIR(
+                title=f"Variable: {var_name}",
+                summary=f"No history found for `{var_name}`.",
+                units=[],
+                variable_stories=[],
+            )
+
+        evo = evidence.variable_evolutions[0]
+        versions = evo.versions
+        if not versions:
+            return ExplanationIR(
+                title=f"Variable: {var_name}",
+                summary=f"No history found for `{var_name}`.",
+                units=[],
+                variable_stories=[],
+            )
+
+        units: List[EvidenceUnit] = []
+        uid = 0
+        first = versions[0]
+        last = versions[-1]
+
+        # Origin
+        units.append(EvidenceUnit(
+            id=f"eu-{uid}", kind='variable_origin', heading='Origin',
+            description=f"`{var_name}` is first defined at step #{first['step_id']} with value `{first['value']}`.",
+            step_ids=[first['step_id']], variables=[var_name],
+        ))
+        uid += 1
+
+        # Evolution
+        if len(versions) > 1:
+            story = self._build_evolution_story_from_versions(var_name, versions)
+            units.append(EvidenceUnit(
+                id=f"eu-{uid}", kind='variable_evolution', heading='Evolution',
+                description=story, variables=[var_name],
+                step_ids=[v['step_id'] for v in versions],
+            ))
+            uid += 1
+
+        # Final value
+        units.append(EvidenceUnit(
+            id=f"eu-{uid}", kind='variable_final', heading='Final Value',
+            description=f"`{var_name}` ends at step #{last['step_id']} with value `{last['value']}` (version #{last['version']}).",
+            step_ids=[last['step_id']], variables=[var_name],
+        ))
+
+        return ExplanationIR(
+            title=f"Variable: {var_name}",
+            summary=f"`{var_name}` evolves through {len(versions)} versions.",
+            units=units,
+            variable_stories=[{
+                'name': var_name,
+                'story': self._build_evolution_story_from_versions(var_name, versions),
+                'versions': len(versions),
+                'first_value': first['value'],
+                'last_value': last['value'],
+            }],
+        )
+
+    def plan_impact(self, evidence: EvidenceCollection) -> ExplanationIR:
+        """Plan explanation for forward impact analysis."""
+        source = evidence.target
+        if not source or not source.code:
+            return ExplanationIR(
+                title="Impact Analysis",
+                summary="No source step found.",
+                units=[],
+                variable_stories=[],
+            )
+
+        units: List[EvidenceUnit] = []
+        uid = 0
+
+        # Source
+        units.append(EvidenceUnit(
+            id=f"eu-{uid}", kind='source', heading='Source',
+            description=f"The analysis starts at step #{source.id}: `{source.code}`",
+            step_ids=[source.id],
+        ))
+        uid += 1
+
+        # Impact flows
+        for flow in evidence.impact_flows:
+            lines = []
+            for step in flow.steps:
+                lines.append(f"  `{step.code}`")
+            if lines:
+                units.append(EvidenceUnit(
+                    id=f"eu-{uid}", kind='impact_flow', heading='Data Flow',
+                    description='\n'.join(lines),
+                    step_ids=[s.id for s in flow.steps],
+                ))
+                uid += 1
+
+        # Affected outputs
+        if evidence.affected_outputs:
+            leaf_lines = []
+            for step in evidence.affected_outputs:
+                if step.code:
+                    leaf_lines.append(f"  #{step.id}: `{step.code}`")
+            if leaf_lines:
+                units.append(EvidenceUnit(
+                    id=f"eu-{uid}", kind='affected_output', heading='Affected Outputs',
+                    description='\n'.join(leaf_lines),
+                    step_ids=[s.id for s in evidence.affected_outputs],
+                ))
+
+        return ExplanationIR(
+            title=f"Impact: `{source.code}`",
+            summary=f"This step affects {evidence.step_count} downstream steps.",
+            units=units,
+            variable_stories=[],
+        )
+
+    # ── Internal helpers (all operate on evidence, no graph) ─────
+
+    def _build_variable_stories(self, evolutions) -> List[dict]:
+        """Build variable stories from VariableEvolution evidence."""
+        stories = []
+        for evo in evolutions:
+            if len(evo.versions) < 2:
+                continue
+            story = self._build_evolution_story_from_versions(evo.variable, evo.versions)
+            stories.append({
+                'name': evo.variable,
+                'story': story,
+                'versions': len(evo.versions),
+                'first_value': evo.versions[0]['value'],
+                'last_value': evo.versions[-1]['value'],
+            })
+        return stories
+
+    def _build_evolution_story_from_versions(self, var: str, versions: list) -> str:
+        """Build evolution narrative from version dicts."""
+        if len(versions) < 2:
+            return f"`{var}` has a single value: {versions[0]['value']}"
+
+        values = [f"v{v['version']}=`{v['value']}`" for v in versions]
+        if len(values) <= 4:
+            chain_str = ' → '.join(values)
+        else:
+            chain_str = f"{values[0]} → ... → {values[-1]}"
+        return f"`{var}` evolves: {chain_str} ({len(values)} versions)"
+
+    def _describe_data_flow(self, flow: DataFlowChain) -> str:
+        """Describe a data flow chain."""
+        steps = flow.steps
+        if len(steps) == 1:
+            return f"`{flow.variable}` is at `{steps[0].code}`"
+        if len(steps) == 2:
+            return f"`{flow.variable}` flows from `{steps[0].code}` to `{steps[1].code}`"
+
+        lines = [f"`{flow.variable}` flows through {len(steps)} steps:"]
+        for step in steps[:5]:
+            lines.append(f"  `{step.code}`")
+        if len(steps) > 5:
+            lines.append(f"  ... ({len(steps) - 5} more)")
+        return '\n'.join(lines)
+
+
+# ── Renderer: ExplanationIR → Narrative (zero graph access) ──────
+
+class NarrativeRenderer:
+    """Converts ExplanationIR into Narrative objects.
+
+    ZERO references to model/graph/pdg.
+    Only operates on pre-resolved data in ExplanationIR.
+    """
+
+    def render(self, ir: ExplanationIR) -> Narrative:
+        """Render ExplanationIR into a Narrative."""
+        segments = []
+        for unit in ir.units:
+            segments.append(NarrativeSegment(
+                role=unit.kind,
+                heading=unit.heading,
+                content=unit.description,
+                facts=unit.evidence_facts,
+                priority=unit.priority,
+            ))
+        return Narrative(
+            title=ir.title,
+            summary=ir.summary,
+            segments=segments,
+            variable_stories=ir.variable_stories,
+            metadata=ir.metadata,
+        )
+
+    def render_text(self, ir: ExplanationIR) -> str:
+        """Render ExplanationIR as plain text."""
+        narrative = self.render(ir)
+        return narrative.to_text()
+
+
+# ── Facade: backward-compatible NarrativeEngine ─────────────────
+
 class NarrativeEngine:
-    """Plans and generates explanations from semantic facts + SemanticExecutionModel.
+    """Plans and generates explanations from semantic data.
+
+    Backward-compatible facade — same API as before.
+    Builds evidence via evidence_builder, then delegates to Planner + Renderer.
 
     Usage:
         engine = NarrativeEngine(model, facts)
@@ -78,386 +402,33 @@ class NarrativeEngine:
     """
 
     def __init__(self, model, facts):
-        self.pdg = model
-        self.facts = facts
-        self._fact_by_kind: Dict[str, list] = defaultdict(list)
-        for i, f in enumerate(facts):
-            self._fact_by_kind[f.kind].append((i, f))
+        self._model = model
+        self._facts = facts
+        self._planner = NarrativePlanner()
+        self._renderer = NarrativeRenderer()
 
-    # ─── Main entry points ────────────────────────────────────────
+    @property
+    def planner(self) -> NarrativePlanner:
+        return self._planner
+
+    @property
+    def renderer(self) -> NarrativeRenderer:
+        return self._renderer
 
     def explain_backward_slice(self, slice_result) -> Narrative:
-        """Generate a narrative explaining a backward slice."""
-        target_node = self.pdg.nodes.get(slice_result.target_step)
-        if not target_node:
-            return Narrative(
-                title="Explanation",
-                summary="No target step found.",
-                segments=[],
-                variable_stories=[],
-            )
-
-        # Layer 2: Plan the narrative structure
-        segments = []
-
-        # 1. Setup: what is the target?
-        segments.append(self._plan_target(target_node, slice_result.target_var))
-
-        # 2. Root causes
-        root_facts = self._fact_by_kind.get('causal.root_cause', [])
-        if slice_result.root_causes:
-            segments.append(self._plan_root_causes(slice_result.root_causes))
-
-        # 3. Data flow story
-        data_segments = self._plan_data_flow(slice_result)
-        segments.extend(data_segments)
-
-        # 4. Loop story (if any)
-        loop_segments = self._plan_loop_story(slice_result)
-        segments.extend(loop_segments)
-
-        # 5. Control flow story
-        control_segments = self._plan_control_story(slice_result)
-        segments.extend(control_segments)
-
-        # 6. Result
-        segments.append(self._plan_result(target_node, slice_result))
-
-        # Layer 3: Realize variable evolution stories
-        variable_stories = self._realize_variable_stories(slice_result)
-
-        # Generate summary
-        summary = self._realize_summary(target_node, slice_result)
-
-        return Narrative(
-            title=f"Why does `{target_node.code}` produce its value?",
-            summary=summary,
-            segments=segments,
-            variable_stories=variable_stories,
-            metadata={
-                'target_step': slice_result.target_step,
-                'slice_size': len(slice_result.steps),
-                'root_causes': slice_result.root_causes,
-            },
-        )
+        from dynamic.semantic.evidence_builder import build_backward_slice_evidence
+        evidence = build_backward_slice_evidence(self._model, self._facts, slice_result)
+        ir = self._planner.plan_backward_slice(evidence)
+        return self._renderer.render(ir)
 
     def explain_variable(self, var_name: str) -> Narrative:
-        """Generate a narrative explaining a variable's evolution."""
-        history = self.pdg.get_variable_history(var_name)
-        chain = self.pdg.get_version_chain(var_name)
-
-        if not history:
-            return Narrative(
-                title=f"Variable: {var_name}",
-                summary=f"No history found for `{var_name}`.",
-                segments=[],
-                variable_stories=[],
-            )
-
-        segments = []
-
-        # Setup
-        first_step, first_vv = history[0]
-        segments.append(NarrativeSegment(
-            role='setup',
-            heading='Origin',
-            content=f"`{var_name}` is first defined at step #{first_step} with value `{first_vv.value}`.",
-            facts=[],
-            priority=0,
-        ))
-
-        # Evolution
-        if len(history) > 1:
-            story = self._build_evolution_story(var_name, history)
-            segments.append(NarrativeSegment(
-                role='flow',
-                heading='Evolution',
-                content=story,
-                facts=[],
-                priority=1,
-            ))
-
-        # Last value
-        last_step, last_vv = history[-1]
-        segments.append(NarrativeSegment(
-            role='result',
-            heading='Final Value',
-            content=f"`{var_name}` ends at step #{last_step} with value `{last_vv.value}` (version #{last_vv.version}).",
-            facts=[],
-            priority=2,
-        ))
-
-        return Narrative(
-            title=f"Variable: {var_name}",
-            summary=f"`{var_name}` evolves through {len(history)} versions.",
-            segments=segments,
-            variable_stories=[{
-                'name': var_name,
-                'story': self._build_evolution_story(var_name, history),
-                'versions': len(history),
-                'first_value': first_vv.value,
-                'last_value': last_vv.value,
-            }],
-        )
+        from dynamic.semantic.evidence_builder import build_variable_evidence
+        evidence = build_variable_evidence(self._model, var_name)
+        ir = self._planner.plan_variable(evidence)
+        return self._renderer.render(ir)
 
     def explain_impact(self, impact_result) -> Narrative:
-        """Generate a narrative explaining forward impact."""
-        source_node = self.pdg.nodes.get(impact_result.target_step)
-        if not source_node:
-            return Narrative(
-                title="Impact Analysis",
-                summary="No source step found.",
-                segments=[],
-                variable_stories=[],
-            )
-
-        segments = []
-
-        # Setup
-        segments.append(NarrativeSegment(
-            role='setup',
-            heading='Source',
-            content=f"The analysis starts at step #{impact_result.target_step}: `{source_node.code}`",
-            facts=[],
-            priority=0,
-        ))
-
-        # Impact flow
-        data_edges = [e for e in impact_result.edges if e.kind == 'data']
-        if data_edges:
-            flow_lines = []
-            for edge in sorted(data_edges, key=lambda e: impact_result.depth_map.get(e.target, 0))[:8]:
-                src = self.pdg.nodes.get(edge.source)
-                tgt = self.pdg.nodes.get(edge.target)
-                if src and tgt:
-                    flow_lines.append(f"  `{src.code}` → `{tgt.code}` via `{edge.var}`")
-            segments.append(NarrativeSegment(
-                role='flow',
-                heading='Data Flow',
-                content='\n'.join(flow_lines),
-                facts=[],
-                priority=1,
-            ))
-
-        # Affected outputs
-        leaves = impact_result.root_causes  # leaf nodes in forward
-        if leaves:
-            leaf_lines = []
-            for lid in leaves[:5]:
-                node = self.pdg.nodes.get(lid)
-                if node:
-                    leaf_lines.append(f"  #{lid}: `{node.code}`")
-            segments.append(NarrativeSegment(
-                role='result',
-                heading='Affected Outputs',
-                content='\n'.join(leaf_lines),
-                facts=[],
-                priority=2,
-            ))
-
-        return Narrative(
-            title=f"Impact: `{source_node.code}`",
-            summary=f"This step affects {len(impact_result.steps)} downstream steps.",
-            segments=segments,
-            variable_stories=[],
-        )
-
-    # ─── Planning helpers ─────────────────────────────────────────
-
-    def _plan_target(self, node, var: str) -> NarrativeSegment:
-        code = node.code.strip()
-        if var:
-            content = f"We want to understand why `{var}` has its value at step #{node.id}: `{code}`"
-        else:
-            content = f"We want to understand what determines the result of step #{node.id}: `{code}`"
-        return NarrativeSegment(
-            role='setup',
-            heading='Target',
-            content=content,
-            facts=[],
-            priority=0,
-        )
-
-    def _plan_root_causes(self, root_causes: list) -> NarrativeSegment:
-        lines = []
-        for rid in sorted(root_causes)[:5]:
-            node = self.pdg.nodes.get(rid)
-            if node:
-                lines.append(f"  #{rid}: `{node.code}` (line {node.line})")
-        content = "The root causes of this value are:\n" + '\n'.join(lines)
-        return NarrativeSegment(
-            role='root_cause',
-            heading='Root Causes',
-            content=content,
-            facts=[],
-            priority=1,
-        )
-
-    def _plan_data_flow(self, slice_result) -> List[NarrativeSegment]:
-        """Plan data flow narrative segments."""
-        segments = []
-        data_edges = [e for e in slice_result.edges if e.kind == 'data']
-        if not data_edges:
-            return segments
-
-        # Group by variable
-        by_var: Dict[str, list] = defaultdict(list)
-        for edge in data_edges:
-            by_var[edge.var].append(edge)
-
-        for var, edges in by_var.items():
-            if len(edges) < 2:
-                continue
-            chain = sorted(edges, key=lambda e: e.target)
-            first_src = self.pdg.nodes.get(chain[0].source)
-            last_tgt = self.pdg.nodes.get(chain[-1].target)
-            if first_src and last_tgt:
-                segments.append(NarrativeSegment(
-                    role='flow',
-                    heading=f'Data Flow: {var}',
-                    content=self._describe_data_chain(var, chain),
-                    facts=[],
-                    priority=3,
-                ))
-
-        return segments
-
-    def _plan_loop_story(self, slice_result) -> List[NarrativeSegment]:
-        """Plan loop-related narrative segments."""
-        segments = []
-        loop_facts = self._fact_by_kind.get('loop.iteration', [])
-        accum_facts = self._fact_by_kind.get('loop.accumulation', [])
-
-        for idx, fact in loop_facts:
-            # Check if this loop is in the slice
-            if any(s in slice_result.steps for s in fact.evidence):
-                segments.append(NarrativeSegment(
-                    role='loop',
-                    heading='Loop',
-                    content=fact.description,
-                    facts=[idx],
-                    priority=4,
-                ))
-
-        for idx, fact in accum_facts:
-            if any(s in slice_result.steps for s in fact.evidence):
-                segments.append(NarrativeSegment(
-                    role='loop',
-                    heading=f'Accumulation: {fact.subject}',
-                    content=fact.description,
-                    facts=[idx],
-                    priority=5,
-                ))
-
-        return segments
-
-    def _plan_control_story(self, slice_result) -> List[NarrativeSegment]:
-        """Plan control flow narrative segments."""
-        segments = []
-        control_edges = [e for e in slice_result.edges if e.kind == 'control']
-        if not control_edges:
-            return segments
-
-        seen_conditions = set()
-        for edge in control_edges:
-            if edge.source not in seen_conditions:
-                seen_conditions.add(edge.source)
-                cond_node = self.pdg.nodes.get(edge.source)
-                if cond_node:
-                    segments.append(NarrativeSegment(
-                        role='branch',
-                        heading='Control',
-                        content=f"The condition `{cond_node.code.strip()}` (step #{edge.source}) controls the execution path.",
-                        facts=[],
-                        priority=6,
-                    ))
-
-        return segments
-
-    def _plan_result(self, node, slice_result) -> NarrativeSegment:
-        content = f"The final result at step #{node.id} is determined by {len(slice_result.steps)} preceding steps."
-        return NarrativeSegment(
-            role='result',
-            heading='Result',
-            content=content,
-            facts=[],
-            priority=10,
-        )
-
-    # ─── Realization helpers ──────────────────────────────────────
-
-    def _realize_variable_stories(self, slice_result) -> List[dict]:
-        """Generate per-variable evolution stories for the slice."""
-        stories = []
-        # Find variables involved in the slice
-        vars_in_slice: Set[str] = set()
-        for edge in slice_result.edges:
-            if edge.kind == 'data' and edge.var:
-                vars_in_slice.add(edge.var)
-
-        for var in sorted(vars_in_slice):
-            history = self.pdg.get_variable_history(var)
-            # Filter to steps in the slice
-            slice_history = [(sid, vv) for sid, vv in history if sid in slice_result.steps]
-            if len(slice_history) >= 2:
-                stories.append({
-                    'name': var,
-                    'story': self._build_evolution_story(var, slice_history),
-                    'versions': len(slice_history),
-                    'first_value': slice_history[0][1].value,
-                    'last_value': slice_history[-1][1].value,
-                })
-
-        return stories
-
-    def _build_evolution_story(self, var: str, history: list) -> str:
-        """Build a narrative for a variable's evolution."""
-        if len(history) < 2:
-            return f"`{var}` has a single value: {history[0][1].value}"
-
-        values = []
-        for sid, vv in history:
-            node = self.pdg.nodes.get(sid)
-            code = node.code if node else '?'
-            values.append(f"v{vv.version}=`{vv.value}`")
-
-        if len(values) <= 4:
-            chain_str = ' → '.join(values)
-        else:
-            chain_str = f"{values[0]} → ... → {values[-1]}"
-
-        return f"`{var}` evolves: {chain_str} ({len(values)} versions)"
-
-    def _describe_data_chain(self, var: str, chain: list) -> str:
-        """Describe a chain of data flow edges for a variable."""
-        if len(chain) == 1:
-            edge = chain[0]
-            src = self.pdg.nodes.get(edge.source)
-            tgt = self.pdg.nodes.get(edge.target)
-            if src and tgt:
-                return f"`{var}` flows from `{src.code}` to `{tgt.code}`"
-
-        lines = [f"`{var}` flows through {len(chain)} steps:"]
-        for edge in chain[:5]:
-            src = self.pdg.nodes.get(edge.source)
-            tgt = self.pdg.nodes.get(edge.target)
-            if src and tgt:
-                lines.append(f"  `{src.code}` → `{tgt.code}`")
-        if len(chain) > 5:
-            lines.append(f"  ... ({len(chain) - 5} more)")
-        return '\n'.join(lines)
-
-    def _realize_summary(self, node, slice_result) -> str:
-        """Generate a one-line summary."""
-        var = slice_result.target_var
-        n_roots = len(slice_result.root_causes)
-        n_steps = len(slice_result.steps)
-
-        root_verb = 'are' if n_roots != 1 else 'is'
-        root_suffix = 's' if n_roots != 1 else ''
-        if var:
-            return (
-                f"`{var}` at step #{node.id} is determined by {n_steps} steps. "
-                f"The root cause{root_suffix} {root_verb} {n_roots} source{root_suffix}."
-            )
-        return f"Step #{node.id} depends on {n_steps} steps with {n_roots} root cause{root_suffix}."
+        from dynamic.semantic.evidence_builder import build_impact_evidence
+        evidence = build_impact_evidence(self._model, impact_result)
+        ir = self._planner.plan_impact(evidence)
+        return self._renderer.render(ir)
