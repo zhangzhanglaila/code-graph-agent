@@ -312,7 +312,7 @@ class QueryExecutor:
         self.pdg = pdg
         self.facts = facts
         self.engine = narrative_engine
-        from .semantic_algebra import QueryPlanner
+        from .algebra import QueryPlanner
         self._planner = QueryPlanner()
 
     def execute(self, query: SemanticQuery) -> dict:
@@ -321,9 +321,22 @@ class QueryExecutor:
         trace = QueryTrace()
         trace.add('parse', f'Parsed query: {query.kind}', detail={'raw': query.raw})
 
+        # Check for temporal query
+        temporal = None
+        if hasattr(query, 'temporal') and query.temporal:
+            temporal = query.temporal
+            inner = query.inner if hasattr(query, 'inner') and query.inner else query
+        else:
+            inner = query
+
         # Plan: SemanticQuery AST → LogicalPlan (operator pipeline)
         t_plan = time.time()
-        plan = self._planner.plan(query)
+        if temporal:
+            from .temporal import TemporalQueryPlanner
+            tp = TemporalQueryPlanner()
+            plan = tp.plan_with_temporal(inner, temporal)
+        else:
+            plan = self._planner.plan(inner)
         trace.add('plan', f'Planned: {plan.describe()[:120]}',
                    duration_ms=(time.time() - t_plan) * 1000,
                    detail={'pipeline': plan.describe()})

@@ -5,7 +5,7 @@ import json
 import os
 from typing import Dict, List, Optional, Set, Tuple
 
-from dynamic.ds_tracer import DSTimeline, DSStep, ObjectSnapshot
+from dynamic.runtime.ds_tracer import DSTimeline, DSStep, ObjectSnapshot
 
 
 def render_ds_timeline(

@@ -70,15 +70,15 @@ class Narrative:
 
 
 class NarrativeEngine:
-    """Plans and generates explanations from semantic facts + PDG.
+    """Plans and generates explanations from semantic facts + SemanticExecutionModel.
 
     Usage:
-        engine = NarrativeEngine(pdg, facts)
+        engine = NarrativeEngine(model, facts)
         narrative = engine.explain_backward_slice(slice_result)
     """
 
-    def __init__(self, pdg, facts):
-        self.pdg = pdg
+    def __init__(self, model, facts):
+        self.pdg = model
         self.facts = facts
         self._fact_by_kind: Dict[str, list] = defaultdict(list)
         for i, f in enumerate(facts):

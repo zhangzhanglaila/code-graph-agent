@@ -808,6 +808,47 @@ export async function textQuery(
   return res.json()
 }
 
+export async function getIdentity(
+  code: string,
+  funcName: string,
+  language: string
+): Promise<QueryResult> {
+  const res = await fetch(`${API_BASE}/api/identity`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, language }),
+  })
+  return res.json()
+}
+
+export async function semanticDiff(
+  codeA: string,
+  codeB: string,
+  funcName: string,
+  language: string
+): Promise<QueryResult> {
+  const res = await fetch(`${API_BASE}/api/semantic_diff`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code_a: codeA, code_b: codeB, func_name: funcName, language }),
+  })
+  return res.json()
+}
+
+export async function getSimilarity(
+  codeA: string,
+  codeB: string,
+  funcName: string,
+  language: string
+): Promise<QueryResult> {
+  const res = await fetch(`${API_BASE}/api/similarity`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code_a: codeA, code_b: codeB, func_name: funcName, language }),
+  })
+  return res.json()
+}
+
 
 // ─── Cross-file Import Graph API ─────────────────────────────────
 

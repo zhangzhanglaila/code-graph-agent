@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from .query_dsl import (
+from .dsl import (
     SemanticQuery, WhyQuery, TraceQuery, ImpactQuery, ShowQuery,
     RootsQuery, CompareQuery, StatsQuery, HelpQuery, ComposedQuery,
     QueryTrace,
@@ -367,7 +367,7 @@ class Narrate(Operator):
         t0 = time.time()
 
         if self.mode == 'slice' and ctx.nodes:
-            from .pdg import SliceResult
+            from ..runtime.pdg import SliceResult
             sr = SliceResult(
                 target_step=ctx.metadata.get('target_step', ctx.nodes[0] if ctx.nodes else 0),
                 target_var=ctx.metadata.get('target_var', ''),
@@ -382,7 +382,7 @@ class Narrate(Operator):
             var = ctx.metadata.get('variable', '')
             ctx.narrative = engine.explain_variable(var)
         elif self.mode == 'impact' and ctx.nodes:
-            from .pdg import SliceResult
+            from ..runtime.pdg import SliceResult
             sr = SliceResult(
                 target_step=ctx.metadata.get('source_step', ctx.nodes[0] if ctx.nodes else 0),
                 target_var=ctx.metadata.get('source_var', ''),

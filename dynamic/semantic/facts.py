@@ -57,15 +57,19 @@ class SemanticFact:
 
 
 class FactExtractor:
-    """Extracts semantic facts from a RuntimePDG.
+    """Extracts semantic facts from a SemanticExecutionModel (or RuntimePDG).
+
+    Prefers SemanticExecutionModel for clean separation.
+    RuntimePDG is accepted for backward compatibility.
 
     Usage:
-        extractor = FactExtractor(pdg)
+        model = build_from_pdg(pdg)  # or pass pdg directly
+        extractor = FactExtractor(model)
         facts = extractor.extract_all()
     """
 
-    def __init__(self, pdg):
-        self.pdg = pdg
+    def __init__(self, model):
+        self.pdg = model
         self._facts: List[SemanticFact] = []
 
     def extract_all(self) -> List[SemanticFact]:

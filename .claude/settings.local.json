@@ -36,7 +36,10 @@
       "Bash(netstat -ano)",
       "Bash(taskkill *)",
       "Bash(curl *)",
-      "Bash(awk '{print $5}')"
+      "Bash(awk '{print $5}')",
+      "Bash(sed -n '2700,2900p')",
+      "Read(//tmp/**)",
+      "Bash(git mv *)"
     ]
   }
 }

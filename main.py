@@ -20,13 +20,13 @@ from core.graph import CausalGraph
 from core.edge_types import EdgeType
 from static.python_analyzer import PythonAnalyzer
 from static.config_linker import ConfigLinker
-from dynamic.tracer import LineTracer
-from dynamic.state_recorder import record_function
+from dynamic.runtime.tracer import LineTracer
+from dynamic.runtime.recorder import record_function
 from reasoning.result_explainer import explain_result, explain_result_text
 from reasoning.insight_summarizer import summarize_insight, insight_text
-from dynamic.ds_tracer import trace_ds_function
+from dynamic.runtime.ds_tracer import trace_ds_function
 from visualization.ds_viz import render_ds_timeline
-from dynamic.exception_parser import ExceptionParser, catch_and_parse
+from dynamic.runtime.exception_parser import ExceptionParser, catch_and_parse
 from fusion.merge_engine import MergeEngine
 from reasoning.llm_reasoner import LLMReasoner
 from query.root_cause import RootCauseQuery

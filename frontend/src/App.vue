@@ -11,6 +11,9 @@ import GitHubPanel from './components/GitHubPanel.vue'
 import RuntimeReplayPanel from './components/RuntimeReplayPanel.vue'
 import SemanticExplorerPanel from './components/SemanticExplorerPanel.vue'
 import QueryConsole from './components/QueryConsole.vue'
+import SemanticDiffPanel from './components/SemanticDiffPanel.vue'
+import SemanticMap from './components/SemanticMap.vue'
+import SemanticCanvas from './components/SemanticCanvas.vue'
 import ErrorToast from './components/ErrorToast.vue'
 import { useAnalysisStore } from './store/analysisStore'
 import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps, getPatternNarrative, getSubproblemGraph, getFailureAttribution, getCausalChain } from './api/analysis'
@@ -196,12 +199,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <!-- Tab bar -->
       <div class="tab-bar" v-if="store.hasResults || store.githubResult">
         <button
-          v-for="tab in (['insight', 'replay', 'console', 'semantics', 'stack', 'dsviz', 'graph', 'timeline', 'github'] as const)"
+          v-for="tab in (['insight', 'canvas', 'replay', 'console', 'semantics', 'map', 'diff', 'stack', 'dsviz', 'graph', 'timeline', 'github'] as const)"
           :key="tab"
           :class="['tab-btn', { active: store.activeTab === tab }]"
           @click="store.activeTab = tab"
         >
-          {{ tab === 'insight' ? '分析洞察' : tab === 'replay' ? '执行回放' : tab === 'console' ? '语义控制台' : tab === 'semantics' ? '语义推理' : tab === 'stack' ? '执行栈' : tab === 'dsviz' ? '数据结构' : tab === 'graph' ? '执行图' : tab === 'timeline' ? '时间线' : 'GitHub' }}
+          {{ tab === 'insight' ? '分析洞察' : tab === 'canvas' ? '语义画布' : tab === 'replay' ? '执行回放' : tab === 'console' ? '语义控制台' : tab === 'semantics' ? '语义推理' : tab === 'map' ? '语义地图' : tab === 'diff' ? '语义对比' : tab === 'stack' ? '执行栈' : tab === 'dsviz' ? '数据结构' : tab === 'graph' ? '执行图' : tab === 'timeline' ? '时间线' : 'GitHub' }}
         </button>
       </div>
 
@@ -209,9 +212,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <div class="panels">
         <InsightPanel v-if="!store.hasResults && !store.loading && !store.githubResult" />
         <InsightPanel v-if="store.activeTab === 'insight' && store.hasResults" />
+        <SemanticCanvas v-if="store.activeTab === 'canvas' && store.hasResults" />
         <RuntimeReplayPanel v-if="store.activeTab === 'replay' && store.hasResults" />
         <QueryConsole v-if="store.activeTab === 'console' && store.hasResults" />
         <SemanticExplorerPanel v-if="store.activeTab === 'semantics' && store.hasResults" />
+        <SemanticMap v-if="store.activeTab === 'map' && store.hasResults" />
+        <SemanticDiffPanel v-if="store.activeTab === 'diff'" />
         <StackPanel v-if="store.activeTab === 'stack' && store.hasResults" />
         <GraphPanel v-if="store.activeTab === 'graph' && store.hasResults" />
         <DSVizPanel v-if="store.activeTab === 'dsviz' && store.hasResults" />

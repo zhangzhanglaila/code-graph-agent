@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from dynamic.state_recorder import ExecutionTimeline, ExecutionStep
+from dynamic.runtime.recorder import ExecutionTimeline, ExecutionStep
 
 
 # ── Pattern definitions ──────────────────────────────────────────────
