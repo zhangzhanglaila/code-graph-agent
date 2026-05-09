@@ -1,0 +1,30 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Python
+*.py text diff=python
+*.pyw text diff=python
+
+# JavaScript / TypeScript
+*.js text
+*.ts text
+*.vue text
+
+# Config
+*.json text
+*.yaml text
+*.yml text
+*.toml text
+
+# Documentation
+*.md text diff=markdown
+
+# Binary files
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
