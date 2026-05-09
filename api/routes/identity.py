@@ -9,15 +9,12 @@ from fastapi import APIRouter, Depends
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-from dynamic.runtime.pdg import RuntimePDG
-from dynamic.semantic.facts import FactExtractor
 from dynamic.semantic.identity import SemanticIdentifier
 from dynamic.semantic.identity_normalizer import IdentityNormalizer
 from dynamic.semantic.fingerprint import SemanticFingerprint
 from dynamic.semantic.similarity import SemanticSimilarity
 from dynamic.semantic.ontology import SemanticOntology
 from dynamic.semantic.diff import SemanticDiffer
-from dynamic.semantic.narrative import NarrativeEngine
 
 from api.services.analysis import prepare_execution, build_semantic_context
 from api.schemas.identity import IdentityRequest, SimilarityRequest, SemanticDiffRequest
@@ -29,7 +26,7 @@ router = APIRouter()
 # ── Routes ───────────────────────────────────────────────────────
 
 @router.post("/api/identity")
-async def semantic_identity(req: IdentityRequest):
+async def semantic_identity(req: IdentityRequest, container: AppContainer = Depends(get_container)):
     """Recognize semantic archetypes in code execution."""
     func_file = None
     try:
@@ -37,11 +34,10 @@ async def semantic_identity(req: IdentityRequest):
             req.code, req.func_name, req.language,
         )
 
-        pdg = RuntimePDG.from_timeline(timeline)
-        facts = FactExtractor(pdg).extract_all()
-        identities = SemanticIdentifier.identify(pdg, facts)
-        normal_form = IdentityNormalizer.normalize(identities, pdg)
-        fingerprint = SemanticFingerprint.generate(pdg, facts)
+        pipeline = container.build_pipeline(timeline)
+        identities = SemanticIdentifier.identify(pipeline.pdg, pipeline.facts)
+        normal_form = IdentityNormalizer.normalize(identities, pipeline.pdg)
+        fingerprint = SemanticFingerprint.generate(pipeline.pdg, pipeline.facts)
 
         # Ontology enrichment
         ontology = SemanticOntology.default()
@@ -77,20 +73,17 @@ async def semantic_identity(req: IdentityRequest):
 
 
 @router.post("/api/similarity")
-async def semantic_similarity(req: SimilarityRequest):
+async def semantic_similarity(req: SimilarityRequest, container: AppContainer = Depends(get_container)):
     """Compare two code executions at the semantic level."""
     func_file_a = func_file_b = None
     try:
         _, _, tl_a, _, func_file_a = prepare_execution(req.code_a, req.func_name)
         _, _, tl_b, _, func_file_b = prepare_execution(req.code_b, req.func_name)
 
-        pdg_a = RuntimePDG.from_timeline(tl_a)
-        facts_a = FactExtractor(pdg_a).extract_all()
-        fp_a = SemanticFingerprint.generate(pdg_a, facts_a)
-
-        pdg_b = RuntimePDG.from_timeline(tl_b)
-        facts_b = FactExtractor(pdg_b).extract_all()
-        fp_b = SemanticFingerprint.generate(pdg_b, facts_b)
+        pipe_a = container.build_pipeline(tl_a)
+        pipe_b = container.build_pipeline(tl_b)
+        fp_a = SemanticFingerprint.generate(pipe_a.pdg, pipe_a.facts)
+        fp_b = SemanticFingerprint.generate(pipe_b.pdg, pipe_b.facts)
 
         ontology = SemanticOntology.default()
         engine = SemanticSimilarity()

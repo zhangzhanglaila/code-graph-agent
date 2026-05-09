@@ -1,12 +1,13 @@
-"""Evidence Builder — the ONLY module that touches the semantic model.
+"""Evidence Builder — converts QueryResult into graph-free EvidenceCollection.
 
-Converts model + query results into graph-free EvidenceCollection objects.
-After this, all downstream consumers (Planner, Renderer) are graph-free.
+This module has ZERO references to PDG/model/runtime.
+It consumes only SemanticQueryResult types (BackwardSliceResult, etc.)
+which carry pre-resolved step data.
 
 Usage:
-    evidence = build_backward_slice_evidence(model, facts, slice_result)
-    evidence = build_variable_evidence(model, 'x')
-    evidence = build_impact_evidence(model, impact_result)
+    evidence = build_backward_slice_evidence(slice_result, facts)
+    evidence = build_variable_evidence(trace_result)
+    evidence = build_impact_evidence(impact_result, facts)
 """
 
 from __future__ import annotations
@@ -17,27 +18,33 @@ from dynamic.semantic.evidence import (
     ResolvedStep, DataFlowChain, ControlCondition,
     VariableEvolution, FactEvidence, EvidenceCollection,
 )
+from dynamic.semantic.query_result import (
+    BackwardSliceResult, ForwardImpactResult, VariableTraceResult,
+    ResolvedStepInfo,
+)
 
 
-def _resolve_node(model, node_id: int) -> ResolvedStep:
-    """Resolve a node ID to a ResolvedStep. The single graph access point."""
-    node = model.nodes.get(node_id)
-    if node:
-        return ResolvedStep(id=node_id, code=node.code, line=node.line)
-    return ResolvedStep(id=node_id, code='', line=0)
+def _make_step(step_id: int, resolved: Dict[int, ResolvedStepInfo]) -> ResolvedStep:
+    """Create a ResolvedStep from pre-resolved data."""
+    info = resolved.get(step_id)
+    if info:
+        return ResolvedStep(id=step_id, code=info.code, line=info.line)
+    return ResolvedStep(id=step_id, code='', line=0)
 
 
-def build_backward_slice_evidence(model, facts, slice_result) -> EvidenceCollection:
-    """Build evidence from a backward slice query result."""
+def build_backward_slice_evidence(result: BackwardSliceResult, facts: list) -> EvidenceCollection:
+    """Build evidence from a BackwardSliceResult."""
+    resolved = result.resolved_steps
+    var = result.target_var
+
     # Target
-    target = _resolve_node(model, slice_result.target_step)
-    var = getattr(slice_result, 'target_var', '')
+    target = _make_step(result.target_step, resolved)
 
     # Root causes
-    root_causes = [_resolve_node(model, rid) for rid in (slice_result.root_causes or [])[:5]]
+    root_causes = [_make_step(rid, resolved) for rid in (result.root_causes or [])[:5]]
 
     # Data flows — group edges by variable
-    data_edges = [e for e in (slice_result.edges or []) if getattr(e, 'kind', '') == 'data']
+    data_edges = [e for e in (result.edges or []) if e.kind == 'data']
     by_var: Dict[str, list] = defaultdict(list)
     for edge in data_edges:
         by_var[edge.var].append(edge)
@@ -51,21 +58,21 @@ def build_backward_slice_evidence(model, facts, slice_result) -> EvidenceCollect
         seen = set()
         for edge in chain:
             if edge.source not in seen:
-                steps.append(_resolve_node(model, edge.source))
+                steps.append(_make_step(edge.source, resolved))
                 seen.add(edge.source)
             if edge.target not in seen:
-                steps.append(_resolve_node(model, edge.target))
+                steps.append(_make_step(edge.target, resolved))
                 seen.add(edge.target)
         data_flows.append(DataFlowChain(variable=v, steps=steps))
 
     # Control conditions
-    control_edges = [e for e in (slice_result.edges or []) if getattr(e, 'kind', '') == 'control']
+    control_edges = [e for e in (result.edges or []) if e.kind == 'control']
     seen_conditions = set()
     control_conditions = []
     for edge in control_edges:
         if edge.source not in seen_conditions:
             seen_conditions.add(edge.source)
-            cond = _resolve_node(model, edge.source)
+            cond = _make_step(edge.source, resolved)
             if cond.code:
                 control_conditions.append(ControlCondition(
                     condition_step=cond,
@@ -73,11 +80,12 @@ def build_backward_slice_evidence(model, facts, slice_result) -> EvidenceCollect
                 ))
 
     # Loop facts
-    loop_facts = _extract_facts_by_kind(facts, 'loop.iteration', slice_result.steps)
-    accumulation_facts = _extract_facts_by_kind(facts, 'loop.accumulation', slice_result.steps)
+    steps_set = set(result.steps or [])
+    loop_facts = _extract_facts_by_kind(facts, 'loop.iteration', steps_set)
+    accumulation_facts = _extract_facts_by_kind(facts, 'loop.accumulation', steps_set)
 
     # Variable evolutions
-    variable_evolutions = _build_variable_evolutions(model, slice_result)
+    variable_evolutions = _build_variable_evolutions_from_edges(result, facts)
 
     return EvidenceCollection(
         kind='backward_slice',
@@ -89,26 +97,32 @@ def build_backward_slice_evidence(model, facts, slice_result) -> EvidenceCollect
         variable_evolutions=variable_evolutions,
         loop_facts=loop_facts,
         accumulation_facts=accumulation_facts,
-        step_count=len(slice_result.steps or []),
-        root_cause_count=len(slice_result.root_causes or []),
+        step_count=len(result.steps or []),
+        root_cause_count=len(result.root_causes or []),
         metadata={
-            'target_step': slice_result.target_step,
-            'slice_size': len(slice_result.steps or []),
-            'root_causes': list(slice_result.root_causes or []),
+            'target_step': result.target_step,
+            'slice_size': len(result.steps or []),
+            'root_causes': list(result.root_causes or []),
         },
     )
 
 
-def build_variable_evidence(model, var_name: str) -> EvidenceCollection:
-    """Build evidence from a variable history query."""
-    history = model.get_variable_history(var_name)
+def build_variable_evidence(result: VariableTraceResult) -> EvidenceCollection:
+    """Build evidence from a VariableTraceResult."""
+    var_name = result.variable
+    history = result.history
 
-    target = None
-    if history:
-        first_step, first_vv = history[0]
-        target = ResolvedStep(id=first_step, code='', line=0)
+    if not history:
+        return EvidenceCollection(
+            kind='variable',
+            target_var=var_name,
+            variable_evolutions=[],
+            step_count=0,
+            metadata={'variable': var_name, 'versions': 0},
+        )
 
-    # Build evolution
+    target = ResolvedStep(id=history[0][0], code='', line=0)
+
     versions = []
     for step_id, vv in history:
         versions.append({
@@ -117,9 +131,7 @@ def build_variable_evidence(model, var_name: str) -> EvidenceCollection:
             'version': getattr(vv, 'version', 0),
         })
 
-    evolutions = []
-    if versions:
-        evolutions.append(VariableEvolution(variable=var_name, versions=versions))
+    evolutions = [VariableEvolution(variable=var_name, versions=versions)]
 
     return EvidenceCollection(
         kind='variable',
@@ -131,39 +143,40 @@ def build_variable_evidence(model, var_name: str) -> EvidenceCollection:
     )
 
 
-def build_impact_evidence(model, impact_result) -> EvidenceCollection:
-    """Build evidence from a forward impact query result."""
-    source = _resolve_node(model, impact_result.target_step)
+def build_impact_evidence(result: ForwardImpactResult, facts: list = None) -> EvidenceCollection:
+    """Build evidence from a ForwardImpactResult."""
+    resolved = result.resolved_steps
+    source = _make_step(result.target_step, resolved)
 
     # Impact flows
-    data_edges = [e for e in (impact_result.edges or []) if getattr(e, 'kind', '') == 'data']
+    data_edges = [e for e in (result.edges or []) if e.kind == 'data']
     impact_flows = []
     if data_edges:
-        sorted_edges = sorted(data_edges, key=lambda e: impact_result.depth_map.get(e.target, 0))[:8]
+        sorted_edges = sorted(data_edges, key=lambda e: result.depth_map.get(e.target, 0))[:8]
         steps = []
         seen = set()
         for edge in sorted_edges:
             if edge.source not in seen:
-                steps.append(_resolve_node(model, edge.source))
+                steps.append(_make_step(edge.source, resolved))
                 seen.add(edge.source)
             if edge.target not in seen:
-                steps.append(_resolve_node(model, edge.target))
+                steps.append(_make_step(edge.target, resolved))
                 seen.add(edge.target)
         if steps:
             impact_flows.append(DataFlowChain(variable='', steps=steps))
 
     # Affected outputs
-    affected_outputs = [_resolve_node(model, lid) for lid in (impact_result.root_causes or [])[:5]]
+    affected_outputs = [_make_step(lid, resolved) for lid in (result.root_causes or [])[:5]]
 
     return EvidenceCollection(
         kind='impact',
         target=source,
         impact_flows=impact_flows,
         affected_outputs=affected_outputs,
-        step_count=len(impact_result.steps or []),
+        step_count=len(result.steps or []),
         metadata={
-            'source_step': impact_result.target_step,
-            'impact_size': len(impact_result.steps or []),
+            'source_step': result.target_step,
+            'impact_size': len(result.steps or []),
         },
     )
 
@@ -186,25 +199,50 @@ def _extract_facts_by_kind(facts, kind: str, steps: set) -> List[FactEvidence]:
     return result
 
 
-def _build_variable_evolutions(model, slice_result) -> List[VariableEvolution]:
-    """Build variable evolution evidence for a backward slice."""
-    evolutions = []
-    vars_in_slice: Set[str] = set()
-    for edge in (slice_result.edges or []):
-        if getattr(edge, 'kind', '') == 'data' and edge.var:
-            vars_in_slice.add(edge.var)
+def _build_variable_evolutions_from_edges(result: BackwardSliceResult, facts: list) -> List[VariableEvolution]:
+    """Build variable evolution evidence from a BackwardSliceResult.
 
-    for var in sorted(vars_in_slice):
-        history = model.get_variable_history(var)
-        slice_history = [(sid, vv) for sid, vv in history if sid in (slice_result.steps or set())]
-        if len(slice_history) >= 2:
-            versions = []
-            for sid, vv in slice_history:
+    Extracts variable names from data-flow edges and builds version chains
+    from the edge's source_version/target_version fields.
+    """
+    edges = result.edges or []
+    data_edges = [e for e in edges if e.kind == 'data' and e.var]
+
+    # Group edges by variable
+    by_var: Dict[str, list] = defaultdict(list)
+    for edge in data_edges:
+        by_var[edge.var].append(edge)
+
+    evolutions = []
+    for var, var_edges in by_var.items():
+        # Build version chain from edges
+        versions = []
+        seen = set()
+        # Sort by target step to get chronological order
+        sorted_edges = sorted(var_edges, key=lambda e: e.target)
+        for edge in sorted_edges:
+            # Source version
+            src_key = (edge.source, edge.source_version)
+            if src_key not in seen:
+                seen.add(src_key)
+                info = result.resolved_steps.get(edge.source)
                 versions.append({
-                    'step_id': sid,
-                    'value': str(getattr(vv, 'value', '')),
-                    'version': getattr(vv, 'version', 0),
+                    'step_id': edge.source,
+                    'value': info.code.strip() if info and info.code else '',
+                    'version': edge.source_version,
                 })
+            # Target version
+            tgt_key = (edge.target, edge.target_version)
+            if tgt_key not in seen:
+                seen.add(tgt_key)
+                info = result.resolved_steps.get(edge.target)
+                versions.append({
+                    'step_id': edge.target,
+                    'value': info.code.strip() if info and info.code else '',
+                    'version': edge.target_version,
+                })
+
+        if versions:
             evolutions.append(VariableEvolution(variable=var, versions=versions))
 
     return evolutions

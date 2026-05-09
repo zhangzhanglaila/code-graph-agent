@@ -10,10 +10,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.insert(0, PROJECT_ROOT)
 
 from dynamic.semantic_session import SemanticSession
-from dynamic.runtime.pdg import RuntimePDG
-from dynamic.semantic.facts import FactExtractor
-from dynamic.semantic.narrative import NarrativeEngine
-from dynamic.query.dsl import parse_query, QueryExecutor
+from dynamic.query.dsl import parse_query
 
 from api.services.analysis import prepare_execution
 from api.schemas.session import SessionCreateRequest, SessionQueryRequest, SessionNoteRequest
@@ -34,7 +31,7 @@ async def session_create(req: SessionCreateRequest):
 
 
 @router.post("/api/session/query")
-async def session_query(req: SessionQueryRequest):
+async def session_query(req: SessionQueryRequest, container: AppContainer = Depends(get_container)):
     """Execute a query within a session."""
     func_file = None
     try:
@@ -42,17 +39,13 @@ async def session_query(req: SessionQueryRequest):
             req.code, req.func_name, req.language,
         )
 
-        pdg = RuntimePDG.from_timeline(timeline)
-        facts = FactExtractor(pdg).extract_all()
-        engine = NarrativeEngine(pdg, facts)
-        executor = QueryExecutor(pdg, facts, engine)
-
+        pipeline = container.build_pipeline(timeline)
         parsed = parse_query(req.query_text)
-        query_result = executor.execute(parsed)
+        query_result = pipeline.executor.execute(parsed)
 
         session = SemanticSession.load_latest(SESSION_DIR)
         if session:
-            session.save_query(req.query_text, query_result, pdg, facts)
+            session.save_query(req.query_text, query_result, pipeline.pdg, pipeline.facts)
 
         return {"success": True, "result": query_result, "session_id": session.meta.session_id if session else None}
     except Exception as e:

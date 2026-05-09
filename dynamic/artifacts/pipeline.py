@@ -71,10 +71,10 @@ def _compute_fingerprint(semantic_model: Any, facts: Any) -> Any:
     return SemanticFingerprint.generate(semantic_model, facts)
 
 
-def _compute_narrative(semantic_model: Any, facts: Any) -> Any:
+def _compute_narrative(semantic_model: Any, facts: Any, pdg: Any = None) -> Any:
     """Build narrative engine from SemanticExecutionModel."""
     from dynamic.semantic.narrative import NarrativeEngine
-    return NarrativeEngine(semantic_model, facts)
+    return NarrativeEngine(semantic_model, facts, pdg=pdg)
 
 
 def _compute_steps_data(timeline: Any) -> Any:
@@ -93,7 +93,7 @@ DEFAULT_NODES = [
     PipelineNode(kind="facts", compute_fn=_compute_facts, input_kinds=["semantic_model"]),
     PipelineNode(kind="identity", compute_fn=_compute_identity, input_kinds=["semantic_model", "facts"]),
     PipelineNode(kind="fingerprint", compute_fn=_compute_fingerprint, input_kinds=["semantic_model", "facts"]),
-    PipelineNode(kind="narrative", compute_fn=_compute_narrative, input_kinds=["semantic_model", "facts"]),
+    PipelineNode(kind="narrative", compute_fn=_compute_narrative, input_kinds=["semantic_model", "facts", "pdg"]),
 ]
 
 
@@ -115,7 +115,7 @@ def run_full(graph: ArtifactGraph, code: str, version: str = "") -> Dict[str, Ar
     facts_art = graph.compute("facts", {"semantic_model": model_art})
     identity_art = graph.compute("identity", {"semantic_model": model_art, "facts": facts_art})
     fingerprint_art = graph.compute("fingerprint", {"semantic_model": model_art, "facts": facts_art})
-    narrative_art = graph.compute("narrative", {"semantic_model": model_art, "facts": facts_art})
+    narrative_art = graph.compute("narrative", {"semantic_model": model_art, "facts": facts_art, "pdg": pdg_art})
 
     return {
         "code": code_art,

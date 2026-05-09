@@ -9,11 +9,11 @@ from fastapi import APIRouter, Depends
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-from dynamic.runtime.pdg import RuntimePDG
-from dynamic.semantic.facts import FactExtractor
-from dynamic.semantic.narrative import NarrativeEngine
-from dynamic.query.dsl import parse_query, QueryExecutor
+from dynamic.query.dsl import parse_query
 from dynamic.query.temporal import parse_temporal_query, TemporalQuery
+from dynamic.query.protocol import QueryEnvelope, QueryResponse
+from dynamic.query.remote import RemoteQueryHandler
+from dynamic.query.execution_metrics import execution_metrics
 from dynamic.semantic.identity import SemanticIdentifier
 from dynamic.semantic.identity_normalizer import IdentityNormalizer
 from dynamic.semantic.fingerprint import SemanticFingerprint
@@ -26,7 +26,7 @@ router = APIRouter()
 
 
 @router.post("/api/query")
-async def unified_query(req: QueryRequest):
+async def unified_query(req: QueryRequest, container: AppContainer = Depends(get_container)):
     """Unified query endpoint — supports both structured and NL queries."""
     func_file = None
     try:
@@ -34,11 +34,9 @@ async def unified_query(req: QueryRequest):
             req.code, req.func_name, req.language,
         )
 
-        pdg = RuntimePDG.from_timeline(timeline)
-        extractor = FactExtractor(pdg)
-        facts = extractor.extract_all()
-        engine = NarrativeEngine(pdg, facts)
-        executor = QueryExecutor(pdg, facts, engine)
+        with execution_metrics.stage('pipeline_build'):
+            pipeline = container.build_pipeline(timeline)
+        pdg, facts, engine, executor = pipeline.pdg, pipeline.facts, pipeline.engine, pipeline.executor
 
         # Natural language query via text field
         if req.text:
@@ -146,6 +144,43 @@ async def unified_query(req: QueryRequest):
 
     except Exception as e:
         return {"success": False, "error": str(e)}
+    finally:
+        if func_file and os.path.exists(func_file):
+            try:
+                os.unlink(func_file)
+            except OSError:
+                pass
+
+
+@router.post("/api/query/remote")
+async def remote_query(envelope_dict: dict, container: AppContainer = Depends(get_container)):
+    """Remote query execution endpoint.
+
+    Accepts a QueryEnvelope (JSON), executes through the full
+    plan → optimize → execute pipeline, returns QueryResponse.
+
+    Used by RemoteQueryClient for distributed execution.
+    """
+    func_file = None
+    try:
+        envelope = QueryEnvelope.from_dict(envelope_dict)
+
+        code = envelope.params.get('code', '')
+        if not code:
+            return QueryResponse.error_response('No code in params').to_dict()
+
+        module, func, timeline, result, func_file = prepare_execution(
+            code, envelope.params.get('func_name', ''),
+            envelope.params.get('language', 'python'),
+        )
+
+        pipeline = container.build_pipeline(timeline)
+        handler = RemoteQueryHandler(pipeline.pdg, pipeline.facts, pipeline.engine)
+        response = handler.handle(envelope)
+        return response.to_dict()
+
+    except Exception as e:
+        return QueryResponse.error_response(str(e)).to_dict()
     finally:
         if func_file and os.path.exists(func_file):
             try:

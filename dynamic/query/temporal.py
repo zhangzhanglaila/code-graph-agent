@@ -31,7 +31,7 @@ from .algebra import Operator, LogicalPlan, OpResult, QueryPlanner
 
 # ─── Temporal Predicates ────────────────────────────────────────
 
-@dataclass
+@dataclass(frozen=True)
 class TemporalPredicate:
     """A temporal constraint on a query."""
     mode: str           # 'at' | 'before' | 'after' | 'between'
@@ -52,7 +52,7 @@ class TemporalPredicate:
         return self.mode
 
 
-@dataclass
+@dataclass(frozen=True)
 class TemporalQuery(SemanticQuery):
     """A query with temporal constraints."""
     kind: str = 'temporal'

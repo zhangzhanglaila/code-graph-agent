@@ -394,18 +394,30 @@ class NarrativeEngine:
     """Plans and generates explanations from semantic data.
 
     Backward-compatible facade — same API as before.
-    Builds evidence via evidence_builder, then delegates to Planner + Renderer.
+    Uses SemanticQueryEngine to produce typed results,
+    then EvidenceBuilder → Planner → Renderer pipeline.
 
     Usage:
         engine = NarrativeEngine(model, facts)
         narrative = engine.explain_backward_slice(slice_result)
+
+        # Or with pre-built PDG (avoids re-derivation):
+        engine = NarrativeEngine(model, facts, pdg=pdg)
     """
 
-    def __init__(self, model, facts):
-        self._model = model
+    def __init__(self, model, facts, pdg=None):
         self._facts = facts
         self._planner = NarrativePlanner()
         self._renderer = NarrativeRenderer()
+
+        # Build the query engine — the single entry point for all queries
+        from dynamic.semantic.query_engine import SemanticQueryEngine
+        if pdg is not None:
+            self._query_engine = SemanticQueryEngine(pdg, model, facts)
+        else:
+            # Derive pdg from model (model has .nodes/.edges which are SemanticNode/SemanticEdge)
+            # We need the original RuntimePDG, so we use model directly for query
+            self._query_engine = SemanticQueryEngine(model, model, facts)
 
     @property
     def planner(self) -> NarrativePlanner:
@@ -415,20 +427,65 @@ class NarrativeEngine:
     def renderer(self) -> NarrativeRenderer:
         return self._renderer
 
+    @property
+    def query_engine(self):
+        return self._query_engine
+
     def explain_backward_slice(self, slice_result) -> Narrative:
-        from dynamic.semantic.evidence_builder import build_backward_slice_evidence
-        evidence = build_backward_slice_evidence(self._model, self._facts, slice_result)
+        """Explain a backward slice. Accepts either SliceResult or BackwardSliceResult."""
+        from dynamic.semantic.evidence_builder import build_backward_slice_evidence, build_variable_evidence
+        from dynamic.semantic.query_result import BackwardSliceResult
+
+        # If already a BackwardSliceResult, use directly; otherwise wrap via engine
+        if isinstance(slice_result, BackwardSliceResult):
+            result = slice_result
+        else:
+            result = self._query_engine.backward_slice(
+                step=slice_result.target_step,
+                variable=getattr(slice_result, 'target_var', ''),
+            )
+        evidence = build_backward_slice_evidence(result, self._facts)
+
+        # Enrich with full variable histories for variables found in edges
+        edge_vars = set()
+        for edge in (result.edges or []):
+            if edge.var:
+                edge_vars.add(edge.var)
+        if result.target_var:
+            edge_vars.add(result.target_var)
+
+        for var in edge_vars:
+            try:
+                trace_result = self._query_engine.variable_trace(var)
+                var_evidence = build_variable_evidence(trace_result)
+                if var_evidence.variable_evolutions:
+                    evidence.variable_evolutions.extend(var_evidence.variable_evolutions)
+            except Exception:
+                pass  # Variable may not exist in PDG
+
         ir = self._planner.plan_backward_slice(evidence)
         return self._renderer.render(ir)
 
     def explain_variable(self, var_name: str) -> Narrative:
+        """Explain a variable's evolution."""
         from dynamic.semantic.evidence_builder import build_variable_evidence
-        evidence = build_variable_evidence(self._model, var_name)
+        result = self._query_engine.variable_trace(var_name)
+        evidence = build_variable_evidence(result)
         ir = self._planner.plan_variable(evidence)
         return self._renderer.render(ir)
 
     def explain_impact(self, impact_result) -> Narrative:
+        """Explain forward impact. Accepts either SliceResult or ForwardImpactResult."""
         from dynamic.semantic.evidence_builder import build_impact_evidence
-        evidence = build_impact_evidence(self._model, impact_result)
+        from dynamic.semantic.query_result import ForwardImpactResult
+
+        if isinstance(impact_result, ForwardImpactResult):
+            result = impact_result
+        else:
+            result = self._query_engine.forward_impact(
+                step=impact_result.target_step,
+                variable=getattr(impact_result, 'target_var', ''),
+            )
+        evidence = build_impact_evidence(result, self._facts)
         ir = self._planner.plan_impact(evidence)
         return self._renderer.render(ir)

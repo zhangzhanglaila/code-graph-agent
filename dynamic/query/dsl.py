@@ -87,16 +87,39 @@ class QueryTrace:
         return '\n'.join(lines)
 
 
-# ─── Query AST ────────────────────────────────────────────────────
+# ─── Query AST (frozen = immutable + hashable) ───────────────────
 
-@dataclass
+@dataclass(frozen=True)
 class SemanticQuery:
-    """Base class for all semantic queries."""
+    """Base class for all semantic queries. Immutable and hashable."""
     kind: str
     raw: str = ''
 
+    def to_dict(self) -> dict:
+        """Serialize to dict — stable, deterministic."""
+        d = {'kind': self.kind}
+        for k, v in self.__dict__.items():
+            if k in ('kind', 'raw'):
+                continue
+            if isinstance(v, SemanticQuery):
+                d[k] = v.to_dict()
+            elif v is not None and v != '' and v != -1 and v != False and v != 20:
+                d[k] = v
+        return d
 
-@dataclass
+    def to_json(self) -> str:
+        """Serialize to JSON string."""
+        import json
+        return json.dumps(self.to_dict(), sort_keys=True, ensure_ascii=False)
+
+    def query_hash(self) -> str:
+        """Deterministic hash for caching. Semantic-equivalent queries → same hash."""
+        import hashlib, json
+        canonical = json.dumps(self.to_dict(), sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
 class WhyQuery(SemanticQuery):
     """WHY <target> — backward slice + explanation."""
     kind: str = 'why'
@@ -104,14 +127,14 @@ class WhyQuery(SemanticQuery):
     target_step: int = -1
 
 
-@dataclass
+@dataclass(frozen=True)
 class TraceQuery(SemanticQuery):
     """TRACE <var> — variable evolution story."""
     kind: str = 'trace'
     variable: str = ''
 
 
-@dataclass
+@dataclass(frozen=True)
 class ImpactQuery(SemanticQuery):
     """IMPACT <source> — forward impact analysis."""
     kind: str = 'impact'
@@ -119,7 +142,7 @@ class ImpactQuery(SemanticQuery):
     source_step: int = -1
 
 
-@dataclass
+@dataclass(frozen=True)
 class ShowQuery(SemanticQuery):
     """SHOW <pattern> — find matching semantic facts."""
     kind: str = 'show'
@@ -127,7 +150,7 @@ class ShowQuery(SemanticQuery):
     limit: int = 20
 
 
-@dataclass
+@dataclass(frozen=True)
 class RootsQuery(SemanticQuery):
     """ROOTS <target> — find root causes only."""
     kind: str = 'roots'
@@ -135,7 +158,7 @@ class RootsQuery(SemanticQuery):
     target_step: int = -1
 
 
-@dataclass
+@dataclass(frozen=True)
 class CompareQuery(SemanticQuery):
     """COMPARE <a> <b> — compare two execution points."""
     kind: str = 'compare'
@@ -144,29 +167,89 @@ class CompareQuery(SemanticQuery):
     var: str = ''
 
 
-@dataclass
+@dataclass(frozen=True)
 class StatsQuery(SemanticQuery):
     """STATS — graph statistics."""
     kind: str = 'stats'
 
 
-@dataclass
+@dataclass(frozen=True)
 class HelpQuery(SemanticQuery):
     """HELP — show available queries."""
     kind: str = 'help'
 
 
-@dataclass
+@dataclass(frozen=True)
 class ComposedQuery(SemanticQuery):
     """Composed query: <first> THEN <second> [WHERE <filter>] [ORDER BY <field>]."""
     kind: str = 'composed'
-    first: SemanticQuery = field(default_factory=lambda: SemanticQuery(kind='help'))
-    second: SemanticQuery = field(default_factory=lambda: SemanticQuery(kind='help'))
+    first: SemanticQuery = field(default_factory=lambda: HelpQuery(kind='help'))
+    second: SemanticQuery = field(default_factory=lambda: HelpQuery(kind='help'))
     where_field: str = ''
     where_op: str = ''        # '>', '<', '>=', '<=', '==', 'contains'
     where_value: Any = None
     order_by: str = ''
     order_desc: bool = False
+
+
+# ─── Validation ──────────────────────────────────────────────────
+
+class QueryValidationError(Exception):
+    """Raised when a query fails validation."""
+    pass
+
+
+def validate_query(query: SemanticQuery, pdg=None) -> List[str]:
+    """Validate a query. Returns list of warnings (empty = valid).
+
+    Checks:
+    - Shape: required fields are present
+    - Semantic: step/variable exist in PDG (if pdg provided)
+    """
+    warnings = []
+
+    if isinstance(query, WhyQuery):
+        if query.target_step < 0 and not query.target:
+            warnings.append('WHY query needs a target_step or target variable')
+        if pdg and query.target_step >= 0 and query.target_step not in pdg.nodes:
+            warnings.append(f'Step {query.target_step} not found in execution')
+
+    elif isinstance(query, TraceQuery):
+        if not query.variable:
+            warnings.append('TRACE query needs a variable name')
+        if pdg and query.variable:
+            all_vars = set()
+            for n in pdg.nodes.values():
+                all_vars.update((n.vars or {}).keys())
+            if query.variable not in all_vars:
+                warnings.append(f'Variable "{query.variable}" not found in execution')
+
+    elif isinstance(query, ImpactQuery):
+        if query.source_step < 0 and not query.source:
+            warnings.append('IMPACT query needs a source_step or source variable')
+
+    elif isinstance(query, RootsQuery):
+        if query.target_step < 0 and not query.target:
+            warnings.append('ROOTS query needs a target_step or target variable')
+
+    elif isinstance(query, CompareQuery):
+        if query.step_a < 0 or query.step_b < 0:
+            warnings.append('COMPARE query needs two step IDs')
+
+    elif isinstance(query, ComposedQuery):
+        w1 = validate_query(query.first, pdg)
+        w2 = validate_query(query.second, pdg)
+        warnings.extend([f'first.{w}' for w in w1])
+        warnings.extend([f'second.{w}' for w in w2])
+
+    return warnings
+
+
+def validate_query_or_raise(query: SemanticQuery, pdg=None) -> None:
+    """Validate a query, raising on errors."""
+    warnings = validate_query(query, pdg)
+    if warnings:
+        raise QueryValidationError('; '.join(warnings))
 
 
 # ─── Parser ───────────────────────────────────────────────────────
@@ -218,6 +301,43 @@ def _parse_single(text: str) -> SemanticQuery:
     return WhyQuery(kind='why', target=text, raw=text)
 
 
+def _parse_where_value(val_str: str) -> Any:
+    """Parse a WHERE value string to int/float/str."""
+    try:
+        return int(val_str)
+    except ValueError:
+        try:
+            return float(val_str)
+        except ValueError:
+            return val_str
+
+
+def _extract_where_order(text: str):
+    """Extract WHERE and ORDER BY clauses from text. Returns (clean_text, where_match, order_match)."""
+    where_match = re.search(r'\s+where\s+(\w+)\s*(>=|<=|!=|>|<|==|contains)\s*(.+?)(?:\s+order\s+by\s+|$)', text, re.IGNORECASE)
+    order_match = re.search(r'\s+order\s+by\s+(\w+)(?:\s+(desc|asc))?\s*$', text, re.IGNORECASE)
+    clean = text
+    if where_match:
+        clean = clean[:where_match.start()].strip()
+    if order_match:
+        clean = clean[:order_match.start()].strip()
+    return clean, where_match, order_match
+
+
+def _build_composed(first, second, raw, where_match=None, order_match=None) -> ComposedQuery:
+    """Build a ComposedQuery with all values at construction time (frozen-safe)."""
+    wf = where_match.group(1) if where_match else ''
+    wo = where_match.group(2) if where_match else ''
+    wv = _parse_where_value(where_match.group(3).strip()) if where_match else None
+    ob = order_match.group(1) if order_match else ''
+    od = (order_match.group(2) or '').lower() == 'desc' if order_match else False
+    return ComposedQuery(
+        kind='composed', first=first, second=second, raw=raw,
+        where_field=wf, where_op=wo, where_value=wv,
+        order_by=ob, order_desc=od,
+    )
+
+
 def parse_query(text: str) -> SemanticQuery:
     """Parse a natural language query into a SemanticQuery AST.
 
@@ -233,68 +353,17 @@ def parse_query(text: str) -> SemanticQuery:
     then_match = re.split(r'\s+then\s+', text, flags=re.IGNORECASE)
     if len(then_match) == 2:
         first = _parse_single(then_match[0])
-        # Check for WHERE/ORDER BY on the second part
         second_text = then_match[1]
-        where_match = re.search(r'\s+where\s+(\w+)\s*(>=|<=|!=|>|<|==|contains)\s*(.+?)(?:\s+order\s+by\s+|$)', second_text, re.IGNORECASE)
-        order_match = re.search(r'\s+order\s+by\s+(\w+)(?:\s+(desc|asc))?\s*$', second_text, re.IGNORECASE)
-
-        second_clean = second_text
-        if where_match:
-            second_clean = second_text[:where_match.start()].strip()
-        if order_match:
-            second_clean = second_clean[:order_match.start()].strip()
-
+        second_clean, where_match, order_match = _extract_where_order(second_text)
         second = _parse_single(second_clean)
+        return _build_composed(first, second, raw, where_match, order_match)
 
-        composed = ComposedQuery(kind='composed', first=first, second=second, raw=raw)
-
-        if where_match:
-            composed.where_field = where_match.group(1)
-            composed.where_op = where_match.group(2)
-            val_str = where_match.group(3).strip()
-            try:
-                composed.where_value = int(val_str)
-            except ValueError:
-                try:
-                    composed.where_value = float(val_str)
-                except ValueError:
-                    composed.where_value = val_str
-
-        if order_match:
-            composed.order_by = order_match.group(1)
-            composed.order_desc = (order_match.group(2) or '').lower() == 'desc'
-
-        return composed
-
-    # Check for WHERE on single query
-    where_match = re.search(r'\s+where\s+(\w+)\s*(>=|<=|!=|>|<|==|contains)\s*(.+?)(?:\s+order\s+by\s+|$)', text, re.IGNORECASE)
-    order_match = re.search(r'\s+order\s+by\s+(\w+)(?:\s+(desc|asc))?\s*$', text, re.IGNORECASE)
-
-    clean_text = text
-    if where_match:
-        clean_text = text[:where_match.start()].strip()
-    if order_match:
-        clean_text = clean_text[:order_match.start()].strip()
-
+    # Check for WHERE/ORDER BY on single query
+    clean_text, where_match, order_match = _extract_where_order(text)
     query = _parse_single(clean_text)
 
     if where_match or order_match:
-        composed = ComposedQuery(kind='composed', first=query, second=HelpQuery(kind='help'), raw=raw)
-        if where_match:
-            composed.where_field = where_match.group(1)
-            composed.where_op = where_match.group(2)
-            val_str = where_match.group(3).strip()
-            try:
-                composed.where_value = int(val_str)
-            except ValueError:
-                try:
-                    composed.where_value = float(val_str)
-                except ValueError:
-                    composed.where_value = val_str
-        if order_match:
-            composed.order_by = order_match.group(1)
-            composed.order_desc = (order_match.group(2) or '').lower() == 'desc'
-        return composed
+        return _build_composed(query, HelpQuery(kind='help'), raw, where_match, order_match)
 
     return query
 
@@ -306,17 +375,31 @@ class QueryExecutor:
 
     Uses the QueryPlanner + SemanticAlgebra pipeline internally.
     Records a QueryTrace showing HOW the query was executed.
+    Caches results by query.query_hash() for deterministic replay.
     """
 
-    def __init__(self, pdg, facts, narrative_engine):
+    def __init__(self, pdg, facts, narrative_engine, cache_size: int = 128,
+                 cache_ttl: float = 600, timeout_seconds: float = 30.0):
         self.pdg = pdg
         self.facts = facts
         self.engine = narrative_engine
+        self._timeout = timeout_seconds
         from .algebra import QueryPlanner
         self._planner = QueryPlanner()
+        from .cache import QueryResultCache
+        self._cache = QueryResultCache(max_size=cache_size, ttl_seconds=cache_ttl)
 
     def execute(self, query: SemanticQuery) -> dict:
         """Execute a query and return a structured result with trace."""
+        from .metrics import query_metrics
+
+        # Cache check — skip planning + execution entirely
+        cached = self._cache.get(query)
+        if cached is not None:
+            cached['_cache'] = {'hit': True, 'key': query.query_hash()}
+            query_metrics.record(query.kind, duration_ms=0, cached=True)
+            return cached
+
         t0 = time.time()
         trace = QueryTrace()
         trace.add('parse', f'Parsed query: {query.kind}', detail={'raw': query.raw})
@@ -344,6 +427,14 @@ class QueryExecutor:
         # Execute the plan
         op_result = plan.execute(self.pdg, self.facts, self.engine, trace)
 
+        # Timeout check
+        elapsed = (time.time() - t0) * 1000
+        if elapsed > self._timeout * 1000:
+            trace.add('timeout', f'Query timed out after {elapsed:.0f}ms')
+            result = {'success': False, 'error': f'Query timed out after {elapsed:.0f}ms'}
+            query_metrics.record(query.kind, duration_ms=elapsed, error=True)
+            return result
+
         # Handle HELP specially (empty plan)
         if query.kind == 'help':
             result = self._exec_help(query, trace)
@@ -352,7 +443,18 @@ class QueryExecutor:
 
         trace.total_ms = (time.time() - t0) * 1000
         result['_trace'] = trace.to_dict()
+        result['_cache'] = {'stored': True, 'key': query.query_hash()}
+        self._cache.put(query, result)
+        query_metrics.record(query.kind, duration_ms=trace.total_ms, cached=False)
         return result
+
+    def cache_stats(self) -> dict:
+        """Return cache performance stats."""
+        return self._cache.stats()
+
+    def cache_clear(self) -> None:
+        """Clear the query result cache."""
+        self._cache.clear()
 
     def _exec_help(self, query: HelpQuery, trace: QueryTrace) -> dict:
         return {

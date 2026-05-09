@@ -17,10 +17,20 @@ Usage:
 from __future__ import annotations
 import os
 import sys
+from dataclasses import dataclass
 from typing import Optional
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
+
+
+@dataclass
+class PipelineContext:
+    """Pre-built pipeline: pdg + facts + engine + executor."""
+    pdg: object
+    facts: list
+    engine: object
+    executor: object
 
 
 class AppContainer:
@@ -168,6 +178,13 @@ class AppContainer:
         return self._instances["query_executor_class"]
 
     @property
+    def agent_engine_class(self):
+        if "agent_engine_class" not in self._instances:
+            from dynamic.agent import AgentEngine
+            self._instances["agent_engine_class"] = AgentEngine
+        return self._instances["agent_engine_class"]
+
+    @property
     def parse_query(self):
         if "parse_query" not in self._instances:
             from dynamic.query.dsl import parse_query
@@ -180,6 +197,28 @@ class AppContainer:
             from dynamic.query.temporal import parse_temporal_query
             self._instances["parse_temporal_query"] = parse_temporal_query
         return self._instances["parse_temporal_query"]
+
+    # ── Pipeline builder ──────────────────────────────────────────
+
+    def build_pipeline(self, timeline) -> PipelineContext:
+        """Build the full analysis pipeline from a timeline.
+
+        Returns PipelineContext with pdg, facts, engine, executor.
+        Single source of truth for pipeline construction.
+        """
+        from dynamic.query.execution_metrics import execution_metrics
+
+        with execution_metrics.stage('pdg_build'):
+            pdg = self.pdg_class.from_timeline(timeline)
+
+        with execution_metrics.stage('fact_extraction'):
+            facts = self.fact_extractor_class(pdg).extract_all()
+
+        with execution_metrics.stage('narrative_init'):
+            engine = self.narrative_engine_class(pdg, facts)
+
+        executor = self.query_executor_class(pdg, facts, engine)
+        return PipelineContext(pdg=pdg, facts=facts, engine=engine, executor=executor)
 
     # ── Service layer ─────────────────────────────────────────────
 
