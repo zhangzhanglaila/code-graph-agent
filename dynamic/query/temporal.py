@@ -147,15 +147,113 @@ class TemporalFilter(Operator):
         return fallback
 
 
+class SnapshotOperator(Operator):
+    """Take a PDG snapshot at a specific step — freeze variable state.
+
+    Unlike TemporalFilter which filters existing results, SnapshotOperator
+    captures the variable state at a given step and produces a synthetic
+    result showing all variables and their values at that point in time.
+
+    Usage in plan:
+        SnapshotOperator(step=15)  → shows variable state at step 15
+    """
+    name = 'snapshot'
+
+    def __init__(self, step: int):
+        self.step = step
+
+    def execute(self, ctx: OpResult, pdg: Any, facts: list, engine: Any, trace: Any) -> OpResult:
+        t0 = time.time()
+
+        node = pdg.nodes.get(self.step)
+        if not node:
+            trace.add('snapshot', f'Snapshot AT {self.step}: step not found',
+                       duration_ms=(time.time() - t0) * 1000)
+            return ctx
+
+        # Capture variable state at this step
+        snapshot = {}
+        if hasattr(node, 'vars'):
+            for var_name, var_version in node.vars.items():
+                snapshot[var_name] = {
+                    'value': var_version.value if hasattr(var_version, 'value') else str(var_version),
+                    'type': var_version.type if hasattr(var_version, 'type') else '',
+                    'version': var_version.version if hasattr(var_version, 'version') else 0,
+                }
+
+        # Replace context with snapshot data
+        ctx.nodes = [self.step]
+        ctx.metadata['snapshot'] = snapshot
+        ctx.metadata['snapshot_step'] = self.step
+        ctx.metadata['snapshot_code'] = node.code if hasattr(node, 'code') else ''
+
+        trace.add('snapshot', f'Snapshot AT {self.step}: {len(snapshot)} variables captured',
+                   duration_ms=(time.time() - t0) * 1000)
+        return ctx
+
+
+class WindowOperator(Operator):
+    """Restrict query results to a step range window.
+
+    Similar to TemporalFilter(mode='between'), but as a standalone
+    operator that can be composed in any plan position.
+
+    Usage in plan:
+        WindowOperator(start=5, end=20)  → only steps 5-20 visible
+    """
+    name = 'window'
+
+    def __init__(self, start: int = 0, end: int = -1):
+        self.start = start
+        self.end = end  # -1 means "to the end"
+
+    def execute(self, ctx: OpResult, pdg: Any, facts: list, engine: Any, trace: Any) -> OpResult:
+        t0 = time.time()
+        original_nodes = len(ctx.nodes)
+        original_facts = len(ctx.facts)
+
+        # Determine effective end
+        end = self.end if self.end >= 0 else (max(pdg.nodes.keys()) if pdg.nodes else 0)
+
+        # Filter nodes
+        ctx.nodes = [n for n in ctx.nodes if self.start <= n <= end]
+
+        # Filter facts
+        ctx.facts = [f for f in ctx.facts
+                     if any(self.start <= e <= end
+                            for e in (f.evidence if hasattr(f, 'evidence') else []))]
+
+        # Filter history
+        if ctx.history:
+            ctx.history = [(sid, vv) for sid, vv in ctx.history
+                           if self.start <= sid <= end]
+
+        # Filter edges
+        if ctx.edges:
+            ctx.edges = [(s, t, k) for s, t, k in ctx.edges
+                         if self.start <= s <= end and self.start <= t <= end]
+
+        ctx.metadata['window_start'] = self.start
+        ctx.metadata['window_end'] = end
+
+        trace.add('filter', f'Window [{self.start}..{end}]: nodes {original_nodes}→{len(ctx.nodes)}, facts {original_facts}→{len(ctx.facts)}',
+                   duration_ms=(time.time() - t0) * 1000)
+        return ctx
+
+
 # ─── Temporal Parser ────────────────────────────────────────────
 
 _TEMPORAL_PATTERNS = [
+    # "SNAPSHOT AT 15" — capture variable state at step 15
+    (r'^snapshot\s+at\s+(?:step\s+)?(\d+)$', 'snapshot'),
     # "WHY memo AT step 15"
     (r'^(.+?)\s+at\s+step\s+(\d+)$', 'at'),
     # "WHY memo AT 15"
     (r'^(.+?)\s+at\s+(\d+)$', 'at'),
     # "TRACE a BETWEEN 5..20" or "TRACE a BETWEEN 5 AND 20"
     (r'^(.+?)\s+between\s+(\d+)\s*(?:\.\.|\s+and\s+)\s*(\d+)$', 'between'),
+    # "WINDOW 5..20" — restrict to step range
+    (r'^window\s+(\d+)\s*(?:\.\.|\s+to\s+)\s*(\d+)$', 'window'),
     # "SHOW mutations BEFORE return"
     (r'^(.+?)\s+before\s+(.+)$', 'before'),
     # "SHOW loops AFTER step 10"
@@ -178,6 +276,18 @@ def parse_temporal_query(text: str) -> Tuple[SemanticQuery, Optional[TemporalPre
         m = re.match(pattern, text, re.IGNORECASE)
         if not m:
             continue
+
+        if mode == 'snapshot':
+            step = int(m.group(1))
+            # Snapshot uses a StatsQuery as inner (no real inner query needed)
+            from .dsl import StatsQuery
+            return StatsQuery(kind='stats'), TemporalPredicate(mode='at', step=step)
+
+        if mode == 'window':
+            step_a = int(m.group(1))
+            step_b = int(m.group(2))
+            from .dsl import ShowQuery
+            return ShowQuery(kind='show', pattern='all'), TemporalPredicate(mode='between', step_a=step_a, step_b=step_b)
 
         inner_text = m.group(1).strip()
 
@@ -224,6 +334,21 @@ class TemporalQueryPlanner(QueryPlanner):
 
         if temporal is None:
             return base_plan
+
+        # For snapshot: use SnapshotOperator instead of TemporalFilter
+        if temporal.mode == 'at' and isinstance(query, StatsQuery):
+            return LogicalPlan(
+                [SnapshotOperator(step=temporal.step)],
+                query_kind=f'snapshot(AT {temporal.step})',
+            )
+
+        # For window: use WindowOperator
+        if temporal.mode == 'between' and isinstance(query, ShowQuery) and query.pattern == 'all':
+            return LogicalPlan(
+                [WindowOperator(start=temporal.step_a, end=temporal.step_b),
+                 *base_plan.operators],
+                query_kind=f'window({temporal.step_a}..{temporal.step_b})',
+            )
 
         # Insert temporal filter after the data-producing operator
         ops = list(base_plan.operators)

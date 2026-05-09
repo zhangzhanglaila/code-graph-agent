@@ -9,8 +9,6 @@ from fastapi import APIRouter, Depends
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-from dynamic.runtime.pdg import RuntimePDG
-
 from api.services.analysis import prepare_execution, build_steps_data, build_semantic_context
 from api.schemas.replay import ReplayInsightRequest
 from api.container import get_container, AppContainer
@@ -43,7 +41,7 @@ async def failure_attribution(req: ReplayInsightRequest):
 
 
 @router.post("/api/causal_chain")
-async def causal_chain(req: ReplayInsightRequest):
+async def causal_chain(req: ReplayInsightRequest, container: AppContainer = Depends(get_container)):
     """Analyze execution for causal chain."""
     func_file = None
     try:
@@ -84,8 +82,9 @@ async def causal_chain(req: ReplayInsightRequest):
             for dd in timeline.data_dependencies
         ]
 
-        # Build PDG and run backward slice
-        pdg = RuntimePDG.from_timeline(timeline)
+        # Build pipeline via container
+        pipeline = container.build_pipeline(timeline)
+        pdg = pipeline.pdg
         backward = None
         if timeline.steps:
             last = timeline.steps[-1]
@@ -117,7 +116,7 @@ async def causal_chain(req: ReplayInsightRequest):
 
 
 @router.post("/api/backward_slice")
-async def backward_slice(req: ReplayInsightRequest):
+async def backward_slice(req: ReplayInsightRequest, container: AppContainer = Depends(get_container)):
     """Dynamic backward slicing."""
     func_file = None
     try:
@@ -125,7 +124,8 @@ async def backward_slice(req: ReplayInsightRequest):
             req.code, req.func_name, req.language,
         )
 
-        pdg = RuntimePDG.from_timeline(timeline)
+        pipeline = container.build_pipeline(timeline)
+        pdg = pipeline.pdg
 
         target_step = len(timeline.steps) - 1
         target_var = ''

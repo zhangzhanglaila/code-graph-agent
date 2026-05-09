@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import type { InsightResponse, AnalyzeResponse, DSVizResponse, ExplainResponse, StepExplanation, FocusedExplanation, StepData, ControlEdge, LoopGroup, PatternNarrativeResponse, SubproblemGraphResponse, DetectedPattern, GitHubAnalyzeResponse } from '../api/analysis'
+import type { InsightResponse, AnalyzeResponse, DSVizResponse, ExplainResponse, StepExplanation, FocusedExplanation, StepData, ControlEdge, LoopGroup, PatternNarrativeResponse, SubproblemGraphResponse, DetectedPattern, GitHubAnalyzeResponse, AgentResult, AllMetrics } from '../api/analysis'
 
 interface HistoryEntry {
   id: string
@@ -40,7 +40,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   // State
   const loading = ref(false)
   const error = ref('')
-  const activeTab = ref<'insight' | 'canvas' | 'replay' | 'console' | 'semantics' | 'map' | 'diff' | 'stack' | 'dsviz' | 'graph' | 'timeline' | 'github'>('insight')
+  const activeTab = ref<'insight' | 'canvas' | 'replay' | 'console' | 'semantics' | 'map' | 'diff' | 'stack' | 'dsviz' | 'graph' | 'timeline' | 'github' | 'agent' | 'metrics'>('insight')
   const sessionId = ref('')
   const showAllSteps = ref(false)
 
@@ -60,6 +60,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const failureAttribution = ref<any>(null)
   const importGraph = ref<any>(null)
   const causalChain = ref<any>(null)
+  const agentResult = ref<AgentResult | null>(null)
+  const agentLoading = ref(false)
+  const metrics = ref<AllMetrics | null>(null)
 
   // Timeline state
   const currentStep = ref(0)
@@ -689,6 +692,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     stepExplanations, controlEdges, loopGroups,
     focusedExplanation, focusLoading, patternResult, subproblemGraph, explainMode,
     githubResult, failureAttribution, importGraph, causalChain,
+    agentResult, agentLoading, metrics,
     sessionId, showAllSteps, importantSteps,
     currentStep, isPlaying, playSpeed,
     highlightedLine,

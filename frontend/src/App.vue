@@ -14,6 +14,8 @@ import QueryConsole from './components/QueryConsole.vue'
 import SemanticDiffPanel from './components/SemanticDiffPanel.vue'
 import SemanticMap from './components/SemanticMap.vue'
 import SemanticCanvas from './components/SemanticCanvas.vue'
+import AgentPanel from './components/AgentPanel.vue'
+import MetricsPanel from './components/MetricsPanel.vue'
 import ErrorToast from './components/ErrorToast.vue'
 import { useAnalysisStore } from './store/analysisStore'
 import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps, getPatternNarrative, getSubproblemGraph, getFailureAttribution, getCausalChain } from './api/analysis'
@@ -199,12 +201,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <!-- Tab bar -->
       <div class="tab-bar" v-if="store.hasResults || store.githubResult">
         <button
-          v-for="tab in (['insight', 'canvas', 'replay', 'console', 'semantics', 'map', 'diff', 'stack', 'dsviz', 'graph', 'timeline', 'github'] as const)"
+          v-for="tab in (['insight', 'canvas', 'replay', 'console', 'semantics', 'map', 'diff', 'stack', 'dsviz', 'graph', 'timeline', 'github', 'agent', 'metrics'] as const)"
           :key="tab"
           :class="['tab-btn', { active: store.activeTab === tab }]"
           @click="store.activeTab = tab"
         >
-          {{ tab === 'insight' ? '分析洞察' : tab === 'canvas' ? '语义画布' : tab === 'replay' ? '执行回放' : tab === 'console' ? '语义控制台' : tab === 'semantics' ? '语义推理' : tab === 'map' ? '语义地图' : tab === 'diff' ? '语义对比' : tab === 'stack' ? '执行栈' : tab === 'dsviz' ? '数据结构' : tab === 'graph' ? '执行图' : tab === 'timeline' ? '时间线' : 'GitHub' }}
+          {{ tab === 'insight' ? '分析洞察' : tab === 'canvas' ? '语义画布' : tab === 'replay' ? '执行回放' : tab === 'console' ? '语义控制台' : tab === 'semantics' ? '语义推理' : tab === 'map' ? '语义地图' : tab === 'diff' ? '语义对比' : tab === 'stack' ? '执行栈' : tab === 'dsviz' ? '数据结构' : tab === 'graph' ? '执行图' : tab === 'timeline' ? '时间线' : tab === 'agent' ? '智能体' : tab === 'metrics' ? '系统指标' : 'GitHub' }}
         </button>
       </div>
 
@@ -223,6 +225,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         <DSVizPanel v-if="store.activeTab === 'dsviz' && store.hasResults" />
         <TimelinePanel v-if="store.activeTab === 'timeline' && store.hasResults" />
         <GitHubPanel v-if="store.activeTab === 'github' && store.githubResult" />
+        <AgentPanel v-if="store.activeTab === 'agent'" />
+        <MetricsPanel v-if="store.activeTab === 'metrics'" />
       </div>
     </div>
   </div>

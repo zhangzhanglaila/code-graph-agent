@@ -1124,3 +1124,106 @@ export async function getValidationHistory(conceptId?: string): Promise<{ succes
   const res = await fetch(url)
   return res.json()
 }
+
+// ── Agent API ──────────────────────────────────────────────────
+
+export interface AgentResult {
+  success: boolean
+  agent?: {
+    success: boolean
+    observation_count: number
+    state: {
+      observation_count: number
+      step_range: number[]
+      variables: Record<string, { name: string; values: any[]; mutations: number }>
+      branch_count: number
+      mutation_count: number
+      functions: string[]
+    }
+    reasoning: {
+      depth: number
+      overall_confidence: number
+      steps: Array<{
+        hypothesis: { id: string; description: string; confidence: number }
+        evidence: Array<{ kind: string; var?: string; description?: string }>
+        conclusion: string
+      }>
+    }
+    action_plan: { action_count: number }
+    action_results: Array<{ action: { kind: string }; success: boolean }>
+    duration_ms: number
+  }
+  error?: string
+}
+
+export async function agentAnalyze(code: string, funcName = '', language = 'python', question = ''): Promise<AgentResult> {
+  const res = await fetch(`${API_BASE}/api/agent/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, language, question }),
+  })
+  return res.json()
+}
+
+export async function agentObserve(code: string, funcName = '', language = 'python', question = ''): Promise<AgentResult> {
+  const res = await fetch(`${API_BASE}/api/agent/observe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, func_name: funcName, language, question }),
+  })
+  return res.json()
+}
+
+// ── Metrics API ────────────────────────────────────────────────
+
+export interface QueryMetrics {
+  total_queries: number
+  errors: number
+  uptime_seconds: number
+  latency: { p50: number; p95: number; p99: number; avg: number; min: number; max: number; count: number }
+  by_type: Record<string, { count: number; avg_ms: number }>
+  cache: { hits: number; misses: number; hit_rate: number }
+}
+
+export interface ExecutionMetrics {
+  stages: Record<string, { count: number; avg_ms: number; p50: number; p95: number; total_ms: number }>
+  endpoints: Record<string, { count: number; avg_ms: number; p50: number; p95: number; total_ms: number; errors: number }>
+}
+
+export interface AgentMetricsData {
+  total_runs: number
+  reasoning: { avg_hypotheses: number; avg_depth: number; avg_evidence_per_hypothesis: number; max_depth: number }
+  actions: { total: number; success: number; failure: number; success_rate: number }
+  performance: { avg_duration_ms: number; p95_duration_ms: number }
+}
+
+export interface AllMetrics {
+  query: QueryMetrics
+  execution: ExecutionMetrics
+  agent: AgentMetricsData
+}
+
+export async function getAllMetrics(): Promise<AllMetrics> {
+  const res = await fetch(`${API_BASE}/api/metrics`)
+  return res.json()
+}
+
+export async function getQueryMetrics(): Promise<QueryMetrics> {
+  const res = await fetch(`${API_BASE}/api/metrics/query`)
+  return res.json()
+}
+
+export async function getExecutionMetrics(): Promise<ExecutionMetrics> {
+  const res = await fetch(`${API_BASE}/api/metrics/execution`)
+  return res.json()
+}
+
+export async function getAgentMetrics(): Promise<AgentMetricsData> {
+  const res = await fetch(`${API_BASE}/api/metrics/agent`)
+  return res.json()
+}
+
+export async function resetMetrics(): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/metrics/reset`, { method: 'POST' })
+  return res.json()
+}
