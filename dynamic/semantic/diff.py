@@ -166,7 +166,7 @@ class SemanticDiffer:
     """Compares two executions at the semantic level."""
 
     @classmethod
-    def compare(cls, model_a, facts_a, model_b, facts_b,
+    def compare(cls, pdg_a, facts_a, pdg_b, facts_b,
                 narrative_a=None, narrative_b=None) -> SemanticDiffReport:
         """Compare two runs and produce a SemanticDiffReport."""
         report = SemanticDiffReport()

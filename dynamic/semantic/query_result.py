@@ -79,3 +79,17 @@ class VariableTraceResult:
     variable: str
     history: List[Tuple[int, QueryVarVersion]]
     version_chain: List[Tuple[int, int, int, int]]  # (src, tgt, src_ver, tgt_ver)
+
+
+@dataclass
+class ComposedResult:
+    """Result of a composed query (first THEN second [WHERE] [ORDER BY])."""
+    first: Any
+    second: Any
+    merged: Dict[str, Any] = field(default_factory=dict)
+    where_applied: Optional[str] = None
+    order_by: Optional[str] = None
+    where_field: str = ''
+    where_op: str = ''
+    where_value: Any = None
+    order_desc: bool = False

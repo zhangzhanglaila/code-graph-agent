@@ -335,7 +335,7 @@ function resultSummary(result: any): string {
   flex-direction: column;
   height: 100%;
   font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
-  font-size: 13px;
+  font-size: 14px;
   cursor: text;
 }
 
@@ -351,18 +351,18 @@ function resultSummary(result: any): string {
 
 .qc-title {
   font-weight: 700;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--primary, #4f46e5);
 }
 
 .qc-hint {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-dim, #9ca3af);
   flex: 1;
 }
 
 .qc-clear {
-  font-size: 11px;
+  font-size: 14px;
   padding: 2px 8px;
   border: 1px solid var(--border, #ddd);
   border-radius: 4px;
@@ -404,7 +404,7 @@ function resultSummary(result: any): string {
   gap: 8px;
   padding: 6px 0;
   color: var(--text-dim, #888);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .qc-spinner {
@@ -423,7 +423,7 @@ function resultSummary(result: any): string {
   background: rgba(239, 68, 68, 0.06);
   border-left: 3px solid #ef4444;
   color: #dc2626;
-  font-size: 12px;
+  font-size: 14px;
   border-radius: 0 4px 4px 0;
 }
 
@@ -433,7 +433,7 @@ function resultSummary(result: any): string {
 
 .qc-summary {
   color: var(--text, #333);
-  font-size: 12px;
+  font-size: 14px;
   margin-bottom: 6px;
   line-height: 1.4;
 }
@@ -445,12 +445,12 @@ function resultSummary(result: any): string {
 
 .qc-narr-title {
   font-weight: 700;
-  font-size: 13px;
+  font-size: 14px;
   margin-bottom: 2px;
 }
 
 .qc-narr-summary {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #888);
   margin-bottom: 6px;
   line-height: 1.4;
@@ -465,7 +465,7 @@ function resultSummary(result: any): string {
 .qc-seg {
   display: flex;
   gap: 6px;
-  font-size: 11px;
+  font-size: 14px;
   padding: 2px 6px;
   border-radius: 3px;
   background: rgba(0,0,0,0.02);
@@ -476,7 +476,7 @@ function resultSummary(result: any): string {
   min-width: 60px;
   color: var(--text-dim, #888);
   text-transform: uppercase;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .qc-seg-heading {
@@ -494,14 +494,14 @@ function resultSummary(result: any): string {
 .qc-hist-row {
   display: flex;
   gap: 8px;
-  font-size: 11px;
+  font-size: 14px;
   padding: 2px 0;
 }
 
 .qc-hist-step { color: var(--text-dim, #888); min-width: 32px; }
 .qc-hist-ver { color: #8b5cf6; font-weight: 600; min-width: 24px; }
 .qc-hist-val { color: #059669; font-weight: 600; }
-.qc-hist-type { color: var(--text-dim, #9ca3af); font-size: 10px; }
+.qc-hist-type { color: var(--text-dim, #9ca3af); font-size: 14px; }
 
 /* Facts */
 .qc-facts {
@@ -514,14 +514,14 @@ function resultSummary(result: any): string {
 .qc-fact {
   display: flex;
   gap: 8px;
-  font-size: 11px;
+  font-size: 14px;
   padding: 2px 0;
 }
 
 .qc-fact-kind {
   font-weight: 700;
   min-width: 120px;
-  font-size: 10px;
+  font-size: 14px;
 }
 
 .qc-fact-desc {
@@ -537,7 +537,7 @@ function resultSummary(result: any): string {
 }
 
 .qc-stat {
-  font-size: 11px;
+  font-size: 14px;
   padding: 2px 6px;
   background: rgba(59, 130, 246, 0.06);
   border-radius: 3px;
@@ -547,7 +547,7 @@ function resultSummary(result: any): string {
 
 /* Text */
 .qc-text {
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
   white-space: pre-wrap;
   color: var(--text, #333);
@@ -555,14 +555,14 @@ function resultSummary(result: any): string {
 }
 
 .qc-more {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-dim, #9ca3af);
   font-style: italic;
 }
 
 /* Trace toggle */
 .qc-trace-toggle {
-  font-size: 11px;
+  font-size: 14px;
   padding: 3px 8px;
   border: 1px solid var(--border, #ddd);
   border-radius: 4px;
@@ -596,7 +596,7 @@ function resultSummary(result: any): string {
   align-items: center;
   margin-bottom: 8px;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .qc-trace-total {
@@ -629,7 +629,7 @@ function resultSummary(result: any): string {
 }
 
 .qc-trace-phase {
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 700;
   color: white;
   padding: 2px 6px;
@@ -641,12 +641,12 @@ function resultSummary(result: any): string {
 
 .qc-trace-desc {
   flex: 1;
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text, #333);
 }
 
 .qc-trace-ms {
-  font-size: 10px;
+  font-size: 14px;
   color: var(--text-dim, #9ca3af);
 }
 
@@ -670,7 +670,7 @@ function resultSummary(result: any): string {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: 14px;
   color: var(--text-dim, #888);
 }
 
@@ -688,7 +688,7 @@ function resultSummary(result: any): string {
   justify-content: center;
   height: 100%;
   color: var(--text-dim, #9ca3af);
-  font-size: 13px;
+  font-size: 14px;
   gap: 8px;
 }
 
@@ -713,7 +713,7 @@ function resultSummary(result: any): string {
 }
 
 .qc-examples span {
-  font-size: 11px;
+  font-size: 14px;
   padding: 3px 8px;
   border: 1px solid var(--border, #ddd);
   border-radius: 4px;
@@ -749,7 +749,7 @@ function resultSummary(result: any): string {
   border: none;
   outline: none;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   background: transparent;
   color: var(--text, #333);
 }
@@ -777,7 +777,7 @@ function resultSummary(result: any): string {
 
 .qc-suggestion {
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
   font-family: monospace;
   color: var(--text, #333);

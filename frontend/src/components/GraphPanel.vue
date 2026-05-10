@@ -682,7 +682,7 @@ function onNodeLeave() {
   border: 1px solid var(--border);
   border-radius: 8px;
   margin-bottom: 8px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .toggle-label {
@@ -701,7 +701,7 @@ function onNodeLeave() {
   margin-left: auto;
   color: #3b82f6;
   font-weight: 600;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .legend {
@@ -715,7 +715,7 @@ function onNodeLeave() {
   margin-bottom: 8px;
 }
 
-.legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-dim); }
+.legend-item { display: flex; align-items: center; gap: 4px; font-size: 14px; color: var(--text-dim); }
 
 .legend-line {
   width: 16px;
@@ -738,7 +738,7 @@ function onNodeLeave() {
 }
 
 .stats {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-muted);
   padding: 6px 0;
   text-align: center;
@@ -760,13 +760,13 @@ function onNodeLeave() {
 }
 
 .detail-step {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text);
 }
 
 .detail-badge {
-  font-size: 9px;
+  font-size: 14px;
   font-weight: 700;
   padding: 2px 8px;
   border-radius: 4px;
@@ -795,7 +795,7 @@ function onNodeLeave() {
 
 .detail-code {
   display: block;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text);
   background: rgba(0,0,0,0.03);
   padding: 6px 10px;
@@ -806,7 +806,7 @@ function onNodeLeave() {
 }
 
 .detail-changed {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-dim);
   margin-bottom: 8px;
 }
@@ -815,7 +815,7 @@ function onNodeLeave() {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim);
 }
 .impact-item b {
@@ -831,14 +831,14 @@ function onNodeLeave() {
 }
 
 .why-title {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
   color: #00a1d6;
   margin-bottom: 4px;
 }
 
 .why-line {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -852,7 +852,7 @@ function onNodeLeave() {
 }
 
 .path-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   color: #3b82f6;
   margin-bottom: 4px;
@@ -867,7 +867,7 @@ function onNodeLeave() {
 }
 
 .path-summary {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text);
   background: linear-gradient(135deg, rgba(59,130,246,0.06), rgba(124,58,237,0.06));
   padding: 8px 12px;
@@ -911,7 +911,7 @@ function onNodeLeave() {
 }
 
 .path-desc {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-dim);
   margin-bottom: 8px;
 }
@@ -926,7 +926,7 @@ function onNodeLeave() {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: 14px;
   padding: 4px 8px;
   border-radius: 4px;
   background: rgba(59,130,246,0.04);
@@ -943,7 +943,7 @@ function onNodeLeave() {
 }
 
 .path-num {
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text-muted);
   min-width: 16px;
@@ -952,12 +952,12 @@ function onNodeLeave() {
 .path-text {
   color: var(--text-dim);
   font-family: monospace;
-  font-size: 10px;
+  font-size: 14px;
   flex: 1;
 }
 
 .path-badge {
-  font-size: 9px;
+  font-size: 14px;
   font-weight: 700;
   padding: 1px 6px;
   border-radius: 3px;

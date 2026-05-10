@@ -88,6 +88,22 @@ class RuntimePDG:
         self._edges_to: Dict[int, List[RuntimeEdge]] = defaultdict(list)
         self._data_edges: Dict[Tuple[int, str], List[RuntimeEdge]] = defaultdict(list)
 
+    @property
+    def node_count(self) -> int:
+        return len(self.nodes)
+
+    @property
+    def edge_count(self) -> int:
+        return len(self.edges)
+
+    @property
+    def data_edge_count(self) -> int:
+        return sum(1 for e in self.edges if e.kind == 'data')
+
+    @property
+    def control_edge_count(self) -> int:
+        return sum(1 for e in self.edges if e.kind == 'control')
+
     # ─── Construction ─────────────────────────────────────────────
 
     @classmethod

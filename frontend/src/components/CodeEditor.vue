@@ -103,7 +103,7 @@ watch(() => store.highlightedLine, (line) => {
 }
 
 .editor-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-dim);
 }
@@ -114,7 +114,7 @@ watch(() => store.highlightedLine, (line) => {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: 14px;
   outline: none;
 }
 

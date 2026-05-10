@@ -192,7 +192,7 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
   display: flex;
   flex-direction: column;
   gap: 16px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .loading {
@@ -220,7 +220,7 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
   border: 1px solid rgba(239, 68, 68, 0.2);
   border-radius: 6px;
   color: #dc2626;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .empty {
@@ -230,7 +230,7 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
 }
 
 .empty .hint {
-  font-size: 12px;
+  font-size: 14px;
   margin-top: 8px;
   opacity: 0.7;
 }
@@ -243,7 +243,7 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
 
 .summary {
   color: var(--text-dim, #888);
-  font-size: 13px;
+  font-size: 14px;
   margin: 0;
   line-height: 1.5;
 }
@@ -300,7 +300,7 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
   justify-content: center;
   border-radius: 4px;
   color: white;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
   flex-shrink: 0;
 }
@@ -308,7 +308,7 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
 .segment-heading {
   flex: 1;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .segment-toggle {
@@ -326,7 +326,7 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
 .segment-content {
   margin: 8px 0 0;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
   white-space: pre-wrap;
   color: var(--text, #333);
@@ -372,11 +372,11 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
   font-weight: 700;
   font-family: monospace;
   color: #8b5cf6;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .version-count {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-dim, #888);
   background: rgba(139, 92, 246, 0.08);
   padding: 1px 6px;
@@ -388,7 +388,7 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
   align-items: center;
   gap: 6px;
   font-family: monospace;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .value {
@@ -405,7 +405,7 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
 .value.last { color: #dc2626; }
 
 .arrow { color: var(--text-dim, #888); }
-.dots { color: var(--text-dim, #888); font-size: 10px; }
+.dots { color: var(--text-dim, #888); font-size: 14px; }
 
 .story-detail {
   margin-top: 8px;
@@ -415,7 +415,7 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
 
 .story-detail pre {
   font-family: inherit;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
   white-space: pre-wrap;
   margin: 0;
@@ -441,7 +441,7 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
 }
 
 .toggle-btn {
-  font-size: 11px;
+  font-size: 14px;
   padding: 3px 8px;
   border: 1px solid var(--border, #ddd);
   border-radius: 4px;
@@ -468,7 +468,7 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
   border: 1px solid var(--border, #e5e7eb);
   border-left: 3px solid #6b7280;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .fact-kind {
@@ -485,24 +485,24 @@ watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
   justify-content: center;
   border-radius: 3px;
   color: white;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 700;
   flex-shrink: 0;
 }
 
 .kind-label {
   font-family: monospace;
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-dim, #888);
 }
 
 .fact-desc {
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.4;
 }
 
 .fact-subject {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-dim, #888);
 }
 </style>

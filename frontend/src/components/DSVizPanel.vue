@@ -17,7 +17,7 @@ const currentData = computed(() => steps.value[dsStep.value] || null)
 
 // Highlight current line in code editor (debugger-style)
 watch(currentData, (d) => {
-  if (d && store.activeTab === 'dsviz') {
+  if (d && (store.activeTab === 'semantic' || store.activeTab === 'dsviz')) {
     store.highlightedLine = d.line || 0
   }
 })
@@ -29,7 +29,7 @@ let timer: ReturnType<typeof setInterval> | null = null
 
 // Auto-play when data arrives OR user switches to this tab
 watch([totalSteps, () => store.activeTab], ([n, tab]) => {
-  if (n > 0 && tab === 'dsviz' && isPlaying.value) startAutoPlay()
+  if (n > 0 && (tab === 'semantic' || tab === 'dsviz') && isPlaying.value) startAutoPlay()
 }, { immediate: true })
 
 function startAutoPlay() {
@@ -73,7 +73,7 @@ function onCanvasClick() {
 // Sync from store (when user changes step in Timeline/Graph)
 watch(() => store.currentStep, (s) => {
   if (isInternal.value) return
-  if (store.activeTab === 'dsviz' && s < totalSteps.value && s !== dsStep.value) {
+  if ((store.activeTab === 'semantic' || store.activeTab === 'dsviz') && s < totalSteps.value && s !== dsStep.value) {
     dsStep.value = s
   }
 })
@@ -395,7 +395,7 @@ const currentPointerMove = computed(() => {
   height: 100%; color: var(--text-muted); gap: 8px;
 }
 .empty-icon { font-size: 28px; opacity: 0.5; }
-.ds-empty p { font-size: 13px; }
+.ds-empty p { font-size: 14px; }
 
 .ds-controls {
   display: flex; align-items: center; gap: 10px;
@@ -417,16 +417,16 @@ const currentPointerMove = computed(() => {
 }
 .play-btn:hover { background: rgba(251,114,153,0.15); }
 
-.step-label { font-size: 12px; color: var(--text-dim); min-width: 90px; text-align: center; }
+.step-label { font-size: 14px; color: var(--text-dim); min-width: 90px; text-align: center; }
 .step-slider { flex: 1; accent-color: var(--primary); }
 
 .ds-code {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 8px; padding: 8px 14px;
-  font-size: 13px; color: var(--text-dim);
+  font-size: 14px; color: var(--text-dim);
 }
 .ds-code code { color: var(--text); margin-left: 8px; }
-.ds-code-file { color: var(--primary); font-size: 11px; }
+.ds-code-file { color: var(--primary); font-size: 14px; }
 
 .ds-narration {
   display: flex; align-items: center; gap: 6px;
@@ -434,12 +434,12 @@ const currentPointerMove = computed(() => {
   border: 1px solid rgba(59,130,246,0.15);
   border-left: 3px solid #3b82f6;
   border-radius: 6px; padding: 6px 12px;
-  font-size: 12px; color: var(--text);
+  font-size: 14px; color: var(--text);
 }
-.narration-icon { font-size: 13px; }
+.narration-icon { font-size: 14px; }
 
 .event-badge {
-  margin-left: auto; font-size: 10px; font-weight: 700;
+  margin-left: auto; font-size: 14px; font-weight: 700;
   padding: 1px 8px; border-radius: 4px; white-space: nowrap;
 }
 .evt-assignment { background: rgba(148,163,184,0.12); color: #64748b; }
@@ -458,7 +458,7 @@ const currentPointerMove = computed(() => {
   border: 1px solid rgba(251,114,153,0.2);
   border-left: 3px solid #e11d48;
   border-radius: 6px; padding: 5px 12px;
-  font-size: 12px; animation: ptrPulse 0.6s ease;
+  font-size: 14px; animation: ptrPulse 0.6s ease;
 }
 .ptr-icon { color: #e11d48; font-weight: 700; }
 .ptr-text { color: var(--text); font-family: monospace; }
@@ -506,10 +506,10 @@ const currentPointerMove = computed(() => {
   box-shadow: 0 4px 16px rgba(0,161,214,0.25);
 }
 
-.node-var-name { font-size: 10px; color: var(--highlight); font-weight: 600; font-family: monospace; }
-.node-eq { font-size: 10px; color: var(--text-muted); }
-.node-val { font-size: 12px; color: var(--text); font-weight: 700; font-family: monospace; }
-.node-type { font-size: 9px; color: var(--text-muted); margin-top: 3px; }
+.node-var-name { font-size: 14px; color: var(--highlight); font-weight: 600; font-family: monospace; }
+.node-eq { font-size: 14px; color: var(--text-muted); }
+.node-val { font-size: 14px; color: var(--text); font-weight: 700; font-family: monospace; }
+.node-type { font-size: 14px; color: var(--text-muted); margin-top: 3px; }
 
 .ds-diff {
   display: flex; flex-wrap: wrap; gap: 6px;
@@ -518,7 +518,7 @@ const currentPointerMove = computed(() => {
 }
 
 .diff-tag {
-  font-size: 11px; font-family: monospace;
+  font-size: 14px; font-family: monospace;
   padding: 2px 8px; border-radius: 4px; font-weight: 600;
 }
 .diff-added { background: rgba(34,197,94,0.1); color: #16a34a; border: 1px solid rgba(34,197,94,0.2); }
@@ -530,17 +530,17 @@ const currentPointerMove = computed(() => {
   border-radius: 8px; padding: 12px 16px;
 }
 .detail-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.detail-type { font-size: 12px; color: var(--primary); font-weight: 600; }
-.detail-id { font-size: 11px; color: var(--text-muted); }
+.detail-type { font-size: 14px; color: var(--primary); font-weight: 600; }
+.detail-id { font-size: 14px; color: var(--text-muted); }
 .detail-changed {
-  font-size: 9px; background: rgba(251,114,153,0.15);
+  font-size: 14px; background: rgba(251,114,153,0.15);
   color: #fb7299; padding: 2px 8px; border-radius: 4px; font-weight: 700;
 }
-.detail-val { font-size: 13px; color: var(--text); font-family: monospace; margin-bottom: 8px; }
-.detail-section-title { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
-.attr-row, .ref-row { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
+.detail-val { font-size: 14px; color: var(--text); font-family: monospace; margin-bottom: 8px; }
+.detail-section-title { font-size: 14px; color: var(--text-muted); margin-bottom: 4px; }
+.attr-row, .ref-row { display: flex; align-items: center; gap: 6px; font-size: 14px; padding: 2px 0; }
 .attr-name { color: var(--accent); font-family: monospace; }
-.attr-type { color: var(--text-muted); font-size: 10px; }
+.attr-type { color: var(--text-muted); font-size: 14px; }
 .ref-attr { color: var(--accent); font-family: monospace; }
 .ref-arrow { color: var(--text-muted); }
 .ref-target { color: var(--highlight); }

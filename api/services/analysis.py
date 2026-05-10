@@ -90,13 +90,30 @@ def build_semantic_context(timeline: ExecutionTimeline) -> dict:
     model = build_from_pdg(pdg)  # lower to semantic IR
     facts = FactExtractor(model).extract_all()
     narrative_engine = NarrativeEngine(model, facts)
+
+    # Build causal chain via backward slice on last step
+    causal_chain = []
+    root_causes = []
+    if timeline.steps:
+        last = timeline.steps[-1]
+        target_var = last.ast_reads[0] if last.ast_reads else (last.ast_writes[0] if last.ast_writes else '')
+        try:
+            sr = pdg.backward_slice(last.step_index, target_var)
+            causal_chain = [
+                {'source': e.source, 'target': e.target, 'var': e.var, 'kind': e.kind}
+                for e in sr.edges
+            ]
+            root_causes = sr.root_causes
+        except Exception:
+            pass
+
     return {
         "pdg": pdg,       # kept for backward_slice/forward_impact (runtime ops)
         "model": model,   # semantic IR — all semantic modules use this
         "facts": facts,
         "narrative_engine": narrative_engine,
-        "causal_chain": pdg.get_causal_chain(),
-        "root_causes": pdg.get_root_causes(),
+        "causal_chain": causal_chain,
+        "root_causes": root_causes,
     }
 
 

@@ -24,7 +24,7 @@ from typing import Any, List, Optional, Tuple
 
 from .dsl import (
     SemanticQuery, WhyQuery, TraceQuery, ShowQuery, RootsQuery,
-    ImpactQuery, ComposedQuery, parse_query, _parse_single,
+    ImpactQuery, ComposedQuery, StatsQuery, parse_query, _parse_single,
 )
 from .algebra import Operator, LogicalPlan, OpResult, QueryPlanner
 

@@ -24,7 +24,7 @@ from api.services.analysis import (
 from api.schemas.analyze import (
     AnalyzeRequest, InsightRequest, DSVizRequest, RunRequest,
     ExplainRequest, ExplainStepsRequest, ExplainStepFocusRequest,
-    PatternNarrativeRequest, SubproblemGraphRequest,
+    PatternNarrativeRequest, SubproblemGraphRequest, AnalyzeFullRequest,
 )
 from api.container import get_container, AppContainer
 
@@ -66,6 +66,7 @@ async def analyze(req: AnalyzeRequest):
 
         stats = graph.stats()
         return {
+            "success": True,
             "stats": stats,
             "error_chain": error_chain,
             "graph_url": "/output/causal_graph.html",
@@ -96,14 +97,62 @@ async def ds_viz(req: DSVizRequest):
         module, func, timeline, result, func_file = prepare_execution(
             req.code, req.func_name, req.language,
         )
-        ds_steps = trace_ds_function(func, *(
+        ds_result = trace_ds_function(func, *(
             __import__("api.input_inference", fromlist=["infer_args"]).infer_args(func, req.code)[0]
         ))
-        if ds_steps:
-            viz_data = render_ds_timeline(ds_steps)
+
+        if isinstance(ds_result, tuple):
+            _, ds_timeline = ds_result
         else:
-            viz_data = {"steps": [], "note": "No heap objects traced"}
-        return {"success": True, **viz_data}
+            ds_timeline = ds_result
+
+        if not ds_timeline or not hasattr(ds_timeline, 'steps'):
+            return {"success": True, "steps": [], "total_steps": 0, "ds_viz_url": "", "note": "No heap objects traced"}
+
+        # Build steps data
+        steps_data = []
+        for step in ds_timeline.steps:
+            nodes = {}
+            for obj_id, snap in step.objects.items():
+                nodes[str(obj_id)] = {
+                    "id": obj_id, "type": snap.type_name, "val": snap.val_repr,
+                    "attrs": snap.attributes, "refs": {k: v for k, v in snap.ref_ids.items()},
+                    "changed": obj_id in step.changed_objects,
+                }
+            edges = []
+            for obj_id, snap in step.objects.items():
+                for attr, target_id in snap.ref_ids.items():
+                    if str(target_id) in nodes:
+                        is_changed = any(
+                            cid == obj_id and attr == ref_attr
+                            for cid, ref_attr, _ in step.changed_refs
+                        )
+                        edges.append({"from": obj_id, "to": target_id, "label": attr, "changed": is_changed})
+            var_bindings = {}
+            for var_name, obj_id in step.var_to_obj.items():
+                if obj_id in step.objects:
+                    var_bindings[var_name] = obj_id
+            steps_data.append({
+                "index": step.step_index, "line": step.line_number,
+                "code": step.code_line, "func": step.function_name,
+                "nodes": nodes, "edges": edges, "var_bindings": var_bindings,
+                "changed_objects": step.changed_objects,
+                "changed_refs": [(c[0], c[1], c[2]) for c in step.changed_refs],
+            })
+
+        # Generate HTML visualization
+        import tempfile
+        viz_path = os.path.join(tempfile.gettempdir(), f"ds_viz_{id(ds_timeline)}.html")
+        render_ds_timeline(ds_timeline, output_path=viz_path)
+
+        return {
+            "success": True,
+            "steps": steps_data,
+            "total_steps": len(steps_data),
+            "ds_viz_url": viz_path,
+            "func_name": req.func_name,
+            "result": repr(result),
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
     finally:
@@ -134,7 +183,7 @@ async def explain(req: ExplainRequest):
             req.code, req.func_name, req.language,
         )
         from reasoning.result_explainer import explain_result
-        explanation = explain_result(timeline, result, req.func_name, provider=req.provider, api_key=req.api_key)
+        explanation = explain_result(timeline, result, req.func_name)
         return {"success": True, "explanation": explanation}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -159,7 +208,7 @@ async def explain_steps(req: ExplainStepsRequest):
         loop_groups = compute_loop_groups(steps_data)
 
         from reasoning.step_explainer import explain_steps as _explain_steps
-        explanations = _explain_steps(steps_data, req.func_name, provider=req.provider, api_key=req.api_key)
+        explanations = _explain_steps(steps_data, req.func_name)
 
         from api.services.helpers import cache_put
         session_id = req.session_id or str(id(timeline))
@@ -204,7 +253,6 @@ async def explain_step_focus(req: ExplainStepFocusRequest):
             steps_data, req.step_index,
             window_before=req.window_before,
             window_after=req.window_after,
-            provider=req.provider, api_key=req.api_key,
         )
         return {"success": True, **result}
     except Exception as e:
@@ -265,3 +313,142 @@ async def subproblem_graph(req: SubproblemGraphRequest):
 @router.get("/api/health")
 async def health():
     return {"status": "ok", "version": "2.0"}
+
+
+@router.post("/api/analyze_full")
+async def analyze_full(req: AnalyzeFullRequest, container: AppContainer = Depends(get_container)):
+    """Unified analysis endpoint — returns everything in one clean response."""
+    func_file = None
+    try:
+        # 1. Execute code and build timeline
+        module, func, timeline, result, func_file = prepare_execution(
+            req.code, req.func_name, req.language,
+        )
+
+        # 2. Build semantic context (PDG + facts)
+        ctx = build_semantic_context(timeline)
+
+        # 3. Build insight
+        insight_resp = build_insight_response(req.code, req.func_name, req.language)
+
+        # 4. Build step explanations
+        steps_data = build_steps_data(timeline)
+
+        # 5. Build causal chain (from backward slice)
+        causal_chain = []
+        causal_sentences = []
+        root_causes = []
+        if ctx.get("pdg") and timeline.steps:
+            last = timeline.steps[-1]
+            target_var = last.ast_reads[0] if last.ast_reads else (last.ast_writes[0] if last.ast_writes else '')
+            try:
+                sr = ctx["pdg"].backward_slice(last.step_index, target_var)
+                causal_chain = [
+                    {"step": e.source, "target": e.target, "var": e.var, "kind": e.kind}
+                    for e in sr.edges[:20]
+                ]
+                root_causes = sr.root_causes[:5]
+            except Exception:
+                pass
+
+        # 6. Detect patterns
+        from reasoning.pattern_detector import detect_patterns
+        patterns = detect_patterns(ctx.get("facts", []), ctx.get("pdg"))
+
+        # 7. Build variable evolution summary
+        var_summary = {}
+        for step in timeline.steps:
+            for var_name, snap in step.variables.items():
+                if var_name not in var_summary:
+                    var_summary[var_name] = {
+                        "name": var_name,
+                        "first_value": snap.value_repr,
+                        "last_value": snap.value_repr,
+                        "type": snap.value_type,
+                        "changes": 0,
+                        "first_step": step.step_index,
+                        "last_step": step.step_index,
+                    }
+                var_summary[var_name]["last_value"] = snap.value_repr
+                var_summary[var_name]["last_step"] = step.step_index
+                if var_name in step.changed_vars:
+                    var_summary[var_name]["changes"] += 1
+
+        # 8. Build mini timeline (key steps only)
+        key_timeline = []
+        for step in timeline.steps:
+            changed = list(step.changed_vars) if step.changed_vars else []
+            event = ""
+            if step.new_vars:
+                event = "new_vars"
+            if changed:
+                event = "changed"
+            if "return" in step.code_line.lower():
+                event = "return"
+            if "for " in step.code_line or "while " in step.code_line:
+                event = "loop"
+            if changed or event in ("loop", "return", "call", "branch"):
+                key_timeline.append({
+                    "step": step.step_index,
+                    "line": step.line_number,
+                    "code": step.code_line.strip(),
+                    "changed_vars": changed,
+                    "event": event,
+                })
+
+        # 9. Build natural language summary
+        insight_obj = insight_resp.get("insight")
+        algo = insight_obj.algorithm_type if insight_obj else "unknown"
+        one_liner = insight_obj.one_liner if insight_obj else ""
+        confidence = insight_obj.confidence if insight_obj else 0
+        phases_raw = insight_obj.phases if insight_obj else []
+        pattern_names = [p.name for p in patterns]
+        result_str = repr(result) if result is not None else "None"
+        summary = f"{req.func_name}() 使用 {algo} 算法"
+        if "memoization" in pattern_names:
+            summary += "，通过 memo 缓存避免重复计算"
+        if "loop.accumulation" in pattern_names:
+            summary += "，循环累积结果"
+        summary += f"。最终返回 {result_str}。"
+
+        phases = []
+        for ph in phases_raw:
+            phases.append({
+                "name": ph.name,
+                "start_step": ph.start_step,
+                "end_step": ph.end_step,
+                "description": ph.description,
+                "key_variables": ph.key_variables,
+                "step_count": ph.step_count,
+            })
+
+        return {
+            "success": True,
+            "summary": summary,
+            "one_liner": one_liner,
+            "algorithm": algo,
+            "confidence": confidence,
+            "result": result_str,
+            "total_steps": len(timeline.steps),
+            "key_patterns": [
+                {"name": p.name, "description": p.description, "confidence": p.confidence, "complexity": p.complexity}
+                for p in patterns
+            ],
+            "variables": var_summary,
+            "key_timeline": key_timeline,
+            "causal_chain": causal_chain[:15],
+            "root_causes": root_causes,
+            "phases": phases,
+            "visualizations": {
+                "graph_url": "/output/causal_graph.html" if ctx.get("pdg") else None,
+            },
+        }
+    except Exception as e:
+        import traceback
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+    finally:
+        if func_file:
+            try:
+                os.unlink(func_file)
+            except OSError:
+                pass

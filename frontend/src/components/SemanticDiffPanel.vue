@@ -221,7 +221,7 @@ function categoryLabel(cat: string): string {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .diff-input {
@@ -244,13 +244,13 @@ function categoryLabel(cat: string): string {
 
 .diff-label {
   font-weight: 700;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #888);
   text-transform: uppercase;
 }
 
 .diff-use-btn {
-  font-size: 11px;
+  font-size: 14px;
   padding: 2px 8px;
   border: 1px solid var(--border, #ddd);
   border-radius: 4px;
@@ -262,7 +262,7 @@ function categoryLabel(cat: string): string {
 .diff-input textarea {
   width: 100%;
   font-family: 'SF Mono', 'Consolas', monospace;
-  font-size: 12px;
+  font-size: 14px;
   padding: 8px;
   border: 1px solid var(--border, #e5e7eb);
   border-radius: 6px;
@@ -280,7 +280,7 @@ function categoryLabel(cat: string): string {
   border-radius: 6px;
   font-weight: 600;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .diff-run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -318,7 +318,7 @@ function categoryLabel(cat: string): string {
 }
 
 .diff-empty .hint {
-  font-size: 12px;
+  font-size: 14px;
   margin-top: 4px;
   opacity: 0.7;
 }
@@ -349,7 +349,7 @@ function categoryLabel(cat: string): string {
 }
 
 .sim-score-label {
-  font-size: 10px;
+  font-size: 14px;
   color: var(--text-dim, #888);
   text-align: center;
 }
@@ -368,7 +368,7 @@ function categoryLabel(cat: string): string {
 }
 
 .sim-vec-name {
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-dim, #888);
   width: 80px;
@@ -390,14 +390,14 @@ function categoryLabel(cat: string): string {
 }
 
 .sim-vec-val {
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 600;
   width: 32px;
   text-align: right;
 }
 
 .sim-summary {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-dim, #888);
   max-width: 150px;
   text-align: right;
@@ -417,7 +417,7 @@ function categoryLabel(cat: string): string {
 .diff-summary-text {
   flex: 1;
   font-weight: 600;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .diff-counts {
@@ -426,7 +426,7 @@ function categoryLabel(cat: string): string {
 }
 
 .diff-count {
-  font-size: 11px;
+  font-size: 14px;
   padding: 2px 8px;
   border-radius: 4px;
   font-weight: 600;
@@ -451,7 +451,7 @@ function categoryLabel(cat: string): string {
   cursor: pointer;
   user-select: none;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
   background: rgba(0,0,0,0.01);
 }
 
@@ -468,7 +468,7 @@ function categoryLabel(cat: string): string {
   display: flex; align-items: center; justify-content: center;
   border-radius: 4px;
   color: white;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -484,14 +484,14 @@ function categoryLabel(cat: string): string {
   padding: 4px 0 4px 8px;
   border-left: 3px solid #6b7280;
   margin-bottom: 4px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .diff-item-cat {
   font-weight: 600;
   min-width: 80px;
   color: var(--text-dim, #888);
-  font-size: 11px;
+  font-size: 14px;
   text-transform: uppercase;
 }
 
@@ -504,7 +504,7 @@ function categoryLabel(cat: string): string {
 .diff-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .diff-table th {
@@ -513,7 +513,7 @@ function categoryLabel(cat: string): string {
   padding: 4px 8px;
   border-bottom: 1px solid var(--border, #e5e7eb);
   color: var(--text-dim, #888);
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .diff-table td {

@@ -634,7 +634,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .stat-label {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-muted);
 }
 
@@ -697,7 +697,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .step-counter {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text);
   min-width: 60px;
@@ -755,7 +755,7 @@ function getCausalRole(stepIdx: number): string {
 
 .speed-btn {
   padding: 2px 6px;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 600;
   background: none;
   border: 1px solid var(--border);
@@ -795,13 +795,13 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .column-title {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text);
 }
 
 .jump-badge {
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 700;
   color: #f59e0b;
   padding: 1px 6px;
@@ -829,7 +829,7 @@ function getCausalRole(stepIdx: number): string {
   overflow-y: auto;
   padding: 8px 0;
   font-family: 'Cascadia Code', 'Fira Code', monospace;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -932,14 +932,14 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .var-name {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text);
   font-family: monospace;
 }
 
 .var-badge {
-  font-size: 9px;
+  font-size: 14px;
   font-weight: 700;
   padding: 0 4px;
   border-radius: 2px;
@@ -950,7 +950,7 @@ function getCausalRole(stepIdx: number): string {
 .var-badge.removed { background: #ef4444; color: white; }
 
 .var-type {
-  font-size: 10px;
+  font-size: 14px;
   color: var(--text-muted);
   margin-left: auto;
 }
@@ -964,7 +964,7 @@ function getCausalRole(stepIdx: number): string {
 .val-prev, .val-curr {
   display: flex;
   gap: 4px;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .val-label {
@@ -1013,7 +1013,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .event-type-badge {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
   color: white;
   padding: 2px 8px;
@@ -1021,7 +1021,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .priority-dot {
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text-muted);
 }
@@ -1031,7 +1031,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .narration-text {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text);
   line-height: 1.5;
   padding: 6px 8px;
@@ -1047,7 +1047,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .tag-chip {
-  font-size: 10px;
+  font-size: 14px;
   padding: 1px 6px;
   background: rgba(139, 92, 246, 0.08);
   color: #8b5cf6;
@@ -1070,7 +1070,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .pointer-text {
-  font-size: 11px;
+  font-size: 14px;
   color: #ec4899;
   font-family: monospace;
 }
@@ -1084,7 +1084,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .depth-label {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-muted);
   min-width: 60px;
 }
@@ -1105,7 +1105,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .depth-value {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--primary);
   min-width: 20px;
@@ -1120,7 +1120,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .changes-title {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-muted);
 }
 
@@ -1131,7 +1131,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .change-chip {
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 600;
   padding: 1px 6px;
   border-radius: 3px;
@@ -1157,7 +1157,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .mini-label {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-muted);
 }
 
@@ -1223,13 +1223,13 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .diag-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text);
 }
 
 .diag-severity {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
   padding: 1px 6px;
   border-radius: 3px;
@@ -1237,7 +1237,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .diag-summary {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-muted);
   margin-left: auto;
 }
@@ -1290,26 +1290,26 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .finding-title {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text);
 }
 
 .finding-severity {
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 700;
   margin-left: auto;
 }
 
 .finding-desc {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text);
   line-height: 1.4;
   margin-bottom: 4px;
 }
 
 .finding-suggestion {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--primary);
   line-height: 1.4;
   padding: 4px 8px;
@@ -1318,7 +1318,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .finding-steps {
-  font-size: 10px;
+  font-size: 14px;
   color: var(--text-muted);
   font-family: monospace;
   margin-top: 4px;
@@ -1359,13 +1359,13 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .causal-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--primary);
 }
 
 .causal-distance {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-muted);
   margin-left: auto;
   font-family: monospace;
@@ -1382,7 +1382,7 @@ function getCausalRole(stepIdx: number): string {
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: 14px;
   font-family: monospace;
   cursor: pointer;
   border-radius: 4px;
@@ -1409,7 +1409,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .link-role {
-  font-size: 9px;
+  font-size: 14px;
   font-weight: 700;
   min-width: 30px;
   color: var(--text-muted);
@@ -1452,7 +1452,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .causal-sentence {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text);
   line-height: 1.4;
 }
@@ -1471,7 +1471,7 @@ function getCausalRole(stepIdx: number): string {
 }
 
 .divergence-text {
-  font-size: 11px;
+  font-size: 14px;
   color: #ef4444;
   font-family: monospace;
 }

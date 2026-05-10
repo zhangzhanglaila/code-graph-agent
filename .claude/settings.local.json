@@ -39,7 +39,29 @@
       "Bash(awk '{print $5}')",
       "Bash(sed -n '2700,2900p')",
       "Read(//tmp/**)",
-      "Bash(git mv *)"
+      "Bash(git mv *)",
+      "Bash(gh auth *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(winget install *)",
+      "Bash(git config *)",
+      "Read(//c/Users/H/**)",
+      "Bash(export PATH=\"$PATH:/c/Program Files/GitHub CLI:/c/Users/H/AppData/Local/GitHub CLI\")",
+      "Bash(where gh *)",
+      "Read(//c/Program Files/GitHub CLI/**)",
+      "Bash(/c/Program Files/GitHub CLI/gh auth *)",
+      "Bash(echo \"\")",
+      "Bash(git commit *)",
+      "Bash(git pull *)",
+      "Bash(git branch)",
+      "Bash(pkill -f \"uvicorn api.server\")",
+      "Bash(pkill -f \"uvicorn\")",
+      "Bash(grep -n \"def explain_result\" reasoning/result_explainer.py)",
+      "Bash(grep -n \"def explain_steps\" reasoning/step_explainer.py)",
+      "Bash(pkill -9 -f \"python\")",
+      "Bash(pkill -9 -f \"uvicorn\")"
     ]
   }
 }

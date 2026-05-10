@@ -218,30 +218,59 @@ class SemanticQueryEngine:
             'diff_count': len(diffs),
         }
 
-    def _execute_composed(self, query) -> dict:
+    def _execute_composed(self, query):
         """Execute a composed query: first THEN second [WHERE ...] [ORDER BY ...]."""
+        from .query_result import ComposedResult
+
         first_result = self.execute(query.first)
 
         # If no second query, just apply WHERE/ORDER BY on first
         from dynamic.query.dsl import HelpQuery
         if isinstance(query.second, HelpQuery) or query.second.kind == 'help':
             result = first_result
+            second_result = None
         else:
             second_result = self.execute(query.second)
             # Merge: second is primary, first's extras attached
-            result = dict(second_result)
-            for key, val in first_result.items():
+            # Convert typed results to dicts for merging
+            first_dict = self._to_dict(first_result)
+            second_dict = self._to_dict(second_result)
+            result = dict(second_dict)
+            for key, val in first_dict.items():
                 if key not in result or result[key] is None:
                     result[key] = val
 
         # Apply WHERE filter
+        where_applied = None
         if query.where_field:
             result = self._apply_where(result, query.where_field, query.where_op, query.where_value)
+            where_applied = f'{query.where_field} {query.where_op} {query.where_value}'
 
         # Apply ORDER BY
+        order_applied = None
         if query.order_by:
             result = self._apply_order(result, query.order_by, query.order_desc)
+            order_applied = query.order_by
 
+        composed = ComposedResult(
+            first=first_result,
+            second=second_result,
+            merged=result,
+            where_applied=where_applied,
+            order_by=order_applied,
+            where_field=query.where_field or '',
+            where_op=query.where_op or '',
+            where_value=query.where_value,
+            order_desc=query.order_desc if hasattr(query, 'order_desc') else False,
+        )
+
+        # Attach typed result to metadata, return merged dict for backward compat
+        result['_composed'] = {
+            'first_keys': list(first_result.keys()) if isinstance(first_result, dict) else [],
+            'second_keys': list(second_result.keys()) if isinstance(second_result, dict) else [],
+            'where_applied': where_applied,
+            'order_by': order_applied,
+        }
         return result
 
     @staticmethod
@@ -298,6 +327,34 @@ class SemanticQueryEngine:
                 reverse=desc,
             )
         return result
+
+    @staticmethod
+    def _to_dict(result) -> dict:
+        """Convert a typed result (dataclass or dict) to dict."""
+        if isinstance(result, dict):
+            return result
+        if hasattr(result, '__dataclass_fields__'):
+            d = {}
+            for fname in result.__dataclass_fields__:
+                val = getattr(result, fname)
+                if hasattr(val, '__dataclass_fields__'):
+                    d[fname] = SemanticQueryEngine._to_dict(val)
+                elif isinstance(val, list):
+                    d[fname] = [
+                        SemanticQueryEngine._to_dict(v) if hasattr(v, '__dataclass_fields__') else v
+                        for v in val
+                    ]
+                elif isinstance(val, dict):
+                    d[fname] = {
+                        k: SemanticQueryEngine._to_dict(v) if hasattr(v, '__dataclass_fields__') else v
+                        for k, v in val.items()
+                    }
+                elif isinstance(val, tuple):
+                    d[fname] = list(val)
+                else:
+                    d[fname] = val
+            return d
+        return {'value': result}
 
     # ── Internal ──────────────────────────────────────────────────
 

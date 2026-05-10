@@ -126,7 +126,7 @@ async function analyzeGithub() {
 }
 
 .logo-tag {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-muted);
   margin-left: 4px;
 }
@@ -144,13 +144,13 @@ async function analyzeGithub() {
 }
 
 .demo-label {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-muted);
 }
 
 .btn-sm {
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .github-group {
@@ -161,7 +161,7 @@ async function analyzeGithub() {
 
 .github-input {
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: 14px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
@@ -175,7 +175,7 @@ async function analyzeGithub() {
 }
 
 .github-error {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--error);
   max-width: 150px;
   overflow: hidden;

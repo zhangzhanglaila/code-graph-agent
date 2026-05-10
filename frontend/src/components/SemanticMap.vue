@@ -235,7 +235,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
   display: flex;
   flex-direction: column;
   gap: 16px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .loading {
@@ -271,7 +271,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 }
 
 .empty .hint {
-  font-size: 12px;
+  font-size: 14px;
   margin-top: 4px;
   opacity: 0.7;
 }
@@ -306,7 +306,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 }
 
 .fp-conf {
-  font-size: 12px;
+  font-size: 14px;
   padding: 1px 6px;
   background: rgba(139,92,246,0.1);
   color: #8b5cf6;
@@ -322,7 +322,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 }
 
 .fp-tag {
-  font-size: 11px;
+  font-size: 14px;
   padding: 2px 8px;
   background: rgba(0,0,0,0.04);
   border-radius: 4px;
@@ -367,7 +367,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
   justify-content: center;
   border-radius: 5px;
   color: white;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -377,7 +377,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 }
 
 .node-conf {
-  font-size: 11px;
+  font-size: 14px;
   color: #8b5cf6;
   font-weight: 600;
 }
@@ -388,7 +388,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
   align-items: center;
   gap: 6px;
   padding: 2px 12px;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .edge-line {
@@ -398,7 +398,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 }
 
 .edge-label {
-  font-size: 10px;
+  font-size: 14px;
   color: var(--text-dim, #9ca3af);
   font-weight: 600;
   text-transform: uppercase;
@@ -406,7 +406,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 
 .edge-node {
   font-family: monospace;
-  font-size: 10px;
+  font-size: 14px;
   color: var(--text-dim, #888);
 }
 
@@ -437,14 +437,14 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
   justify-content: center;
   border-radius: 4px;
   color: white;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 .cluster-label {
   flex: 1;
   font-weight: 600;
-  font-size: 12px;
+  font-size: 14px;
   text-transform: capitalize;
 }
 
@@ -487,7 +487,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 .card-id {
   font-family: monospace;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text, #333);
 }
 
@@ -513,7 +513,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 }
 
 .subject-tag {
-  font-size: 10px;
+  font-size: 14px;
   padding: 1px 5px;
   background: rgba(0,0,0,0.04);
   border-radius: 3px;
@@ -530,7 +530,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 .param-row {
   display: flex;
   gap: 6px;
-  font-size: 11px;
+  font-size: 14px;
   padding: 1px 0;
 }
 
@@ -552,7 +552,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 }
 
 .inv-tag {
-  font-size: 10px;
+  font-size: 14px;
   padding: 1px 5px;
   background: rgba(16,185,129,0.08);
   color: #059669;
@@ -579,7 +579,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
   padding: 4px 10px;
   border: 1px solid var(--border, #e5e7eb);
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .var-name {
@@ -595,7 +595,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 .var-archetype {
   font-family: monospace;
   color: #8b5cf6;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 /* Ontology Section */
@@ -628,12 +628,12 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 .ont-id {
   font-family: monospace;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 14px;
   color: #8b5cf6;
 }
 
 .ont-implication {
-  font-size: 10px;
+  font-size: 14px;
   padding: 1px 6px;
   background: rgba(245,158,11,0.08);
   color: #d97706;
@@ -649,13 +649,13 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 }
 
 .ont-label {
-  font-size: 10px;
+  font-size: 14px;
   color: var(--text-dim, #9ca3af);
   font-weight: 600;
 }
 
 .ont-tag {
-  font-size: 10px;
+  font-size: 14px;
   padding: 1px 5px;
   border-radius: 3px;
   font-family: monospace;
@@ -672,7 +672,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 }
 
 .ont-mistake {
-  font-size: 10px;
+  font-size: 14px;
   color: #dc2626;
 }
 
@@ -690,7 +690,7 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 }
 
 .inv-badge {
-  font-size: 11px;
+  font-size: 14px;
   padding: 2px 8px;
   background: rgba(16,185,129,0.08);
   color: #059669;

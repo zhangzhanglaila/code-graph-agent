@@ -373,9 +373,9 @@ def parse_query(text: str) -> SemanticQuery:
 class QueryExecutor:
     """Executes SemanticQuery against a RuntimePDG + FactExtractor + NarrativeEngine.
 
-    Uses the QueryPlanner + SemanticAlgebra pipeline internally.
-    Records a QueryTrace showing HOW the query was executed.
-    Caches results by query.query_hash() for deterministic replay.
+    Delegates query dispatch to SemanticQueryEngine for type-safe execution.
+    Adds caching, metrics, timeout, and execution tracing on top.
+    Uses QueryPlanner + operators only for temporal queries.
     """
 
     def __init__(self, pdg, facts, narrative_engine, cache_size: int = 128,
@@ -388,6 +388,9 @@ class QueryExecutor:
         self._planner = QueryPlanner()
         from .cache import QueryResultCache
         self._cache = QueryResultCache(max_size=cache_size, ttl_seconds=cache_ttl)
+        # SemanticQueryEngine for type-safe query dispatch
+        from dynamic.semantic.query_engine import SemanticQueryEngine
+        self._semantic_engine = SemanticQueryEngine(pdg, facts=facts)
 
     def execute(self, query: SemanticQuery) -> dict:
         """Execute a query and return a structured result with trace."""
@@ -404,7 +407,7 @@ class QueryExecutor:
         trace = QueryTrace()
         trace.add('parse', f'Parsed query: {query.kind}', detail={'raw': query.raw})
 
-        # Check for temporal query
+        # Check for temporal query — uses operator pipeline
         temporal = None
         if hasattr(query, 'temporal') and query.temporal:
             temporal = query.temporal
@@ -412,34 +415,45 @@ class QueryExecutor:
         else:
             inner = query
 
-        # Plan: SemanticQuery AST → LogicalPlan (operator pipeline)
-        t_plan = time.time()
-        if temporal:
+        # Timeout check
+        elapsed_check = (time.time() - t0) * 1000
+        if elapsed_check > self._timeout * 1000:
+            trace.add('timeout', f'Query timed out after {elapsed_check:.0f}ms')
+            result = {'success': False, 'error': f'Query timed out after {elapsed_check:.0f}ms'}
+            query_metrics.record(query.kind, duration_ms=elapsed_check, error=True)
+            return result
+
+        # Handle HELP specially
+        if query.kind == 'help':
+            result = self._exec_help(query, trace)
+        elif temporal:
+            # Temporal queries use the operator pipeline
+            t_plan = time.time()
             from .temporal import TemporalQueryPlanner
             tp = TemporalQueryPlanner()
             plan = tp.plan_with_temporal(inner, temporal)
-        else:
-            plan = self._planner.plan(inner)
-        trace.add('plan', f'Planned: {plan.describe()[:120]}',
-                   duration_ms=(time.time() - t_plan) * 1000,
-                   detail={'pipeline': plan.describe()})
-
-        # Execute the plan
-        op_result = plan.execute(self.pdg, self.facts, self.engine, trace)
-
-        # Timeout check
-        elapsed = (time.time() - t0) * 1000
-        if elapsed > self._timeout * 1000:
-            trace.add('timeout', f'Query timed out after {elapsed:.0f}ms')
-            result = {'success': False, 'error': f'Query timed out after {elapsed:.0f}ms'}
-            query_metrics.record(query.kind, duration_ms=elapsed, error=True)
-            return result
-
-        # Handle HELP specially (empty plan)
-        if query.kind == 'help':
-            result = self._exec_help(query, trace)
-        else:
+            trace.add('plan', f'Planned temporal: {plan.describe()[:120]}',
+                       duration_ms=(time.time() - t_plan) * 1000,
+                       detail={'pipeline': plan.describe()})
+            op_result = plan.execute(self.pdg, self.facts, self.engine, trace)
             result = op_result.to_dict()
+        else:
+            # Delegate to SemanticQueryEngine for type-safe dispatch
+            t_exec = time.time()
+            raw_result = self._semantic_engine.execute(inner)
+            exec_ms = (time.time() - t_exec) * 1000
+            trace.add('execute', f'Executed {inner.kind} via SemanticQueryEngine',
+                       duration_ms=exec_ms)
+
+            # Convert typed result to dict
+            if hasattr(raw_result, '__dataclass_fields__'):
+                result = self._dataclass_to_dict(raw_result)
+            elif isinstance(raw_result, dict):
+                result = raw_result
+            else:
+                result = {'value': raw_result}
+
+            result['success'] = True
 
         trace.total_ms = (time.time() - t0) * 1000
         result['_trace'] = trace.to_dict()
@@ -447,6 +461,32 @@ class QueryExecutor:
         self._cache.put(query, result)
         query_metrics.record(query.kind, duration_ms=trace.total_ms, cached=False)
         return result
+
+    @staticmethod
+    def _dataclass_to_dict(obj) -> dict:
+        """Convert a dataclass to dict, handling nested objects."""
+        if not hasattr(obj, '__dataclass_fields__'):
+            return obj
+        d = {}
+        for fname in obj.__dataclass_fields__:
+            val = getattr(obj, fname)
+            if hasattr(val, '__dataclass_fields__'):
+                d[fname] = QueryExecutor._dataclass_to_dict(val)
+            elif isinstance(val, list):
+                d[fname] = [
+                    QueryExecutor._dataclass_to_dict(v) if hasattr(v, '__dataclass_fields__') else v
+                    for v in val
+                ]
+            elif isinstance(val, dict):
+                d[fname] = {
+                    k: QueryExecutor._dataclass_to_dict(v) if hasattr(v, '__dataclass_fields__') else v
+                    for k, v in val.items()
+                }
+            elif isinstance(val, tuple):
+                d[fname] = list(val)
+            else:
+                d[fname] = val
+        return d
 
     def cache_stats(self) -> dict:
         """Return cache performance stats."""

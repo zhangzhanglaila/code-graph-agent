@@ -16,7 +16,7 @@ from dynamic.semantic.similarity import SemanticSimilarity
 from dynamic.semantic.ontology import SemanticOntology
 from dynamic.semantic.diff import SemanticDiffer
 
-from api.services.analysis import prepare_execution, build_semantic_context
+from api.services.analysis import prepare_execution
 from api.schemas.identity import IdentityRequest, SimilarityRequest, SemanticDiffRequest
 from api.container import get_container, AppContainer
 
@@ -108,19 +108,19 @@ async def semantic_similarity(req: SimilarityRequest, container: AppContainer = 
 
 
 @router.post("/api/semantic_diff")
-async def semantic_diff(req: SemanticDiffRequest):
+async def semantic_diff(req: SemanticDiffRequest, container: AppContainer = Depends(get_container)):
     """Semantic diff between two code executions."""
     func_file_a = func_file_b = None
     try:
         _, _, tl_a, _, func_file_a = prepare_execution(req.code_a, req.func_name)
         _, _, tl_b, _, func_file_b = prepare_execution(req.code_b, req.func_name)
 
-        ctx_a = build_semantic_context(tl_a)
-        ctx_b = build_semantic_context(tl_b)
+        pipe_a = container.build_pipeline(tl_a)
+        pipe_b = container.build_pipeline(tl_b)
 
-        differ = SemanticDiffer()
+        differ = container.diff_class()
         diff = differ.compare(
-            ctx_a["pdg"], ctx_a["facts"], ctx_b["pdg"], ctx_b["facts"],
+            pipe_a.pdg, pipe_a.facts, pipe_b.pdg, pipe_b.facts,
         )
 
         return {"success": True, "diff": diff.to_dict()}

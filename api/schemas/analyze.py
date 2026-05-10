@@ -69,3 +69,9 @@ class SubproblemGraphRequest(BaseModel):
     code: str
     func_name: str = ""
     language: str = "python"
+
+
+class AnalyzeFullRequest(BaseModel):
+    code: str
+    func_name: str = ""
+    language: str = "python"

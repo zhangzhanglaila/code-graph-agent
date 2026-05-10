@@ -2,21 +2,25 @@
 import { onMounted, onUnmounted, onErrorCaptured, ref } from 'vue'
 import TopBar from './components/TopBar.vue'
 import CodeEditor from './components/CodeEditor.vue'
+import AnalysisPanel from './components/AnalysisPanel.vue'
+import SemanticPanel from './components/SemanticPanel.vue'
+import ReplayPanel from './components/ReplayPanel.vue'
+import SemanticDiffPanel from './components/SemanticDiffPanel.vue'
+import MetricsPanel from './components/MetricsPanel.vue'
+import GitHubPanel from './components/GitHubPanel.vue'
 import InsightPanel from './components/InsightPanel.vue'
-import TimelinePanel from './components/TimelinePanel.vue'
+import ErrorToast from './components/ErrorToast.vue'
+// Advanced mode: individual panels
 import GraphPanel from './components/GraphPanel.vue'
 import DSVizPanel from './components/DSVizPanel.vue'
+import TimelinePanel from './components/TimelinePanel.vue'
 import StackPanel from './components/StackPanel.vue'
-import GitHubPanel from './components/GitHubPanel.vue'
-import RuntimeReplayPanel from './components/RuntimeReplayPanel.vue'
-import SemanticExplorerPanel from './components/SemanticExplorerPanel.vue'
-import QueryConsole from './components/QueryConsole.vue'
-import SemanticDiffPanel from './components/SemanticDiffPanel.vue'
-import SemanticMap from './components/SemanticMap.vue'
-import SemanticCanvas from './components/SemanticCanvas.vue'
 import AgentPanel from './components/AgentPanel.vue'
-import MetricsPanel from './components/MetricsPanel.vue'
-import ErrorToast from './components/ErrorToast.vue'
+import QueryConsole from './components/QueryConsole.vue'
+import SemanticExplorerPanel from './components/SemanticExplorerPanel.vue'
+import RuntimeReplayPanel from './components/RuntimeReplayPanel.vue'
+import SemanticCanvas from './components/SemanticCanvas.vue'
+import SemanticMap from './components/SemanticMap.vue'
 import { useAnalysisStore } from './store/analysisStore'
 import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps, getPatternNarrative, getSubproblemGraph, getFailureAttribution, getCausalChain } from './api/analysis'
 
@@ -25,11 +29,10 @@ const componentError = ref('')
 
 onErrorCaptured((err, instance, info) => {
   const stack = (err as Error)?.stack || String(err)
-  // Show first 2 lines (message + first frame) to keep debug bar readable
   const short = stack.split('\n').slice(0, 3).join(' | ')
   componentError.value = short
   console.error('[Vue Error Captured]', err, '\nComponent:', instance?.$options?.name || instance?.type?.name || 'unknown', '\nInfo:', info, '\nStack:', stack)
-  return false // prevent propagation
+  return false
 })
 
 const DEMOS: Record<string, string> = {
@@ -74,7 +77,6 @@ async function runAnalysis() {
   store.error = ''
   store.reset()
   try {
-    // Phase 1: independent calls
     const results = await Promise.allSettled([
       getInsight(store.code, store.funcName, store.language),
       analyzeCode(store.code, store.language),
@@ -107,7 +109,6 @@ async function runAnalysis() {
       store.explainResult = results[3].value
     }
 
-    // Phase 2: step explanations + pattern recognition + subproblem graph + failure attribution
     if (store.sessionId) {
       const [stepsRes, patternRes, subgraphRes, failureRes, causalRes] = await Promise.allSettled([
         getExplainSteps(store.code, store.funcName, store.language, 'mock', '', store.sessionId),
@@ -185,10 +186,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <div class="debug-bar" v-if="store.hasResults || componentError">
         Tab: {{ store.activeTab }} |
         Timeline: {{ store?.timeline?.length ?? 0 }} steps |
-        Graph: {{ store.analyzeResult ? 'yes' : 'no' }} |
-        DSViz(raw): {{ store.dsVizResult?.steps?.length ?? 'null' }} | DSViz(eff): {{ store.dsVizTimeline?.length ?? 0 }} |
-        ExplainSteps: {{ store.stepExplanations.length }} |
-        Subproblem: {{ store.subproblemGraph ? 'yes' : 'no' }}
+        ExplainSteps: {{ store.stepExplanations.length }}
         <span v-if="componentError" style="color:var(--error)"> | ERROR: {{ componentError }}</span>
       </div>
 
@@ -200,33 +198,88 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
       <!-- Tab bar -->
       <div class="tab-bar" v-if="store.hasResults || store.githubResult">
+        <!-- Normal mode: 5 core tabs -->
+        <template v-if="!store.advancedMode">
+          <button
+            v-for="tab in (['analysis', 'semantic', 'replay', 'diff', 'metrics'] as const)"
+            :key="tab"
+            :class="['tab-btn', { active: store.activeTab === tab }]"
+            @click="store.activeTab = tab"
+          >
+            {{ tab === 'analysis' ? '智能分析' : tab === 'semantic' ? '语义视图' : tab === 'replay' ? '执行回放' : tab === 'diff' ? '语义对比' : '系统指标' }}
+          </button>
+          <button
+            v-if="store.githubResult"
+            :class="['tab-btn', { active: store.activeTab === 'github' }]"
+            @click="store.activeTab = 'github'"
+          >
+            GitHub
+          </button>
+        </template>
+
+        <!-- Advanced mode: all granular tabs -->
+        <template v-else>
+          <button
+            v-for="tab in (['insight', 'agent', 'semantics', 'console', 'graph', 'canvas', 'map', 'dsviz', 'replay', 'stack', 'timeline', 'diff', 'metrics'] as const)"
+            :key="tab"
+            :class="['tab-btn', { active: store.activeTab === tab }]"
+            @click="store.activeTab = tab"
+          >
+            {{ tab === 'insight' ? '洞察' : tab === 'agent' ? '智能体' : tab === 'semantics' ? '语义推理' : tab === 'console' ? '查询控制台' : tab === 'graph' ? '因果图' : tab === 'canvas' ? '语义画布' : tab === 'map' ? '语义地图' : tab === 'dsviz' ? '数据结构' : tab === 'replay' ? '执行回放' : tab === 'stack' ? '执行栈' : tab === 'timeline' ? '时间线' : tab === 'diff' ? '语义对比' : '系统指标' }}
+          </button>
+          <button
+            v-if="store.githubResult"
+            :class="['tab-btn', { active: store.activeTab === 'github' }]"
+            @click="store.activeTab = 'github'"
+          >
+            GitHub
+          </button>
+        </template>
+
+        <!-- Advanced mode toggle -->
+        <div class="tab-spacer"></div>
         <button
-          v-for="tab in (['insight', 'canvas', 'replay', 'console', 'semantics', 'map', 'diff', 'stack', 'dsviz', 'graph', 'timeline', 'github', 'agent', 'metrics'] as const)"
-          :key="tab"
-          :class="['tab-btn', { active: store.activeTab === tab }]"
-          @click="store.activeTab = tab"
+          class="mode-toggle"
+          :class="{ active: store.advancedMode }"
+          @click="store.advancedMode = !store.advancedMode"
+          title="切换高级模式"
         >
-          {{ tab === 'insight' ? '分析洞察' : tab === 'canvas' ? '语义画布' : tab === 'replay' ? '执行回放' : tab === 'console' ? '语义控制台' : tab === 'semantics' ? '语义推理' : tab === 'map' ? '语义地图' : tab === 'diff' ? '语义对比' : tab === 'stack' ? '执行栈' : tab === 'dsviz' ? '数据结构' : tab === 'graph' ? '执行图' : tab === 'timeline' ? '时间线' : tab === 'agent' ? '智能体' : tab === 'metrics' ? '系统指标' : 'GitHub' }}
+          {{ store.advancedMode ? '简洁' : '高级' }}
         </button>
       </div>
 
       <!-- Panels -->
       <div class="panels">
+        <!-- Welcome state -->
         <InsightPanel v-if="!store.hasResults && !store.loading && !store.githubResult" />
-        <InsightPanel v-if="store.activeTab === 'insight' && store.hasResults" />
-        <SemanticCanvas v-if="store.activeTab === 'canvas' && store.hasResults" />
-        <RuntimeReplayPanel v-if="store.activeTab === 'replay' && store.hasResults" />
-        <QueryConsole v-if="store.activeTab === 'console' && store.hasResults" />
-        <SemanticExplorerPanel v-if="store.activeTab === 'semantics' && store.hasResults" />
-        <SemanticMap v-if="store.activeTab === 'map' && store.hasResults" />
-        <SemanticDiffPanel v-if="store.activeTab === 'diff'" />
-        <StackPanel v-if="store.activeTab === 'stack' && store.hasResults" />
-        <GraphPanel v-if="store.activeTab === 'graph' && store.hasResults" />
-        <DSVizPanel v-if="store.activeTab === 'dsviz' && store.hasResults" />
-        <TimelinePanel v-if="store.activeTab === 'timeline' && store.hasResults" />
-        <GitHubPanel v-if="store.activeTab === 'github' && store.githubResult" />
-        <AgentPanel v-if="store.activeTab === 'agent'" />
-        <MetricsPanel v-if="store.activeTab === 'metrics'" />
+
+        <!-- Normal mode: consolidated panels -->
+        <template v-if="!store.advancedMode">
+          <AnalysisPanel v-if="store.activeTab === 'analysis' && store.hasResults" />
+          <SemanticPanel v-if="store.activeTab === 'semantic' && store.hasResults" />
+          <ReplayPanel v-if="store.activeTab === 'replay' && store.hasResults" />
+          <SemanticDiffPanel v-if="store.activeTab === 'diff'" />
+          <MetricsPanel v-if="store.activeTab === 'metrics'" />
+          <GitHubPanel v-if="store.activeTab === 'github' && store.githubResult" />
+        </template>
+
+        <!-- Advanced mode: granular panels -->
+        <template v-else>
+          <InsightPanel v-if="store.activeTab === 'insight' && store.hasResults" />
+          <AgentPanel v-if="store.activeTab === 'agent'" />
+          <SemanticExplorerPanel v-if="store.activeTab === 'semantics'" />
+          <QueryConsole v-if="store.activeTab === 'console'" />
+          <GraphPanel v-if="store.activeTab === 'graph' && store.analyzeResult" />
+          <SemanticCanvas v-if="store.activeTab === 'canvas' && store.hasResults" />
+          <SemanticMap v-if="store.activeTab === 'map' && store.hasResults" />
+          <DSVizPanel v-if="store.activeTab === 'dsviz' && store.dsVizResult" />
+          <RuntimeReplayPanel v-if="store.activeTab === 'replay' && store.hasResults" />
+          <StackPanel v-if="store.activeTab === 'stack' && store.hasResults" />
+          <TimelinePanel v-if="store.activeTab === 'timeline' && store.hasResults" />
+          <SemanticDiffPanel v-if="store.activeTab === 'diff'" />
+          <MetricsPanel v-if="store.activeTab === 'metrics'" />
+          <GitHubPanel v-if="store.activeTab === 'github' && store.githubResult" />
+        </template>
       </div>
     </div>
   </div>
@@ -291,11 +344,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 }
 
 .tab-btn {
-  padding: 10px 18px;
+  padding: 10px 20px;
   background: none;
   border: none;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   border-bottom: 2px solid transparent;
@@ -311,6 +364,30 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   border-bottom-color: var(--primary);
 }
 
+.tab-spacer { flex: 1; }
+
+.mode-toggle {
+  padding: 6px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  margin: auto 0;
+  transition: all 0.2s;
+}
+.mode-toggle:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.mode-toggle.active {
+  background: rgba(99,102,241,0.1);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
 .panels {
   flex: 1;
   overflow-y: auto;
@@ -318,7 +395,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 }
 
 .debug-bar {
-  font-size: 11px;
+  font-size: 14px;
   font-family: monospace;
   color: var(--warning);
   background: rgba(251,191,36,0.08);

@@ -40,7 +40,20 @@ export const useAnalysisStore = defineStore('analysis', () => {
   // State
   const loading = ref(false)
   const error = ref('')
-  const activeTab = ref<'insight' | 'canvas' | 'replay' | 'console' | 'semantics' | 'map' | 'diff' | 'stack' | 'dsviz' | 'graph' | 'timeline' | 'github' | 'agent' | 'metrics'>('insight')
+  const activeTab = ref<'analysis' | 'semantic' | 'replay' | 'diff' | 'metrics' | 'github' | 'insight' | 'graph' | 'dsviz' | 'agent' | 'console' | 'semantics' | 'canvas' | 'map' | 'stack' | 'timeline'>('analysis')
+  const advancedMode = ref(false)
+
+  // Reset activeTab when switching modes to avoid invalid state
+  watch(advancedMode, (isAdvanced) => {
+    const normalTabs = ['analysis', 'semantic', 'replay', 'diff', 'metrics', 'github']
+    const advancedTabs = ['insight', 'agent', 'semantics', 'console', 'graph', 'canvas', 'map', 'dsviz', 'replay', 'stack', 'timeline', 'diff', 'metrics', 'github']
+    if (!isAdvanced && !normalTabs.includes(activeTab.value)) {
+      activeTab.value = 'analysis'
+    }
+    if (isAdvanced && !advancedTabs.includes(activeTab.value)) {
+      activeTab.value = 'insight'
+    }
+  })
   const sessionId = ref('')
   const showAllSteps = ref(false)
 
@@ -71,9 +84,11 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const explainMode = ref(false)
   const highlightedLine = ref(0)
 
-  // Clear editor highlight when leaving timeline/dsviz/replay tabs
+  // Clear editor highlight when leaving replay/semantic panels
   watch(activeTab, (tab) => {
-    if (tab !== 'timeline' && tab !== 'dsviz' && tab !== 'replay') {
+    const replayTabs = ['replay', 'timeline', 'stack', 'dsviz', 'canvas', 'map']
+    const semanticTabs = ['semantic', 'graph', 'semantics']
+    if (!replayTabs.includes(tab) && !semanticTabs.includes(tab)) {
       highlightedLine.value = 0
     }
   })
@@ -474,20 +489,6 @@ export const useAnalysisStore = defineStore('analysis', () => {
     return steps.map(s => s.event_type || 'unknown')
   })
 
-  // Pointer transitions: track pointer moves across steps (with object identity)
-  const pointerTransitions = computed(() => {
-    const steps = timeline.value
-    if (!steps.length) return [] as { step: number; pointer: string; from_object?: string; to_object?: string; via: string }[]
-    const transitions: { step: number; pointer: string; from_object?: string; to_object?: string; via: string }[] = []
-    for (let i = 0; i < steps.length; i++) {
-      const s = steps[i]
-      if (s.pointer_move) {
-        transitions.push({ step: i, ...s.pointer_move })
-      }
-    }
-    return transitions
-  })
-
   // Frame lifecycle: track call suspend/resume events
   interface FrameEvent {
     step: number
@@ -528,79 +529,6 @@ export const useAnalysisStore = defineStore('analysis', () => {
     return events
   })
 
-  // Heap object tracking: extract object graph from timeline vars
-  interface HeapObject {
-    id: string
-    type: string
-    val: string
-    fields: Record<string, string>  // field_name → object_id
-    changed: boolean
-  }
-
-  const currentHeapSnapshot = computed(() => {
-    const step = timeline.value[safeStep.value]
-    if (!step) return { objects: [] as HeapObject[], bindings: {} as Record<string, string> }
-
-    const objects: HeapObject[] = []
-    const bindings: Record<string, string> = {}
-    let nextId = 0
-    const seen = new Map<string, string>() // value repr → object_id
-
-    for (const [name, v] of Object.entries(step.vars || {})) {
-      const val = v.value || ''
-      const isChanged = v.changed || false
-
-      // Detect linked list / tree nodes from repr pattern
-      const nodeMatch = val.match(/^Node\((\d+)\)$/) || val.match(/^TreeNode\((\d+)\)$/)
-      if (nodeMatch) {
-        const objId = `obj_${nextId++}`
-        objects.push({
-          id: objId, type: 'Node', val: nodeMatch[1],
-          fields: {}, changed: isChanged,
-        })
-        bindings[name] = objId
-        seen.set(val, objId)
-        continue
-      }
-
-      // Detect lists
-      if (val.startsWith('[') && val.endsWith(']')) {
-        const objId = `obj_${nextId++}`
-        objects.push({
-          id: objId, type: 'list', val: val.slice(0, 30),
-          fields: {}, changed: isChanged,
-        })
-        bindings[name] = objId
-        continue
-      }
-
-      // Detect dicts
-      if (val.startsWith('{') && val.endsWith('}')) {
-        const objId = `obj_${nextId++}`
-        objects.push({
-          id: objId, type: 'dict', val: val.slice(0, 30),
-          fields: {}, changed: isChanged,
-        })
-        bindings[name] = objId
-        continue
-      }
-
-      // Primitives
-      if (v.type === 'int' || v.type === 'float' || v.type === 'str' || v.type === 'bool' || v.type === 'NoneType') {
-        // Don't create heap objects for primitives
-        continue
-      }
-    }
-
-    // Second pass: link references (x.next → y)
-    for (const obj of objects) {
-      // Look for other vars that reference this object's fields
-      // This is a heuristic — real object identity would need backend support
-    }
-
-    return { objects, bindings }
-  })
-
   // Detected algorithmic patterns (from Pattern Combinator)
   const detectedPatterns = computed<DetectedPattern[]>(() => {
     const raw = insightResult.value as any
@@ -619,9 +547,6 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   const currentStepExplanation = computed(() =>
     stepExplanations.value.find(e => e.step === currentStep.value) || null
-  )
-  const importantSteps = computed(() =>
-    stepExplanations.value.filter(e => (e.importance_score || 0) >= 0.30).map(e => e.step)
   )
 
   // Actions
@@ -687,21 +612,21 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   return {
     code, language, funcName,
-    loading, error, activeTab,
+    loading, error, activeTab, advancedMode,
     insightResult, analyzeResult, dsVizResult, explainResult,
     stepExplanations, controlEdges, loopGroups,
     focusedExplanation, focusLoading, patternResult, subproblemGraph, explainMode,
     githubResult, failureAttribution, importGraph, causalChain,
     agentResult, agentLoading, metrics,
-    sessionId, showAllSteps, importantSteps,
+    sessionId, showAllSteps,
     currentStep, isPlaying, playSpeed,
     highlightedLine,
     history,
     hasResults, timeline, totalSteps, safeStep, currentStepData, currentStepExplanation, dsVizTimeline,
     stepDependency, causalEdges,
     callStack, semanticNarrations, currentNarration,
-    semanticEventTypes, pointerTransitions,
-    frameLifecycle, currentHeapSnapshot,
+    semanticEventTypes,
+    frameLifecycle,
     detectedPatterns, currentPattern,
     setCode, goToStep, nextStep, prevStep, reset,
     saveToHistory, loadFromHistory, clearHistory,

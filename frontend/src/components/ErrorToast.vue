@@ -73,7 +73,7 @@ function dismiss() {
 .toast-msg {
   flex: 1;
   color: var(--error);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.4;
   word-break: break-word;
 }

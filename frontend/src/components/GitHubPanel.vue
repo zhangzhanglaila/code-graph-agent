@@ -183,7 +183,7 @@ function loadFileCode(file: any) {
   color: var(--primary);
 }
 .gh-url {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-muted);
   margin-left: auto;
   font-family: monospace;
@@ -218,7 +218,7 @@ function loadFileCode(file: any) {
 }
 
 .summary-label {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-muted);
   margin-top: 2px;
 }
@@ -230,7 +230,7 @@ function loadFileCode(file: any) {
 }
 
 .patterns-title {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text);
 }
@@ -242,7 +242,7 @@ function loadFileCode(file: any) {
 }
 
 .pattern-chip {
-  font-size: 11px;
+  font-size: 14px;
   padding: 3px 8px;
   background: rgba(139,92,246,0.08);
   color: #8b5cf6;
@@ -260,13 +260,13 @@ function loadFileCode(file: any) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text);
 }
 
 .files-count {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-muted);
   font-weight: 400;
 }
@@ -299,14 +299,14 @@ function loadFileCode(file: any) {
 }
 
 .file-name {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--highlight);
   font-family: monospace;
 }
 
 .file-lines, .file-steps {
-  font-size: 10px;
+  font-size: 14px;
   color: var(--text-muted);
   padding: 1px 4px;
   background: rgba(148,163,184,0.08);
@@ -314,7 +314,7 @@ function loadFileCode(file: any) {
 }
 
 .file-error {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--error);
 }
 
@@ -325,13 +325,13 @@ function loadFileCode(file: any) {
 }
 
 .insight-one-liner {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text);
   line-height: 1.4;
 }
 
 .insight-type {
-  font-size: 10px;
+  font-size: 14px;
   color: var(--primary);
   font-weight: 600;
   padding: 1px 6px;
@@ -348,7 +348,7 @@ function loadFileCode(file: any) {
 }
 
 .insight-pattern {
-  font-size: 10px;
+  font-size: 14px;
   color: #8b5cf6;
   padding: 1px 4px;
   background: rgba(139,92,246,0.06);
@@ -398,7 +398,7 @@ function loadFileCode(file: any) {
 }
 
 .import-stats {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-muted);
   font-family: monospace;
 }
@@ -410,7 +410,7 @@ function loadFileCode(file: any) {
 }
 
 .ranking-title, .deps-title, .edges-title {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text);
 }
@@ -422,7 +422,7 @@ function loadFileCode(file: any) {
 }
 
 .ranking-chip {
-  font-size: 10px;
+  font-size: 14px;
   padding: 2px 6px;
   background: rgba(59, 130, 246, 0.08);
   color: var(--primary);
@@ -431,7 +431,7 @@ function loadFileCode(file: any) {
 }
 
 .dep-chip {
-  font-size: 10px;
+  font-size: 14px;
   padding: 2px 6px;
   background: rgba(245, 158, 11, 0.08);
   color: #f59e0b;
@@ -440,7 +440,7 @@ function loadFileCode(file: any) {
 }
 
 .dep-more {
-  font-size: 10px;
+  font-size: 14px;
   color: var(--text-muted);
 }
 
@@ -454,7 +454,7 @@ function loadFileCode(file: any) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 14px;
   font-family: monospace;
 }
 
@@ -471,7 +471,7 @@ function loadFileCode(file: any) {
 }
 
 .edge-name {
-  font-size: 10px;
+  font-size: 14px;
   color: var(--text-muted);
   padding: 0 4px;
   background: rgba(148, 163, 184, 0.08);
@@ -479,7 +479,7 @@ function loadFileCode(file: any) {
 }
 
 .edge-more {
-  font-size: 10px;
+  font-size: 14px;
   color: var(--text-muted);
 }
 </style>

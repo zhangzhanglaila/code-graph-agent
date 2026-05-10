@@ -17,7 +17,7 @@ router = APIRouter()
 
 
 @router.post("/api/failure_attribution")
-async def failure_attribution(req: ReplayInsightRequest):
+async def failure_attribution(req: ReplayInsightRequest, container: AppContainer = Depends(get_container)):
     """Analyze execution for failure attribution."""
     func_file = None
     try:
@@ -26,7 +26,7 @@ async def failure_attribution(req: ReplayInsightRequest):
         )
         steps_data = build_steps_data(timeline)
 
-        from dynamic.semantic.failure_attribution import FailureAttribution
+        FailureAttribution = container.failure_attribution_class
         attribution = FailureAttribution.analyze(steps_data)
 
         return {"success": True, "func_name": req.func_name, "attribution": attribution}
