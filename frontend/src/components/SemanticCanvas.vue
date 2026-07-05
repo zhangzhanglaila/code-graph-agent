@@ -366,13 +366,13 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
               :y1="nodes.find(n => n.id === edge.source)?.y || 0"
               :x2="nodes.find(n => n.id === edge.target)?.x || 0"
               :y2="nodes.find(n => n.id === edge.target)?.y || 0"
-              stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="4,3" class="animated-edge" />
+              stroke="#64748b" stroke-width="2.2" stroke-dasharray="5,4" class="animated-edge" />
 
             <!-- Edge labels -->
             <text v-for="edge in visibleEdges" :key="`label-${edge.source}-${edge.target}`"
               :x="((nodes.find(n => n.id === edge.source)?.x || 0) + (nodes.find(n => n.id === edge.target)?.x || 0)) / 2"
               :y="((nodes.find(n => n.id === edge.source)?.y || 0) + (nodes.find(n => n.id === edge.target)?.y || 0)) / 2 - 6"
-              text-anchor="middle" font-size="9" fill="#9ca3af">{{ edge.type }}</text>
+              text-anchor="middle" font-size="11" font-weight="700" fill="#334155" stroke="#ffffff" stroke-width="3" paint-order="stroke">{{ edge.type }}</text>
 
             <!-- Nodes -->
             <g v-for="node in visibleNodes" :key="node.id"
@@ -382,42 +382,42 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
               style="cursor: grab">
               <!-- Shape -->
               <circle v-if="node.visual.shape === 'circle'" :r="node.radius"
-                :fill="node.visual.color + '18'" :stroke="node.visual.color" stroke-width="2" />
+                :fill="node.visual.color + '2e'" :stroke="node.visual.color" stroke-width="2.6" />
               <rect v-else-if="node.visual.shape === 'grid'"
                 :x="-node.radius" :y="-node.radius" :width="node.radius * 2" :height="node.radius * 2" rx="6"
-                :fill="node.visual.color + '18'" :stroke="node.visual.color" stroke-width="2" />
+                :fill="node.visual.color + '2e'" :stroke="node.visual.color" stroke-width="2.6" />
               <polygon v-else-if="node.visual.shape === 'diamond'"
                 :points="`0,${-node.radius} ${node.radius},0 0,${node.radius} ${-node.radius},0`"
-                :fill="node.visual.color + '18'" :stroke="node.visual.color" stroke-width="2" />
+                :fill="node.visual.color + '2e'" :stroke="node.visual.color" stroke-width="2.6" />
               <polygon v-else-if="node.visual.shape === 'hexagon'"
                 :points="`${node.radius*0.87},${-node.radius*0.5} ${node.radius*0.87},${node.radius*0.5} 0,${node.radius} ${-node.radius*0.87},${node.radius*0.5} ${-node.radius*0.87},${-node.radius*0.5} 0,${-node.radius}`"
-                :fill="node.visual.color + '18'" :stroke="node.visual.color" stroke-width="2" />
+                :fill="node.visual.color + '2e'" :stroke="node.visual.color" stroke-width="2.6" />
               <polygon v-else-if="node.visual.shape === 'triangle'"
                 :points="`0,${-node.radius} ${node.radius*0.87},${node.radius*0.5} ${-node.radius*0.87},${node.radius*0.5}`"
-                :fill="node.visual.color + '18'" :stroke="node.visual.color" stroke-width="2" />
+                :fill="node.visual.color + '2e'" :stroke="node.visual.color" stroke-width="2.6" />
               <rect v-else
                 :x="-node.radius + 2" :y="-node.radius * 0.75" :width="(node.radius - 2) * 2" :height="node.radius * 1.5" rx="8"
-                :fill="node.visual.color + '18'" :stroke="node.visual.color" stroke-width="2" />
+                :fill="node.visual.color + '2e'" :stroke="node.visual.color" stroke-width="2.6" />
 
               <!-- Icon -->
-              <text text-anchor="middle" dy="4" font-size="18" :fill="node.visual.color" font-weight="700">
+              <text text-anchor="middle" dy="4" font-size="20" :fill="node.visual.color" font-weight="800">
                 {{ node.visual.icon }}
               </text>
 
               <!-- Label -->
-              <text text-anchor="middle" :dy="node.radius + 16" font-size="10" font-weight="600" fill="#374151">
+              <text text-anchor="middle" :dy="node.radius + 18" font-size="12" font-weight="800" fill="#0f172a" stroke="#ffffff" stroke-width="3" paint-order="stroke">
                 {{ node.visual.label }}
               </text>
 
               <!-- Confidence bar -->
-              <rect :x="-20" :y="node.radius + 2" :width="40 * node.confidence" height="3" rx="1.5" :fill="node.visual.color" opacity="0.6" />
-              <rect :x="-20" :y="node.radius + 2" width="40" height="3" rx="1.5" fill="none" stroke="#e5e7eb" stroke-width="0.5" />
+              <rect :x="-22" :y="node.radius + 4" :width="44 * node.confidence" height="4" rx="2" :fill="node.visual.color" opacity="0.95" />
+              <rect :x="-22" :y="node.radius + 4" width="44" height="4" rx="2" fill="none" stroke="#94a3b8" stroke-width="0.8" />
 
               <!-- Subjects (zoom level 2+) -->
               <template v-if="zoomLevel >= 2">
                 <text v-for="(subj, si) in node.subjects.slice(0, 3)" :key="subj"
-                  text-anchor="middle" :dy="node.radius + 26 + si * 12"
-                  font-size="9" font-family="monospace" :fill="node.visual.color">{{ subj }}</text>
+                  text-anchor="middle" :dy="node.radius + 31 + si * 13"
+                  font-size="10" font-weight="700" font-family="monospace" :fill="node.visual.color" stroke="#ffffff" stroke-width="2" paint-order="stroke">{{ subj }}</text>
               </template>
             </g>
 
@@ -514,8 +514,8 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
         <div class="runtime-timeline">
           <div v-for="(step, i) in store.timeline" :key="i"
             :class="['rt-tick', { active: i === animStep, changed: step.changed?.length }]"
-            :style="{ left: `${(i / Math.max(store.timeline.length - 1, 1)) * 100}%` }"
-            @click="animStep = i"></div>
+            :style="{ left: `${(Number(i) / Math.max(store.timeline.length - 1, 1)) * 100}%` }"
+            @click="animStep = Number(i)"></div>
         </div>
       </div>
 
@@ -533,27 +533,38 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 </template>
 
 <style scoped>
-.semantic-canvas { display: flex; flex-direction: column; height: 100%; font-size: 14px; }
+.semantic-canvas {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  font-size: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
 
 /* ── Toolbar ── */
-.canvas-toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border, #e5e7eb); flex-shrink: 0; }
+.canvas-toolbar { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border, #e5e7eb); flex-shrink: 0; background: var(--bg-card); overflow-x: auto; }
 .layer-toggle { display: flex; gap: 0; border: 1px solid var(--border, #e5e7eb); border-radius: 6px; overflow: hidden; }
-.layer-btn { padding: 5px 14px; font-size: 14px; font-weight: 600; border: none; background: white; cursor: pointer; color: var(--text-dim, #888); transition: all 0.15s; }
+.layer-btn { padding: 7px 14px; font-size: 14px; font-weight: 700; border: none; background: white; cursor: pointer; color: var(--text-dim, #888); transition: all 0.15s; white-space: nowrap; }
 .layer-btn:not(:last-child) { border-right: 1px solid var(--border, #e5e7eb); }
 .layer-btn:hover { background: #f9fafb; color: var(--text, #333); }
 .layer-btn.active { background: var(--primary, #4f46e5); color: white; }
 
 .zoom-controls { display: flex; align-items: center; gap: 6px; margin-left: 8px; }
-.zoom-btn { width: 24px; height: 24px; border: 1px solid var(--border, #e5e7eb); border-radius: 4px; background: white; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+.zoom-btn { width: 28px; height: 28px; border: 1px solid var(--border, #e5e7eb); border-radius: 4px; background: white; cursor: pointer; font-size: 16px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
 .zoom-btn:hover { background: #f3f4f6; }
-.zoom-label { font-size: 14px; font-weight: 600; color: var(--text-dim, #888); min-width: 60px; text-align: center; }
+.zoom-label { font-size: 14px; font-weight: 700; color: var(--text, #333); min-width: 76px; text-align: center; }
 
 .playback { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-.pb-btn { width: 28px; height: 28px; border: 1px solid var(--border, #e5e7eb); border-radius: 4px; background: white; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+.pb-btn { width: 30px; height: 30px; border: 1px solid var(--border, #e5e7eb); border-radius: 4px; background: white; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
 .pb-btn:hover { background: #f3f4f6; }
-.pb-step { font-family: monospace; font-size: 14px; color: var(--text-dim, #888); min-width: 60px; }
+.pb-step { font-family: monospace; font-size: 14px; font-weight: 700; color: var(--text, #333); min-width: 60px; }
 .pb-slider { width: 120px; accent-color: var(--primary, #4f46e5); }
-.pb-speed { font-size: 14px; padding: 2px 4px; border: 1px solid var(--border, #e5e7eb); border-radius: 4px; }
+.pb-speed { font-size: 14px; padding: 4px 6px; border: 1px solid var(--border, #e5e7eb); border-radius: 4px; background: white; color: var(--text); }
 
 /* ── States ── */
 .canvas-loading, .canvas-error, .canvas-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px; color: var(--text-dim, #888); gap: 8px; }
@@ -563,12 +574,12 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 .empty-icon { font-size: 36px; opacity: 0.3; }
 
 /* ── Canvas ── */
-.canvas-content { flex: 1; overflow: auto; position: relative; }
-.canvas-svg-wrap { position: relative; min-height: 500px; }
-.canvas-svg { width: 100%; height: 500px; }
+.canvas-content { flex: 1; overflow: auto; position: relative; background: #f8fafc; }
+.canvas-svg-wrap { position: relative; min-height: 560px; }
+.canvas-svg { width: 100%; height: 560px; background: #f8fafc; }
 .canvas-node { transition: filter 0.15s; }
-.canvas-node:hover { filter: brightness(1.1); }
-.canvas-node.selected { filter: drop-shadow(0 0 8px rgba(99,102,241,0.5)); }
+.canvas-node:hover { filter: brightness(1.08) drop-shadow(0 3px 7px rgba(15,23,42,0.18)); }
+.canvas-node.selected { filter: drop-shadow(0 0 10px rgba(37,99,235,0.55)); }
 
 .animated-edge { stroke-dashoffset: 0; animation: dash-flow 2s linear infinite; }
 @keyframes dash-flow { to { stroke-dashoffset: -16; } }
@@ -577,14 +588,14 @@ watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
 @keyframes pulse { 0% { r: 34; opacity: 0.4; } 100% { r: 50; opacity: 0; } }
 
 /* ── Node Detail ── */
-.node-detail { position: absolute; top: 12px; right: 12px; width: 240px; background: white; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; padding: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); font-size: 14px; }
+.node-detail { position: absolute; top: 12px; right: 12px; width: 280px; background: white; border: 1px solid var(--border-strong, #94a3b8); border-radius: 8px; padding: 12px; box-shadow: 0 12px 28px rgba(15,23,42,0.16); font-size: 14px; }
 .detail-header { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-left: 3px solid #888; padding-left: 8px; margin-bottom: 8px; }
 .detail-icon { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; color: white; font-size: 14px; }
 .detail-label { font-weight: 700; font-size: 14px; }
-.detail-id { font-family: monospace; font-size: 14px; color: var(--text-dim, #888); }
+.detail-id { font-family: monospace; font-size: 14px; color: var(--text-muted, #475569); word-break: break-all; }
 .detail-section { margin-top: 8px; }
-.detail-title { font-size: 14px; font-weight: 700; color: var(--text-dim, #888); text-transform: uppercase; margin-bottom: 4px; }
-.var-chip { display: inline-block; font-family: monospace; font-size: 14px; padding: 1px 6px; background: rgba(59,130,246,0.08); color: #3b82f6; border-radius: 3px; margin: 2px 4px 2px 0; }
+.detail-title { font-size: 14px; font-weight: 800; color: var(--text-dim, #334155); text-transform: uppercase; margin-bottom: 4px; }
+.var-chip { display: inline-block; font-family: monospace; font-size: 14px; padding: 2px 7px; background: rgba(59,130,246,0.12); color: #1d4ed8; border: 1px solid rgba(59,130,246,0.22); border-radius: 4px; margin: 2px 4px 2px 0; }
 .inv-line, .beh-line { font-size: 14px; padding: 2px 0; color: var(--text, #333); }
 
 /* ── Algorithm Layer ── */

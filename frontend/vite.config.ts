@@ -11,6 +11,10 @@ export default defineConfig({
     },
   },
   build: {
+    // Monaco is intentionally isolated as a lazy editor chunk; keep the build
+    // warning threshold aligned with that dependency instead of hiding it in
+    // the app entry bundle.
+    chunkSizeWarningLimit: 3200,
     rollupOptions: {
       output: {
         manualChunks: {

@@ -409,7 +409,7 @@ async function renderGraph() {
             if (ele.data('isGoal')) return '#d97706'        // gold deep: goal
             if (ele.data('isUnlock')) return '#fb7185'      // B站 pink: direct unlock
             if (ele.data('isCascade')) return '#9a3412'     // dark orange deep: cascade
-            return '#e2e8f0'                                  // gray: idle
+            return '#f8fafc'                                  // gray: idle
           },
           'border-color': (ele: any) => {
             if (ele.data('isSummaryHover')) return '#d97706'
@@ -419,16 +419,17 @@ async function renderGraph() {
             if (ele.data('isGoal')) return '#b45309'
             if (ele.data('isUnlock')) return '#e11d48'
             if (ele.data('isCascade')) return '#7c2d12'
-            return '#94a3b8'
+            return '#64748b'
           },
-          'border-width': (ele: any) => ele.data('isSummaryHover') || ele.data('isActive') || ele.data('isOnPath') || ele.data('isRecommended') || ele.data('isUnlock') || ele.data('isGoal') ? 2.5 : 1.5,
+          'border-width': (ele: any) => ele.data('isSummaryHover') || ele.data('isActive') || ele.data('isOnPath') || ele.data('isRecommended') || ele.data('isUnlock') || ele.data('isGoal') ? 3 : 2,
           'label': 'data(label)',
-          'font-size': '14px',
-          'color': '#1e293b',
+          'font-size': '15px',
+          'font-weight': 600,
+          'color': '#0f172a',
           'text-outline-color': '#ffffff',
-          'text-outline-width': 2,
-          'width': (ele: any) => ele.data('isSummaryHover') ? 84 : ele.data('isOnPath') ? 72 : ele.data('isRecommended') ? 80 : ele.data('isUnlock') || ele.data('isGoal') ? 76 : 60,
-          'height': (ele: any) => ele.data('isSummaryHover') ? 84 : ele.data('isOnPath') ? 72 : ele.data('isRecommended') ? 80 : ele.data('isUnlock') || ele.data('isGoal') ? 76 : 60,
+          'text-outline-width': 3,
+          'width': (ele: any) => ele.data('isSummaryHover') ? 90 : ele.data('isOnPath') ? 78 : ele.data('isRecommended') ? 84 : ele.data('isUnlock') || ele.data('isGoal') ? 80 : 66,
+          'height': (ele: any) => ele.data('isSummaryHover') ? 90 : ele.data('isOnPath') ? 78 : ele.data('isRecommended') ? 84 : ele.data('isUnlock') || ele.data('isGoal') ? 80 : 66,
           'text-valign': 'bottom',
           'text-margin-y': 5,
         } as any,
@@ -436,32 +437,35 @@ async function renderGraph() {
       {
         selector: 'edge',
         style: {
-          'width': (ele: any) => ele.data('isPathEdge') ? 3 : ele.data('isUnlockEdge') ? 2.5 : ele.data('isCascadeEdge') ? 1.8 : 1,
+          'width': (ele: any) => ele.data('isPathEdge') ? 4 : ele.data('isUnlockEdge') ? 3.2 : ele.data('isCascadeEdge') ? 2.4 : 1.8,
           'line-color': (ele: any) => {
             if (ele.data('isPathEdge')) return '#3b82f6'
             if (ele.data('isUnlockEdge')) return '#fb7185'
-            if (ele.data('isCascadeEdge')) return 'rgba(154,52,18,0.6)'
+            if (ele.data('isCascadeEdge')) return '#9a3412'
             if (ele.data('edgeType') === 'causal') return '#7c3aed'
-            return 'rgba(100,116,139,0.4)'
+            return '#64748b'
           },
           'target-arrow-color': (ele: any) => {
             if (ele.data('isPathEdge')) return '#3b82f6'
             if (ele.data('isUnlockEdge')) return '#fb7185'
-            if (ele.data('isCascadeEdge')) return 'rgba(154,52,18,0.6)'
+            if (ele.data('isCascadeEdge')) return '#9a3412'
             if (ele.data('edgeType') === 'causal') return '#7c3aed'
-            return 'rgba(100,116,139,0.4)'
+            return '#64748b'
           },
           'target-arrow-shape': 'triangle',
           'curve-style': 'bezier',
-          'arrow-scale': 0.8,
+          'arrow-scale': 1,
           'line-style': (ele: any) => {
             if (ele.data('edgeType') === 'control') return 'dashed'
             if (ele.data('edgeType') === 'causal') return 'dotted'
             return 'solid'
           },
           'label': (ele: any) => ele.data('label') || '',
-          'font-size': '8px',
+          'font-size': '11px',
+          'font-weight': 700,
           'color': '#7c3aed',
+          'text-outline-color': '#ffffff',
+          'text-outline-width': 2,
           'text-rotation': 'autorotate',
           'text-margin-y': -6,
         } as any,
@@ -517,11 +521,11 @@ function refreshHighlightStyles() {
       const isCascade = cascade.has(idx) && showCascade.value
 
       ele.style({
-        'background-color': isSummaryHover ? '#f59e0b' : isActive ? '#10b981' : isOnPath ? '#3b82f6' : isRecommended ? '#0284c7' : isGoal ? '#d97706' : isUnlock ? '#fb7185' : isCascade ? '#9a3412' : '#e2e8f0',
-        'border-color': isSummaryHover ? '#d97706' : isActive ? '#059669' : isOnPath ? '#2563eb' : isRecommended ? '#0369a1' : isGoal ? '#b45309' : isUnlock ? '#e11d48' : isCascade ? '#7c2d12' : '#94a3b8',
-        'border-width': isSummaryHover || isActive || isOnPath || isRecommended || isUnlock || isGoal ? 2.5 : 1.5,
-        'width': isSummaryHover ? 84 : isOnPath ? 72 : isRecommended ? 80 : isUnlock || isGoal ? 76 : 60,
-        'height': isSummaryHover ? 84 : isOnPath ? 72 : isRecommended ? 80 : isUnlock || isGoal ? 76 : 60,
+        'background-color': isSummaryHover ? '#f59e0b' : isActive ? '#10b981' : isOnPath ? '#3b82f6' : isRecommended ? '#0284c7' : isGoal ? '#d97706' : isUnlock ? '#fb7185' : isCascade ? '#9a3412' : '#f8fafc',
+        'border-color': isSummaryHover ? '#d97706' : isActive ? '#059669' : isOnPath ? '#2563eb' : isRecommended ? '#0369a1' : isGoal ? '#b45309' : isUnlock ? '#e11d48' : isCascade ? '#7c2d12' : '#64748b',
+        'border-width': isSummaryHover || isActive || isOnPath || isRecommended || isUnlock || isGoal ? 3 : 2,
+        'width': isSummaryHover ? 90 : isOnPath ? 78 : isRecommended ? 84 : isUnlock || isGoal ? 80 : 66,
+        'height': isSummaryHover ? 90 : isOnPath ? 78 : isRecommended ? 84 : isUnlock || isGoal ? 80 : 66,
       })
     })
   })
@@ -671,25 +675,27 @@ function onNodeLeave() {
 </template>
 
 <style scoped>
-.graph-panel { display: flex; flex-direction: column; height: 100%; }
+.graph-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
 .graph-controls {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 6px 12px;
+  padding: 8px 12px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 8px;
-  margin-bottom: 8px;
-  font-size: 14px;
+  margin-bottom: 10px;
+  font-size: 15px;
+  box-shadow: var(--shadow);
 }
 
 .toggle-label {
   display: flex;
   align-items: center;
-  gap: 4px;
-  color: var(--text-dim);
+  gap: 6px;
+  color: var(--text);
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -708,40 +714,43 @@ function onNodeLeave() {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  padding: 8px 12px;
+  padding: 10px 12px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
-.legend-item { display: flex; align-items: center; gap: 4px; font-size: 14px; color: var(--text-dim); }
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 14px; color: var(--text); font-weight: 600; }
 
 .legend-line {
-  width: 16px;
-  height: 2px;
+  width: 20px;
+  height: 3px;
   border-top: 2px solid;
 }
 
 .legend-dot {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
+  border: 1px solid rgba(15,23,42,0.18);
 }
 
 .graph-container {
   flex: 1;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+  background: #f8fafc;
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
-  min-height: 400px;
+  min-height: 520px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.8);
 }
 
 .stats {
   font-size: 14px;
-  color: var(--text-muted);
-  padding: 6px 0;
+  color: var(--text-dim);
+  padding: 8px 0;
   text-align: center;
+  font-weight: 600;
 }
 
 .node-detail {
@@ -749,7 +758,8 @@ function onNodeLeave() {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px 16px;
-  margin-top: 8px;
+  margin-top: 10px;
+  box-shadow: var(--shadow);
 }
 
 .detail-top {
@@ -797,8 +807,9 @@ function onNodeLeave() {
   display: block;
   font-size: 14px;
   color: var(--text);
-  background: rgba(0,0,0,0.03);
-  padding: 6px 10px;
+  background: #f1f5f9;
+  border: 1px solid var(--border);
+  padding: 8px 10px;
   border-radius: 4px;
   margin-bottom: 8px;
   white-space: pre-wrap;
@@ -848,7 +859,8 @@ function onNodeLeave() {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px 16px;
-  margin-top: 8px;
+  margin-top: 10px;
+  box-shadow: var(--shadow);
 }
 
 .path-title {
@@ -869,7 +881,7 @@ function onNodeLeave() {
 .path-summary {
   font-size: 14px;
   color: var(--text);
-  background: linear-gradient(135deg, rgba(59,130,246,0.06), rgba(124,58,237,0.06));
+  background: linear-gradient(135deg, rgba(37,99,235,0.10), rgba(124,58,237,0.10));
   padding: 8px 12px;
   border-radius: 6px;
   border-left: 3px solid #3b82f6;
@@ -929,16 +941,17 @@ function onNodeLeave() {
   font-size: 14px;
   padding: 4px 8px;
   border-radius: 4px;
-  background: rgba(59,130,246,0.04);
+  background: rgba(59,130,246,0.08);
+  border: 1px solid rgba(59,130,246,0.18);
 }
 
 .path-step.path-causal {
-  background: rgba(124,58,237,0.06);
+  background: rgba(124,58,237,0.10);
   border-left: 2px solid #7c3aed;
 }
 
 .path-step.path-unlock {
-  background: rgba(251,113,133,0.06);
+  background: rgba(251,113,133,0.12);
   border-left: 2px solid #fb7185;
 }
 
@@ -950,7 +963,7 @@ function onNodeLeave() {
 }
 
 .path-text {
-  color: var(--text-dim);
+  color: var(--text);
   font-family: monospace;
   font-size: 14px;
   flex: 1;

@@ -20,9 +20,10 @@ onMounted(async () => {
 
   editor = monaco.editor.create(editorContainer.value!, {
     value: store.code,
-    language: 'python',
+    language: store.language,
     theme: 'vs',
-    fontSize: 14,
+    fontSize: 15,
+    lineHeight: 23,
     fontFamily: "'Consolas', 'Monaco', monospace",
     lineNumbers: 'on',
     minimap: { enabled: false },
@@ -33,6 +34,10 @@ onMounted(async () => {
     bracketPairColorization: { enabled: true },
     tabSize: 4,
     glyphMargin: true,
+    scrollbar: {
+      verticalScrollbarSize: 10,
+      horizontalScrollbarSize: 10,
+    },
   })
 
   editor.onDidChangeModelContent(() => {
@@ -55,6 +60,13 @@ watch(() => store.code, (newCode) => {
   if (editor.getValue() !== newCode) {
     editor.setValue(newCode)
   }
+})
+
+watch(() => store.language, (newLanguage) => {
+  if (!isAlive()) return
+  try {
+    monaco.editor.setModelLanguage(editor.getModel(), newLanguage)
+  } catch {}
 })
 
 watch(() => store.highlightedLine, (line) => {
@@ -96,24 +108,24 @@ watch(() => store.highlightedLine, (line) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 10px 14px;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
 .editor-title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
-  color: var(--text-dim);
+  color: var(--text);
 }
 
 .lang-select {
-  background: var(--bg-dark);
+  background: var(--bg-elevated);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 8px;
+  border-radius: 6px;
+  padding: 4px 10px;
   font-size: 14px;
   outline: none;
 }

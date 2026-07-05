@@ -103,7 +103,8 @@ async function analyzeGithub() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 20px;
+  gap: 16px;
+  padding: 12px 20px;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
@@ -113,6 +114,7 @@ async function analyzeGithub() {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 260px;
 }
 
 .logo-icon {
@@ -127,7 +129,7 @@ async function analyzeGithub() {
 
 .logo-tag {
   font-size: 14px;
-  color: var(--text-muted);
+  color: var(--text-dim);
   margin-left: 4px;
 }
 
@@ -135,6 +137,9 @@ async function analyzeGithub() {
   display: flex;
   align-items: center;
   gap: 12px;
+  justify-content: flex-end;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .demo-group {
@@ -145,7 +150,7 @@ async function analyzeGithub() {
 
 .demo-label {
   font-size: 14px;
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 
 .btn-sm {
@@ -160,26 +165,41 @@ async function analyzeGithub() {
 }
 
 .github-input {
-  padding: 4px 10px;
+  padding: 6px 10px;
   font-size: 14px;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
+  border-radius: 6px;
+  background: var(--bg-elevated);
   color: var(--text);
-  width: 200px;
+  width: min(260px, 28vw);
+  min-width: 190px;
 }
 
 .github-input:focus {
   outline: none;
-  border-color: var(--primary);
+  border-color: var(--accent);
 }
 
 .github-error {
   font-size: 14px;
   color: var(--error);
-  max-width: 150px;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .topbar {
+    align-items: flex-start;
+  }
+
+  .actions {
+    justify-content: flex-start;
+  }
+
+  .github-input {
+    width: 260px;
+  }
 }
 </style>

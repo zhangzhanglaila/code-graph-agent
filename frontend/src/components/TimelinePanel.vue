@@ -248,7 +248,7 @@ const sandboxBranching = ref(2)
 const sandboxDepth = ref(4)
 
 const sandboxLevels = computed(() => {
-  const levels = []
+  const levels: { depth: number; nodes: number; size: number; cost: number }[] = []
   const n = Math.pow(sandboxBranching.value, sandboxDepth.value) // root problem size
   for (let d = 0; d <= sandboxDepth.value; d++) {
     let nodes, size, cost
@@ -1086,6 +1086,10 @@ const visibleTreeNodes = computed(() => {
   return visible
 })
 
+const visibleCallTreeNodes = computed(() => {
+  return callTreeNodes.value.filter(node => visibleTreeNodes.value.has(node.id))
+})
+
 // Which tree node is currently active (at execStep)
 const activeTreeNode = computed(() => {
   const ev = execCurrentCall.value
@@ -1431,8 +1435,8 @@ const narrative = computed(() => {
       const fs = getStep(from)
       const ts = getStep(to)
       if (!fs || !ts) return []
-      const fromChanged = new Set(fs.changed || [])
-      return [...fromChanged].filter(v => (ts.changed || []).includes(v) || (ts.code || '').includes(v))
+      const fromChanged = new Set<string>((fs.changed || []) as string[])
+      return [...fromChanged].filter(v => ((ts.changed || []) as string[]).includes(v) || (ts.code || '').includes(v))
     }
     const isControlEdge = (from: number, to: number) =>
       store.controlEdges.some(e => e.from === from && e.to === to)
@@ -1509,8 +1513,8 @@ const narrative = computed(() => {
     const fs = getStep(from)
     const ts = getStep(to)
     if (!fs || !ts) return []
-    const fromChanged = new Set(fs.changed || [])
-    return [...fromChanged].filter(v => (ts.changed || []).includes(v) || (ts.code || '').includes(v))
+    const fromChanged = new Set<string>((fs.changed || []) as string[])
+    return [...fromChanged].filter(v => ((ts.changed || []) as string[]).includes(v) || (ts.code || '').includes(v))
   }
 
   // Check if edge is control flow
@@ -2376,7 +2380,7 @@ onUnmounted(() => {
             :width="causalGraph.nodeW"
             :height="causalGraph.nodeH"
             rx="6"
-            :fill="node.id === causalSource ? 'rgba(34,211,238,0.12)' : criticalPath.has(node.id) ? 'rgba(251,114,153,0.10)' : node.id === (store?.currentStep ?? 0) ? 'rgba(251,114,153,0.15)' : executedSteps.has(node.id) ? 'rgba(167,139,250,0.08)' : 'rgba(100,100,120,0.04)'"
+            :fill="node.id === causalSource ? 'rgba(34,211,238,0.16)' : criticalPath.has(node.id) ? 'rgba(251,114,153,0.14)' : node.id === (store?.currentStep ?? 0) ? 'rgba(251,114,153,0.20)' : executedSteps.has(node.id) ? 'rgba(167,139,250,0.12)' : 'rgba(100,116,139,0.10)'"
             :stroke="hoveredStep === node.id ? 'var(--highlight)' : criticalPath.has(node.id) ? 'var(--primary)' : node.importance === 'high' ? 'var(--primary)' : node.id === causalSource ? 'var(--highlight)' : executedSteps.has(node.id) ? 'rgba(167,139,250,0.3)' : 'var(--border)'"
             :stroke-width="hoveredStep === node.id || node.id === (store?.currentStep ?? 0) || criticalPath.has(node.id) ? 2.5 : 1.5"
           />
@@ -2385,10 +2389,10 @@ onUnmounted(() => {
             {{ node.explanation.length > 26 ? node.explanation.slice(0, 26) + '…' : node.explanation }}
           </text>
           <!-- Reason icons + code (SECONDARY — implementation detail) -->
-          <text v-if="node.reasonIcons?.length" x="8" y="30" class="node-icons" :fill="executedSteps.has(node.id) ? 'var(--text-muted)' : 'rgba(120,120,140,0.3)'">
+          <text v-if="node.reasonIcons?.length" x="8" y="30" class="node-icons" :fill="executedSteps.has(node.id) ? 'var(--text-dim)' : 'rgba(71,85,105,0.72)'">
             {{ node.reasonIcons.join('') }}
           </text>
-          <text :x="node.reasonIcons?.length ? 8 + node.reasonIcons.length * 11 : 8" y="30" class="node-code" :fill="executedSteps.has(node.id) ? 'var(--text-muted)' : 'rgba(120,120,140,0.3)'">
+          <text :x="node.reasonIcons?.length ? 8 + node.reasonIcons.length * 11 : 8" y="30" class="node-code" :fill="executedSteps.has(node.id) ? 'var(--text-dim)' : 'rgba(71,85,105,0.72)'">
             #{{ node.id }} {{ node.code.length > 16 ? node.code.slice(0, 16) + '…' : node.code }}
           </text>
           <!-- Execution path dot -->
@@ -2642,7 +2646,7 @@ onUnmounted(() => {
               </g>
               <!-- Nodes -->
               <g
-                v-for="node in callTreeNodes"
+                v-for="node in visibleCallTreeNodes"
                 :key="node.id"
                 :transform="`translate(${node.x}, ${node.y})`"
                 class="tree-node"
@@ -2652,7 +2656,6 @@ onUnmounted(() => {
                   'tree-node-flash': flashNodes.has(node.id),
                   'tree-node-enter': visibleTreeNodes.has(node.id),
                 }"
-                v-if="visibleTreeNodes.has(node.id)"
                 @mouseenter="hoveredNode = node.id"
                 @mouseleave="hoveredNode = null"
               >
@@ -3258,14 +3261,15 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.timeline-panel { display: flex; flex-direction: column; gap: 12px; }
+.timeline-panel { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 
 .narration-bar {
   display: flex; align-items: center; gap: 8px;
-  background: linear-gradient(135deg, rgba(59,130,246,0.06), rgba(124,58,237,0.06));
+  background: linear-gradient(135deg, rgba(59,130,246,0.10), rgba(124,58,237,0.10));
   border: 1px solid rgba(59,130,246,0.15);
   border-left: 3px solid #3b82f6;
   border-radius: 8px; padding: 8px 14px;
+  box-shadow: var(--shadow);
 }
 .narration-icon { font-size: 14px; flex-shrink: 0; }
 .narration-text { font-size: 14px; color: var(--text); line-height: 1.4; }
@@ -3288,17 +3292,18 @@ onUnmounted(() => {
   border-radius: 8px;
   padding: 8px 12px;
   flex-wrap: wrap;
+  box-shadow: var(--shadow);
 }
 
 .btn-sm { padding: 4px 12px; font-size: 14px; }
 .slider { flex: 1; accent-color: var(--primary); min-width: 80px; }
 .step-display { font-size: 14px; color: var(--highlight); font-weight: 600; min-width: 60px; text-align: center; }
 .speed-input {
-  width: 50px; background: var(--bg-dark); color: var(--text);
+  width: 56px; background: var(--bg-elevated); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px;
-  padding: 2px 6px; font-size: 14px; text-align: center;
+  padding: 4px 6px; font-size: 14px; text-align: center;
 }
-.speed-label { font-size: 14px; color: var(--text-muted); }
+.speed-label { font-size: 14px; color: var(--text-dim); font-weight: 600; }
 
 .explain-btn {
   background: linear-gradient(135deg, rgba(34,211,238,0.15), rgba(167,139,250,0.15));

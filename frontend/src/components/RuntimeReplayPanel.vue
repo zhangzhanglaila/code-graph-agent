@@ -332,7 +332,7 @@ function getCausalRole(stepIdx: number): string {
               :key="i"
               class="marker"
               :class="{ changed: (s.changed || []).length > 0 || (s.new_vars || []).length > 0 }"
-              :style="{ left: `${(i / Math.max(1, totalSteps - 1)) * 100}%` }"
+              :style="{ left: `${(Number(i) / Math.max(1, totalSteps - 1)) * 100}%` }"
             />
           </div>
         </div>

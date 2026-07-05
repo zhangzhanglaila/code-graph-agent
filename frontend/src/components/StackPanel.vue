@@ -74,25 +74,34 @@ const currentCausalEdges = computed(() => {
   return edges.filter(e => e.cause === step || e.effect === step).slice(0, 6)
 })
 
+const visibleConstraintStrata = computed<[string, number][]>(() => {
+  const strata = currentPattern.value?.constraint_summary?.strata || {}
+  return Object.entries(strata)
+    .filter(([, count]) => Number(count) > 0)
+    .map(([stratum, count]) => [stratum, Number(count)])
+})
+
 // Reasoning DAG: flatten into ordered steps for display
 const reasoningSteps = computed(() => {
   const dag = currentPattern.value?.reasoning_dag
   if (!dag?.nodes?.length) return []
 
   // Build adjacency: node_id → source edges
+  const nodes = dag.nodes as any[]
+  const edges = (dag.edges || []) as any[]
   const sourcesOf = new Map<string, string[]>()
-  for (const e of dag.edges || []) {
+  for (const e of edges) {
     if (!sourcesOf.has(e.to)) sourcesOf.set(e.to, [])
     sourcesOf.get(e.to)!.push(e.from)
   }
 
   // Topological sort (BFS from observed facts)
-  const nodeMap = new Map(dag.nodes.map(n => [n.id, n]))
+  const nodeMap = new Map<string, any>(nodes.map(n => [n.id, n]))
   const visited = new Set<string>()
   const result: { fact: any; rule: string; depth: number }[] = []
 
   // Start from observed (leaf) facts
-  const queue = dag.nodes.filter(n => n.source === 'observed').map(n => n.id)
+  const queue = nodes.filter(n => n.source === 'observed').map(n => n.id)
   for (const id of queue) visited.add(id)
 
   while (queue.length) {
@@ -119,7 +128,7 @@ const reasoningSteps = computed(() => {
   }
 
   // Add any unvisited nodes
-  for (const n of dag.nodes) {
+  for (const n of nodes) {
     if (!visited.has(n.id)) {
       result.push({ fact: n, rule: n.rule || '', depth: n.source === 'observed' ? 0 : 1 })
     }
@@ -238,7 +247,7 @@ function stepRange(frame: { start_step: number; end_step: number | null }) {
       <span class="cs-fact">{{ currentPattern.constraint_summary.observed }} 观测</span>
       <span class="cs-derived">{{ currentPattern.constraint_summary.derived }} 推导</span>
       <span class="cs-total">{{ currentPattern.constraint_summary.total_facts }} 事实</span>
-      <span v-for="(count, stratum) in currentPattern.constraint_summary.strata" :key="stratum" class="cs-stratum" v-if="count > 0">
+      <span v-for="[stratum, count] in visibleConstraintStrata" :key="stratum" class="cs-stratum">
         {{ stratum }}: {{ count }}
       </span>
     </div>

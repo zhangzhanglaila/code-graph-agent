@@ -3,6 +3,7 @@ const API_BASE = ''
 // ── Core Types ──────────────────────────────────────────────────
 
 export interface DetectedPattern {
+  [key: string]: any
   pattern_name: string
   display_name: string
   description: string
@@ -17,6 +18,7 @@ export interface InsightResponse {
   success?: boolean
   error?: string
   error_type?: string
+  session_id?: string
   result: any
   func_name: string
   insight: {
@@ -97,6 +99,7 @@ export interface ExplainResponse {
 }
 
 export interface StepExplanation {
+  [key: string]: any
   step: number
   explanation: string
   importance: 'high' | 'medium' | 'low'

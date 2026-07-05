@@ -31,7 +31,7 @@ onErrorCaptured((err, instance, info) => {
   const stack = (err as Error)?.stack || String(err)
   const short = stack.split('\n').slice(0, 3).join(' | ')
   componentError.value = short
-  console.error('[Vue Error Captured]', err, '\nComponent:', instance?.$options?.name || instance?.type?.name || 'unknown', '\nInfo:', info, '\nStack:', stack)
+  console.error('[Vue Error Captured]', err, '\nComponent:', instance?.$options?.name || (instance as any)?.type?.name || 'unknown', '\nInfo:', info, '\nStack:', stack)
   return false
 })
 
@@ -290,13 +290,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   display: flex;
   flex: 1;
   overflow: hidden;
+  min-width: 0;
 }
 
 .left-panel {
-  width: 45%;
+  width: 42%;
+  min-width: 420px;
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  background: var(--bg-card);
 }
 
 .right-panel {
@@ -305,6 +308,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   flex-direction: column;
   overflow: hidden;
   position: relative;
+  min-width: 0;
 }
 
 .loading-overlay {
@@ -337,53 +341,62 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 .tab-bar {
   display: flex;
-  gap: 0;
+  align-items: center;
+  gap: 6px;
   border-bottom: 1px solid var(--border);
-  padding: 0 12px;
+  padding: 8px 12px 0;
   flex-shrink: 0;
+  background: var(--bg-card);
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .tab-btn {
-  padding: 10px 20px;
+  padding: 9px 14px;
   background: none;
   border: none;
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
   transition: all 0.2s;
+  white-space: nowrap;
 }
 
 .tab-btn:hover {
   color: var(--text);
+  background: var(--bg-card-hover);
 }
 
 .tab-btn.active {
   color: var(--primary);
+  background: var(--primary-soft);
   border-bottom-color: var(--primary);
 }
 
 .tab-spacer { flex: 1; }
 
 .mode-toggle {
-  padding: 6px 14px;
+  padding: 7px 14px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text-dim);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 700;
   cursor: pointer;
   margin: auto 0;
   transition: all 0.2s;
+  white-space: nowrap;
 }
 .mode-toggle:hover {
   border-color: var(--primary);
   color: var(--primary);
 }
 .mode-toggle.active {
-  background: rgba(99,102,241,0.1);
+  background: var(--primary-soft);
   border-color: var(--primary);
   color: var(--primary);
 }
@@ -391,16 +404,31 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 .panels {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 16px;
+  min-height: 0;
 }
 
 .debug-bar {
   font-size: 14px;
   font-family: monospace;
-  color: var(--warning);
-  background: rgba(251,191,36,0.08);
-  border-bottom: 1px solid rgba(251,191,36,0.2);
-  padding: 4px 12px;
+  color: #92400e;
+  background: #fffbeb;
+  border-bottom: 1px solid #fbbf24;
+  padding: 6px 12px;
   flex-shrink: 0;
+}
+
+@media (max-width: 1100px) {
+  .main-layout {
+    flex-direction: column;
+  }
+
+  .left-panel {
+    width: 100%;
+    min-width: 0;
+    min-height: 320px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
 }
 </style>

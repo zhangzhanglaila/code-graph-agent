@@ -331,15 +331,15 @@ const currentPointerMove = computed(() => {
             <line
               :x1="getNodeCenter(edge.from).x" :y1="getNodeCenter(edge.from).y"
               :x2="getNodeCenter(edge.to).x" :y2="getNodeCenter(edge.to).y"
-              :stroke="edge.changed ? '#fb7299' : '#475569'"
-              :stroke-width="edge.changed ? 2.5 : 1.5"
+              :stroke="edge.changed ? '#e11d48' : '#334155'"
+              :stroke-width="edge.changed ? 3 : 2"
               :stroke-dasharray="edge.changed ? '6,3' : 'none'"
-              marker-end="url(#arrow-changed)"
+              :marker-end="edge.changed ? 'url(#arrow-changed)' : 'url(#arrow)'"
             />
             <text
               :x="(getNodeCenter(edge.from).x + getNodeCenter(edge.to).x) / 2"
               :y="(getNodeCenter(edge.from).y + getNodeCenter(edge.to).y) / 2 - 6"
-              fill="#94a3b8" font-size="10" text-anchor="middle"
+              fill="#334155" font-size="12" font-weight="700" text-anchor="middle" stroke="#ffffff" stroke-width="3" paint-order="stroke"
             >{{ edge.label }}</text>
           </g>
         </svg>
@@ -388,7 +388,7 @@ const currentPointerMove = computed(() => {
 </template>
 
 <style scoped>
-.ds-panel { display: flex; flex-direction: column; height: 100%; gap: 8px; }
+.ds-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 10px; }
 
 .ds-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -401,12 +401,13 @@ const currentPointerMove = computed(() => {
   display: flex; align-items: center; gap: 10px;
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 8px; padding: 8px 14px;
+  box-shadow: var(--shadow);
 }
 
 .ctrl-btn {
-  background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+  background: var(--bg-elevated); border: 1px solid var(--border);
   color: var(--text); border-radius: 6px; padding: 4px 12px;
-  cursor: pointer; font-size: 14px;
+  cursor: pointer; font-size: 14px; font-weight: 700;
 }
 .ctrl-btn:disabled { opacity: 0.3; cursor: default; }
 .ctrl-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
@@ -424,13 +425,14 @@ const currentPointerMove = computed(() => {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 8px; padding: 8px 14px;
   font-size: 14px; color: var(--text-dim);
+  box-shadow: var(--shadow);
 }
 .ds-code code { color: var(--text); margin-left: 8px; }
 .ds-code-file { color: var(--primary); font-size: 14px; }
 
 .ds-narration {
   display: flex; align-items: center; gap: 6px;
-  background: linear-gradient(135deg, rgba(59,130,246,0.06), rgba(124,58,237,0.06));
+  background: linear-gradient(135deg, rgba(59,130,246,0.10), rgba(124,58,237,0.10));
   border: 1px solid rgba(59,130,246,0.15);
   border-left: 3px solid #3b82f6;
   border-radius: 6px; padding: 6px 12px;
@@ -468,9 +470,10 @@ const currentPointerMove = computed(() => {
 }
 
 .ds-canvas {
-  flex: 1; position: relative; min-height: 300px;
-  background: var(--bg-card); border: 1px solid var(--border);
+  flex: 1; position: relative; min-height: 420px;
+  background: #f8fafc; border: 1px solid var(--border-strong);
   border-radius: 8px; overflow: hidden; cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.9);
 }
 
 .edge-svg {
@@ -486,12 +489,12 @@ const currentPointerMove = computed(() => {
 .ds-node:hover { transform: scale(1.12); }
 
 .node-circle {
-  min-width: 48px; height: 36px; border-radius: 10px;
+  min-width: 54px; height: 40px; border-radius: 10px;
   padding: 0 10px;
-  background: var(--bg-card); border: 2px solid var(--border);
+  background: var(--bg-card); border: 2px solid var(--border-strong);
   display: flex; align-items: center; justify-content: center; gap: 3px;
   transition: all 0.2s ease;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  box-shadow: 0 4px 10px rgba(15,23,42,0.12);
   white-space: nowrap;
 }
 
@@ -507,9 +510,9 @@ const currentPointerMove = computed(() => {
 }
 
 .node-var-name { font-size: 14px; color: var(--highlight); font-weight: 600; font-family: monospace; }
-.node-eq { font-size: 14px; color: var(--text-muted); }
+.node-eq { font-size: 14px; color: var(--text-dim); font-weight: 700; }
 .node-val { font-size: 14px; color: var(--text); font-weight: 700; font-family: monospace; }
-.node-type { font-size: 14px; color: var(--text-muted); margin-top: 3px; }
+.node-type { font-size: 14px; color: var(--text-dim); margin-top: 4px; font-weight: 700; }
 
 .ds-diff {
   display: flex; flex-wrap: wrap; gap: 6px;
@@ -528,6 +531,7 @@ const currentPointerMove = computed(() => {
 .ds-detail {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 8px; padding: 12px 16px;
+  box-shadow: var(--shadow);
 }
 .detail-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .detail-type { font-size: 14px; color: var(--primary); font-weight: 600; }
