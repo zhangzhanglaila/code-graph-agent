@@ -551,7 +551,11 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   // Actions
   function setCode(newCode: string) {
+    if (newCode === code.value) return
     code.value = newCode
+    if (!loading.value && hasResults.value) {
+      reset()
+    }
   }
 
   function goToStep(idx: number) {
@@ -583,6 +587,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
     showAllSteps.value = false
     error.value = ''
   }
+
+  watch([language, funcName], () => {
+    if (!loading.value && hasResults.value) {
+      reset()
+    }
+  })
 
   function saveToHistory() {
     if (!insightResult.value) return

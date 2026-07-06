@@ -73,16 +73,24 @@ def build_and_traverse():
 }
 
 async function runAnalysis() {
+  const requestCode = store.code
+  const requestFuncName = store.funcName
+  const requestLanguage = store.language
   store.loading = true
   store.error = ''
   store.reset()
   try {
     const results = await Promise.allSettled([
-      getInsight(store.code, store.funcName, store.language),
-      analyzeCode(store.code, store.language),
-      getDSViz(store.code, store.funcName, store.language),
-      getExplain(store.code, store.funcName, store.language),
+      getInsight(requestCode, requestFuncName, requestLanguage),
+      analyzeCode(requestCode, requestLanguage),
+      getDSViz(requestCode, requestFuncName, requestLanguage),
+      getExplain(requestCode, requestFuncName, requestLanguage),
     ])
+
+    if (store.code !== requestCode || store.funcName !== requestFuncName || store.language !== requestLanguage) {
+      store.error = '代码已变更，请重新分析。'
+      return
+    }
 
     const errors: string[] = []
 
@@ -111,11 +119,11 @@ async function runAnalysis() {
 
     if (store.sessionId) {
       const [stepsRes, patternRes, subgraphRes, failureRes, causalRes] = await Promise.allSettled([
-        getExplainSteps(store.code, store.funcName, store.language, 'mock', '', store.sessionId),
-        getPatternNarrative(store.code, store.funcName, store.language, store.sessionId),
-        getSubproblemGraph(store.code, store.funcName, store.language),
-        getFailureAttribution(store.code, store.funcName, store.language),
-        getCausalChain(store.code, store.funcName, store.language),
+        getExplainSteps(requestCode, requestFuncName, requestLanguage, 'mock', '', store.sessionId),
+        getPatternNarrative(requestCode, requestFuncName, requestLanguage, store.sessionId),
+        getSubproblemGraph(requestCode, requestFuncName, requestLanguage),
+        getFailureAttribution(requestCode, requestFuncName, requestLanguage),
+        getCausalChain(requestCode, requestFuncName, requestLanguage),
       ])
 
       if (stepsRes.status === 'fulfilled') {
