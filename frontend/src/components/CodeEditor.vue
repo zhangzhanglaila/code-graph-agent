@@ -80,7 +80,7 @@ watch(() => store.highlightedLine, (line) => {
         glyphMarginClassName: 'debugger-glyph',
       },
     }] : [])
-  } catch { /* editor DOM detached */ }
+  } catch {}
 })
 </script>
 
@@ -145,6 +145,7 @@ watch(() => store.highlightedLine, (line) => {
   background: rgba(239, 68, 68, 0.18) !important;
   border-left: 3px solid #ef4444 !important;
 }
+
 .debugger-glyph {
   background: #ef4444 !important;
   width: 4px !important;

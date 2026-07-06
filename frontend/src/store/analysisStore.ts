@@ -40,13 +40,13 @@ export const useAnalysisStore = defineStore('analysis', () => {
   // State
   const loading = ref(false)
   const error = ref('')
-  const activeTab = ref<'analysis' | 'semantic' | 'replay' | 'diff' | 'metrics' | 'github' | 'insight' | 'graph' | 'dsviz' | 'agent' | 'console' | 'semantics' | 'canvas' | 'map' | 'stack' | 'timeline'>('analysis')
+  const activeTab = ref<'analysis' | 'semantic' | 'replay' | 'diff' | 'metrics' | 'github' | 'insight' | 'graph' | 'dsviz' | 'canvas' | 'map' | 'stack' | 'timeline'>('analysis')
   const advancedMode = ref(false)
 
   // Reset activeTab when switching modes to avoid invalid state
   watch(advancedMode, (isAdvanced) => {
-    const normalTabs = ['analysis', 'semantic', 'replay', 'diff', 'metrics', 'github']
-    const advancedTabs = ['insight', 'agent', 'semantics', 'console', 'graph', 'canvas', 'map', 'dsviz', 'replay', 'stack', 'timeline', 'diff', 'metrics', 'github']
+    const normalTabs = ['analysis', 'semantic', 'replay', 'github']
+    const advancedTabs = ['insight', 'graph', 'canvas', 'map', 'dsviz', 'replay', 'stack', 'timeline', 'diff', 'metrics', 'github']
     if (!isAdvanced && !normalTabs.includes(activeTab.value)) {
       activeTab.value = 'analysis'
     }
@@ -90,7 +90,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   // Clear editor highlight when leaving replay/semantic panels
   watch(activeTab, (tab) => {
     const replayTabs = ['replay', 'timeline', 'stack', 'dsviz', 'canvas', 'map']
-    const semanticTabs = ['semantic', 'graph', 'semantics']
+    const semanticTabs = ['semantic', 'graph', 'canvas', 'map']
     if (!replayTabs.includes(tab) && !semanticTabs.includes(tab)) {
       highlightedLine.value = 0
     }

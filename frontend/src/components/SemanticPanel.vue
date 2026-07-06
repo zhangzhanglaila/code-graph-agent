@@ -2,15 +2,11 @@
 import { ref } from 'vue'
 import SemanticCanvas from './SemanticCanvas.vue'
 import SemanticMap from './SemanticMap.vue'
-import GraphPanel from './GraphPanel.vue'
-import DSVizPanel from './DSVizPanel.vue'
 
 const activeSubTab = ref('canvas')
 const subTabs = [
   { id: 'canvas', label: '语义画布' },
   { id: 'map', label: '语义地图' },
-  { id: 'graph', label: '依赖图' },
-  { id: 'dsviz', label: '数据结构' },
 ]
 </script>
 
@@ -27,8 +23,6 @@ const subTabs = [
     <div class="sub-tab-content">
       <div v-show="activeSubTab === 'canvas'"><SemanticCanvas /></div>
       <div v-show="activeSubTab === 'map'"><SemanticMap /></div>
-      <div v-show="activeSubTab === 'graph'"><GraphPanel /></div>
-      <div v-show="activeSubTab === 'dsviz'"><DSVizPanel /></div>
     </div>
   </div>
 </template>

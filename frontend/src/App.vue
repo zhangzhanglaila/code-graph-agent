@@ -10,19 +10,25 @@ import MetricsPanel from './components/MetricsPanel.vue'
 import GitHubPanel from './components/GitHubPanel.vue'
 import InsightPanel from './components/InsightPanel.vue'
 import ErrorToast from './components/ErrorToast.vue'
-// Advanced mode: individual panels
 import GraphPanel from './components/GraphPanel.vue'
 import DSVizPanel from './components/DSVizPanel.vue'
 import TimelinePanel from './components/TimelinePanel.vue'
 import StackPanel from './components/StackPanel.vue'
-import AgentPanel from './components/AgentPanel.vue'
-import QueryConsole from './components/QueryConsole.vue'
-import SemanticExplorerPanel from './components/SemanticExplorerPanel.vue'
 import RuntimeReplayPanel from './components/RuntimeReplayPanel.vue'
 import SemanticCanvas from './components/SemanticCanvas.vue'
 import SemanticMap from './components/SemanticMap.vue'
 import { useAnalysisStore } from './store/analysisStore'
-import { getInsight, analyzeCode, getDSViz, getExplain, getExplainSteps, getPatternNarrative, getSubproblemGraph, getFailureAttribution, getCausalChain } from './api/analysis'
+import {
+  getInsight,
+  analyzeCode,
+  getDSViz,
+  getExplain,
+  getExplainSteps,
+  getPatternNarrative,
+  getSubproblemGraph,
+  getFailureAttribution,
+  getCausalChain,
+} from './api/analysis'
 
 const store = useAnalysisStore()
 const componentError = ref('')
@@ -88,7 +94,7 @@ async function runAnalysis() {
     ])
 
     if (store.code !== requestCode || store.funcName !== requestFuncName || store.language !== requestLanguage) {
-      store.error = '代码已变更，请重新分析。'
+      store.error = '代码已改变，请重新分析。'
       return
     }
 
@@ -138,22 +144,10 @@ async function runAnalysis() {
         store.controlEdges = stepsRes.value.control_edges || []
         store.loopGroups = stepsRes.value.loop_groups || []
       }
-
-      if (patternRes.status === 'fulfilled' && patternRes.value) {
-        store.patternResult = patternRes.value
-      }
-
-      if (subgraphRes.status === 'fulfilled' && subgraphRes.value) {
-        store.subproblemGraph = subgraphRes.value
-      }
-
-      if (failureRes.status === 'fulfilled' && failureRes.value?.success) {
-        store.failureAttribution = failureRes.value.attribution
-      }
-
-      if (causalRes.status === 'fulfilled' && causalRes.value?.success) {
-        store.causalChain = causalRes.value.causal_chain
-      }
+      if (patternRes.status === 'fulfilled' && patternRes.value) store.patternResult = patternRes.value
+      if (subgraphRes.status === 'fulfilled' && subgraphRes.value) store.subproblemGraph = subgraphRes.value
+      if (failureRes.status === 'fulfilled' && failureRes.value?.success) store.failureAttribution = failureRes.value.attribution
+      if (causalRes.status === 'fulfilled' && causalRes.value?.success) store.causalChain = causalRes.value.causal_chain
     }
 
     if (errors.length === 3) {
@@ -162,7 +156,10 @@ async function runAnalysis() {
       store.error = 'Partial failure: ' + errors.join('; ')
     }
 
-    if (store.hasResults) store.saveToHistory()
+    if (store.hasResults) {
+      store.activeTab = 'analysis'
+      store.saveToHistory()
+    }
   } catch (e: any) {
     store.error = e.message
   } finally {
@@ -190,38 +187,29 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   <ErrorToast />
 
   <div class="main-layout">
-    <!-- Left: Code Editor -->
     <div class="left-panel">
       <CodeEditor />
     </div>
 
-    <!-- Right: Results -->
     <div class="right-panel">
-      <!-- Debug info (temporary) -->
-      <div class="debug-bar" v-if="store.hasResults || componentError">
-        Tab: {{ store.activeTab }} |
-        Timeline: {{ store?.timeline?.length ?? 0 }} steps |
-        ExplainSteps: {{ store.stepExplanations.length }}
-        <span v-if="componentError" style="color:var(--error)"> | ERROR: {{ componentError }}</span>
+      <div class="debug-bar" v-if="componentError">
+        ERROR: {{ componentError }}
       </div>
 
-      <!-- Loading -->
       <div v-if="store.loading" class="loading-overlay">
         <div class="loading-spinner"></div>
         <div class="loading-text">正在分析代码...</div>
       </div>
 
-      <!-- Tab bar -->
       <div class="tab-bar" v-if="store.hasResults || store.githubResult">
-        <!-- Normal mode: 5 core tabs -->
         <template v-if="!store.advancedMode">
           <button
-            v-for="tab in (['analysis', 'semantic', 'replay', 'diff', 'metrics'] as const)"
+            v-for="tab in (['analysis', 'semantic', 'replay'] as const)"
             :key="tab"
             :class="['tab-btn', { active: store.activeTab === tab }]"
             @click="store.activeTab = tab"
           >
-            {{ tab === 'analysis' ? '智能分析' : tab === 'semantic' ? '语义视图' : tab === 'replay' ? '执行回放' : tab === 'diff' ? '语义对比' : '系统指标' }}
+            {{ tab === 'analysis' ? '理解代码' : tab === 'semantic' ? '语义视图' : '执行回放' }}
           </button>
           <button
             v-if="store.githubResult"
@@ -232,15 +220,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           </button>
         </template>
 
-        <!-- Advanced mode: all granular tabs -->
         <template v-else>
           <button
-            v-for="tab in (['insight', 'agent', 'semantics', 'console', 'graph', 'canvas', 'map', 'dsviz', 'replay', 'stack', 'timeline', 'diff', 'metrics'] as const)"
+            v-for="tab in (['insight', 'graph', 'canvas', 'map', 'dsviz', 'replay', 'stack', 'timeline', 'diff', 'metrics'] as const)"
             :key="tab"
             :class="['tab-btn', { active: store.activeTab === tab }]"
             @click="store.activeTab = tab"
           >
-            {{ tab === 'insight' ? '洞察' : tab === 'agent' ? '智能体' : tab === 'semantics' ? '语义推理' : tab === 'console' ? '查询控制台' : tab === 'graph' ? '因果图' : tab === 'canvas' ? '语义画布' : tab === 'map' ? '语义地图' : tab === 'dsviz' ? '数据结构' : tab === 'replay' ? '执行回放' : tab === 'stack' ? '执行栈' : tab === 'timeline' ? '时间线' : tab === 'diff' ? '语义对比' : '系统指标' }}
+            {{ tab === 'insight' ? '洞察' : tab === 'graph' ? '依赖图' : tab === 'canvas' ? '语义画布' : tab === 'map' ? '语义地图' : tab === 'dsviz' ? '数据结构' : tab === 'replay' ? '执行回放' : tab === 'stack' ? '调用栈' : tab === 'timeline' ? '时间线' : tab === 'diff' ? '语义对比' : '系统指标' }}
           </button>
           <button
             v-if="store.githubResult"
@@ -251,39 +238,29 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           </button>
         </template>
 
-        <!-- Advanced mode toggle -->
         <div class="tab-spacer"></div>
         <button
           class="mode-toggle"
           :class="{ active: store.advancedMode }"
           @click="store.advancedMode = !store.advancedMode"
-          title="切换高级模式"
+          title="切换调试视图"
         >
-          {{ store.advancedMode ? '简洁' : '高级' }}
+          {{ store.advancedMode ? '学习视图' : '调试视图' }}
         </button>
       </div>
 
-      <!-- Panels -->
       <div class="panels">
-        <!-- Welcome state -->
         <InsightPanel v-if="!store.hasResults && !store.loading && !store.githubResult" />
 
-        <!-- Normal mode: consolidated panels -->
         <template v-if="!store.advancedMode">
           <AnalysisPanel v-if="store.activeTab === 'analysis' && store.hasResults" />
           <SemanticPanel v-if="store.activeTab === 'semantic' && store.hasResults" />
           <ReplayPanel v-if="store.activeTab === 'replay' && store.hasResults" />
-          <SemanticDiffPanel v-if="store.activeTab === 'diff'" />
-          <MetricsPanel v-if="store.activeTab === 'metrics'" />
           <GitHubPanel v-if="store.activeTab === 'github' && store.githubResult" />
         </template>
 
-        <!-- Advanced mode: granular panels -->
         <template v-else>
           <InsightPanel v-if="store.activeTab === 'insight' && store.hasResults" />
-          <AgentPanel v-if="store.activeTab === 'agent'" />
-          <SemanticExplorerPanel v-if="store.activeTab === 'semantics'" />
-          <QueryConsole v-if="store.activeTab === 'console'" />
           <GraphPanel v-if="store.activeTab === 'graph' && store.analyzeResult" />
           <SemanticCanvas v-if="store.activeTab === 'canvas' && store.hasResults" />
           <SemanticMap v-if="store.activeTab === 'map' && store.hasResults" />
@@ -406,10 +383,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   transition: all 0.2s;
   white-space: nowrap;
 }
+
 .mode-toggle:hover {
   border-color: var(--primary);
   color: var(--primary);
 }
+
 .mode-toggle.active {
   background: var(--primary-soft);
   border-color: var(--primary);

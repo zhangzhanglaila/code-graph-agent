@@ -26,20 +26,17 @@ async function analyzeGithub() {
     })
 
     if (result.success && result.files) {
-      // Load first analyzed file into editor
       const firstFile = result.files.find(f => !f.error)
       if (firstFile) {
-        // We need to get the code from the file - for now, show summary
         store.githubResult = result
         store.activeTab = 'github'
       }
 
-      // Fetch import graph in background
       getImportGraph({ repo_url: githubUrl.value.trim(), max_files: 20 })
         .then(graph => { store.importGraph = graph })
         .catch(() => {})
     } else {
-      githubError.value = result.error || 'Analysis failed'
+      githubError.value = result.error || '仓库分析失败'
     }
   } catch (e: any) {
     githubError.value = e.message
@@ -52,13 +49,12 @@ async function analyzeGithub() {
 <template>
   <div class="topbar">
     <div class="logo">
-      <span class="logo-icon">&#x1F9E0;</span>
+      <span class="logo-icon">Code</span>
       <span class="logo-text">Why-Code-Agent</span>
-      <span class="logo-tag">程序理解引擎</span>
+      <span class="logo-tag">代码理解工作台</span>
     </div>
 
     <div class="actions">
-      <!-- GitHub URL input -->
       <div class="github-group">
         <input
           v-model="githubUrl"
@@ -72,14 +68,13 @@ async function analyzeGithub() {
           :disabled="githubLoading || !githubUrl.trim()"
           @click="analyzeGithub"
         >
-          <span v-if="githubLoading" class="animate-pulse">分析中...</span>
-          <span v-else>分析仓库</span>
+          {{ githubLoading ? '分析中...' : '分析仓库' }}
         </button>
         <span v-if="githubError" class="github-error">{{ githubError }}</span>
       </div>
 
       <div class="demo-group">
-        <span class="demo-label">试试：</span>
+        <span class="demo-label">示例</span>
         <button class="btn btn-secondary btn-sm" @click="emit('demo', 'fibonacci')">Fibonacci</button>
         <button class="btn btn-secondary btn-sm" @click="emit('demo', 'linked_list')">Linked List</button>
         <button class="btn btn-secondary btn-sm" @click="emit('demo', 'filter_sort')">Filter+Sort</button>
@@ -87,12 +82,11 @@ async function analyzeGithub() {
 
       <button
         class="btn btn-primary"
-        :disabled="(store?.loading ?? false) || !(store?.code ?? '').trim()"
-        title="Ctrl+回车"
+        :disabled="store.loading || !store.code.trim()"
+        title="Ctrl+Enter"
         @click="emit('analyze')"
       >
-        <span v-if="(store?.loading ?? false)" class="animate-pulse">分析中...</span>
-        <span v-else>分析</span>
+        {{ store.loading ? '分析中...' : '分析代码' }}
       </button>
     </div>
   </div>
@@ -118,7 +112,12 @@ async function analyzeGithub() {
 }
 
 .logo-icon {
-  font-size: 24px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .logo-text {
@@ -142,7 +141,8 @@ async function analyzeGithub() {
   flex-wrap: wrap;
 }
 
-.demo-group {
+.demo-group,
+.github-group {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -156,12 +156,6 @@ async function analyzeGithub() {
 .btn-sm {
   padding: 4px 12px;
   font-size: 14px;
-}
-
-.github-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .github-input {

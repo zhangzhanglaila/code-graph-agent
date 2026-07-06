@@ -7,7 +7,7 @@ import TimelinePanel from './TimelinePanel.vue'
 const activeSubTab = ref('replay')
 const subTabs = [
   { id: 'replay', label: '执行回放' },
-  { id: 'stack', label: '执行栈' },
+  { id: 'stack', label: '调用栈' },
   { id: 'timeline', label: '时间线' },
 ]
 </script>
@@ -36,6 +36,7 @@ const subTabs = [
   flex-direction: column;
   height: 100%;
 }
+
 .sub-tab-bar {
   display: flex;
   gap: 0;
@@ -43,6 +44,7 @@ const subTabs = [
   padding: 0 4px;
   flex-shrink: 0;
 }
+
 .sub-tab-btn {
   padding: 8px 16px;
   font-size: 14px;
@@ -54,17 +56,21 @@ const subTabs = [
   cursor: pointer;
   transition: all 0.15s;
 }
+
 .sub-tab-btn:hover {
   color: var(--text);
 }
+
 .sub-tab-btn.active {
   color: var(--primary);
   border-bottom-color: var(--primary);
 }
+
 .sub-tab-content {
   flex: 1;
   overflow-y: auto;
 }
+
 .sub-tab-content > div {
   height: 100%;
 }
