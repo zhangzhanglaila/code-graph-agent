@@ -236,6 +236,38 @@ function _friendlyError(msg: string, errorType?: string): string {
   return msg
 }
 
+function _snippet(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, 180)
+}
+
+async function _readJson<T = any>(res: Response, label: string): Promise<T> {
+  const text = await res.text()
+  const status = `${res.status} ${res.statusText}`.trim()
+
+  if (!text.trim()) {
+    const hint = res.status >= 500 ? ' Backend service may be down or the dev proxy failed.' : ''
+    throw new Error(`${label}: empty response from server (${status}).${hint}`)
+  }
+
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    const body = _snippet(text)
+    throw new Error(`${label}: expected JSON but received ${res.headers.get('content-type') || 'unknown content'} (${status})${body ? `: ${body}` : ''}`)
+  }
+}
+
+async function _requestJson<T = any>(res: Response, label: string): Promise<T> {
+  const data = await _readJson<any>(res, label)
+  if (!res.ok) {
+    throw new Error(_friendlyError(data.detail || data.error || `${label} failed (${res.status} ${res.statusText})`, data.error_type))
+  }
+  if (data.success === false) {
+    throw new Error(_friendlyError(data.error || data.detail || `${label} failed`, data.error_type))
+  }
+  return data as T
+}
+
 // ── Analysis API ────────────────────────────────────────────────
 
 export async function analyzeCode(code: string, language = 'python', errorLine?: number, config?: string): Promise<AnalyzeResponse> {
@@ -243,10 +275,7 @@ export async function analyzeCode(code: string, language = 'python', errorLine?:
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, language, error_line: errorLine, config }),
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.detail || 'Analysis failed')
-  if (data.success === false) throw new Error(_friendlyError(data.error, data.error_type))
-  return data
+  return _requestJson<AnalyzeResponse>(res, 'Graph')
 }
 
 export async function getInsight(code: string, funcName = '', language = 'python'): Promise<InsightResponse> {
@@ -254,10 +283,7 @@ export async function getInsight(code: string, funcName = '', language = 'python
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language }),
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.detail || 'Insight failed')
-  if (data.success === false) throw new Error(_friendlyError(data.error, data.error_type))
-  return data
+  return _requestJson<InsightResponse>(res, 'Insight')
 }
 
 export interface AnalyzeFullResponse {
@@ -277,10 +303,7 @@ export async function analyzeFull(code: string, funcName = '', language = 'pytho
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language }),
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.detail || 'Analyze full failed')
-  if (data.success === false) throw new Error(data.error || 'Analysis failed')
-  return data
+  return _requestJson<AnalyzeFullResponse>(res, 'Analyze full')
 }
 
 export async function getDSViz(code: string, funcName = '', language = 'python'): Promise<DSVizResponse> {
@@ -288,10 +311,7 @@ export async function getDSViz(code: string, funcName = '', language = 'python')
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language }),
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.detail || 'DS Viz failed')
-  if (data.success === false) throw new Error(_friendlyError(data.error, data.error_type))
-  return data
+  return _requestJson<DSVizResponse>(res, 'DS Viz')
 }
 
 export async function getExplain(code: string, funcName = '', language = 'python', provider = 'mock', apiKey = ''): Promise<ExplainResponse> {
@@ -299,10 +319,7 @@ export async function getExplain(code: string, funcName = '', language = 'python
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language, provider, api_key: apiKey }),
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.detail || 'Explain failed')
-  if (data.success === false) throw new Error(_friendlyError(data.error, data.error_type))
-  return data
+  return _requestJson<ExplainResponse>(res, 'Explain')
 }
 
 export async function getExplainSteps(code: string, funcName = '', language = 'python', provider = 'mock', apiKey = '', sessionId = ''): Promise<{ explanations: StepExplanation[]; control_edges?: ControlEdge[]; loop_groups?: LoopGroup[] }> {
@@ -310,7 +327,7 @@ export async function getExplainSteps(code: string, funcName = '', language = 'p
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language, provider, api_key: apiKey, session_id: sessionId }),
   })
-  const data = await res.json()
+  const data = await _readJson<any>(res, 'Explain steps')
   if (!res.ok || data.success === false) return { explanations: [] }
   return { explanations: data.explanations || [], control_edges: data.control_edges || [], loop_groups: data.loop_groups || [] }
 }
@@ -323,7 +340,7 @@ export async function getExplainStepFocus(
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language, step_index: stepIndex, window_before: windowBefore, window_after: windowAfter, provider, api_key: apiKey, session_id: sessionId }),
   })
-  const data = await res.json()
+  const data = await _readJson<any>(res, 'Explain step focus')
   if (!res.ok || data.success === false) return null
   return data.explanation || null
 }
@@ -333,7 +350,7 @@ export async function getPatternNarrative(code: string, funcName = '', language 
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language, session_id: sessionId }),
   })
-  const data = await res.json()
+  const data = await _readJson<any>(res, 'Pattern narrative')
   if (!res.ok || data.success === false) return null
   return data
 }
@@ -343,7 +360,7 @@ export async function getSubproblemGraph(code: string, funcName = '', language =
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language }),
   })
-  const data = await res.json()
+  const data = await _readJson<any>(res, 'Subproblem graph')
   if (!res.ok || data.success === false) return null
   return data
 }
@@ -353,7 +370,7 @@ export async function getFailureAttribution(code: string, funcName: string, lang
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language }),
   })
-  return res.json()
+  return _requestJson<FailureAttributionResult>(res, 'Failure attribution')
 }
 
 export async function getCausalChain(code: string, funcName: string, language: string): Promise<CausalChainResult> {
@@ -361,7 +378,7 @@ export async function getCausalChain(code: string, funcName: string, language: s
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language }),
   })
-  return res.json()
+  return _requestJson<CausalChainResult>(res, 'Causal chain')
 }
 
 // ── GitHub API ──────────────────────────────────────────────────
@@ -371,7 +388,7 @@ export async function analyzeGitHubRepo(req: GitHubAnalyzeRequest): Promise<GitH
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   })
-  return res.json()
+  return _requestJson<GitHubAnalyzeResponse>(res, 'GitHub analyze')
 }
 
 export async function getImportGraph(req: GitHubAnalyzeRequest): Promise<{ success: boolean; error?: string; nodes?: { id: string; module: string; import_count: number }[]; edges?: { from: string; to: string; type: string; name?: string; line?: number }[]; stats?: any }> {
@@ -379,7 +396,7 @@ export async function getImportGraph(req: GitHubAnalyzeRequest): Promise<{ succe
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   })
-  return res.json()
+  return _requestJson<{ success: boolean; error?: string; nodes?: { id: string; module: string; import_count: number }[]; edges?: { from: string; to: string; type: string; name?: string; line?: number }[]; stats?: any }>(res, 'Import graph')
 }
 
 // ── Query API ───────────────────────────────────────────────────
@@ -389,7 +406,7 @@ export async function query(code: string, funcName: string, language: string, q:
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language, query: q }),
   })
-  return res.json()
+  return _requestJson<QueryResult>(res, 'Query')
 }
 
 export async function textQuery(code: string, funcName: string, language: string, text: string): Promise<QueryResult> {
@@ -397,7 +414,7 @@ export async function textQuery(code: string, funcName: string, language: string
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language, text }),
   })
-  return res.json()
+  return _requestJson<QueryResult>(res, 'Text query')
 }
 
 export async function getIdentity(code: string, funcName: string, language: string): Promise<QueryResult> {
@@ -405,7 +422,7 @@ export async function getIdentity(code: string, funcName: string, language: stri
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language }),
   })
-  return res.json()
+  return _requestJson<QueryResult>(res, 'Identity')
 }
 
 export async function semanticDiff(codeA: string, codeB: string, funcName: string, language: string): Promise<QueryResult> {
@@ -413,7 +430,7 @@ export async function semanticDiff(codeA: string, codeB: string, funcName: strin
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code_a: codeA, code_b: codeB, func_name: funcName, language }),
   })
-  return res.json()
+  return _requestJson<QueryResult>(res, 'Semantic diff')
 }
 
 export async function getSimilarity(codeA: string, codeB: string, funcName: string, language: string): Promise<QueryResult> {
@@ -421,7 +438,7 @@ export async function getSimilarity(codeA: string, codeB: string, funcName: stri
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code_a: codeA, code_b: codeB, func_name: funcName, language }),
   })
-  return res.json()
+  return _requestJson<QueryResult>(res, 'Similarity')
 }
 
 // ── Agent API ───────────────────────────────────────────────────
@@ -431,17 +448,17 @@ export async function agentAnalyze(code: string, funcName = '', language = 'pyth
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, func_name: funcName, language, question }),
   })
-  return res.json()
+  return _requestJson<AgentResult>(res, 'Agent analyze')
 }
 
 // ── Metrics API ─────────────────────────────────────────────────
 
 export async function getAllMetrics(): Promise<AllMetrics> {
   const res = await fetch(`${API_BASE}/api/metrics`)
-  return res.json()
+  return _requestJson<AllMetrics>(res, 'Metrics')
 }
 
 export async function resetMetrics(): Promise<{ success: boolean }> {
   const res = await fetch(`${API_BASE}/api/metrics/reset`, { method: 'POST' })
-  return res.json()
+  return _requestJson<{ success: boolean }>(res, 'Reset metrics')
 }
