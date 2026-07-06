@@ -56,6 +56,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
   })
   const sessionId = ref('')
   const showAllSteps = ref(false)
+  const analysisCode = ref('')
+  const analysisFuncName = ref('')
+  const analysisLanguage = ref('python')
 
   // Results
   const insightResult = ref<InsightResponse | null>(null)
@@ -97,10 +100,10 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const history = ref<HistoryEntry[]>(loadHistory())
 
   // Computed
-  const hasResults = computed(() => !!insightResult.value)
+  const hasResults = computed(() => !!insightResult.value?.success && timeline.value.length > 0)
   const timeline = computed(() => {
     const raw = insightResult.value
-    if (!raw) return []
+    if (!raw?.success) return []
     if ((raw as any).timeline?.length) return (raw as any).timeline
     if ((raw as any).steps?.length) return (raw as any).steps
     return []
@@ -120,111 +123,10 @@ export const useAnalysisStore = defineStore('analysis', () => {
     return t[idx]
   })
 
-  // DSViz: unified data source — use real heap data if available, else derive from timeline vars
-  function tryParseValue(raw: string): any {
-    if (!raw || typeof raw !== 'string') return raw
-    // JSON arrays/objects
-    if (raw.startsWith('[') || raw.startsWith('{')) {
-      try { return JSON.parse(raw) } catch {}
-    }
-    // Python-style: {'a': 1} → {"a": 1}
-    if (raw.startsWith("{'") || raw.startsWith('{"')) {
-      try {
-        const fixed = raw.replace(/'/g, '"')
-        return JSON.parse(fixed)
-      } catch {}
-    }
-    return raw
-  }
-
-  function buildGraphFromVars(vars: Record<string, any>, changed: string[]): { nodes: Record<string, any>, edges: any[], bindings: Record<string, number>, changedIds: number[] } {
-    if (!vars || typeof vars !== 'object' || Array.isArray(vars)) {
-      return { nodes: {}, edges: [], bindings: {}, changedIds: [] }
-    }
-    const nodes: Record<string, any> = {}
-    const edges: any[] = []
-    const bindings: Record<string, number> = {}
-    const changedIds: number[] = []
-    let nextId = 0
-    const seen = new Map<any, number>() // object identity → node id
-
-    function addNode(type: string, val: string, changed: boolean): number {
-      const id = nextId++
-      nodes[String(id)] = { id, type, val: val.slice(0, 60), attrs: {}, refs: {}, changed }
-      if (changed) changedIds.push(id)
-      return id
-    }
-
-    function build(value: any, isChanged: boolean): number {
-      // Primitives
-      if (value === null || value === undefined) return addNode('None', String(value), isChanged)
-      if (typeof value === 'boolean') return addNode('bool', String(value), isChanged)
-      if (typeof value === 'number') return addNode('number', String(value), isChanged)
-      if (typeof value === 'string') {
-        // Could be a repr of something complex
-        const parsed = tryParseValue(value)
-        if (parsed !== value) return build(parsed, isChanged)
-        return addNode('str', `"${value.slice(0, 30)}"`, isChanged)
-      }
-
-      // Cycle detection
-      if (seen.has(value)) return seen.get(value)!
-
-      if (Array.isArray(value)) {
-        const id = addNode('list', `[${value.length}]`, isChanged)
-        seen.set(value, id)
-        value.forEach((item, i) => {
-          const childId = build(item, false)
-          edges.push({ from: id, to: childId, label: String(i), changed: false })
-          nodes[String(id)].refs[String(i)] = childId
-        })
-        return id
-      }
-
-      if (typeof value === 'object') {
-        const keys = Object.keys(value)
-        const id = addNode('dict', `{${keys.length}}`, isChanged)
-        seen.set(value, id)
-        for (const k of keys) {
-          const childId = build(value[k], false)
-          edges.push({ from: id, to: childId, label: k, changed: false })
-          nodes[String(id)].refs[k] = childId
-        }
-        return id
-      }
-
-      return addNode(typeof value, String(value).slice(0, 40), isChanged)
-    }
-
-    for (const [name, v] of Object.entries(vars)) {
-      const raw = v.value
-      const parsed = tryParseValue(raw)
-      const isChanged = !!v.changed
-      const nodeId = build(parsed, isChanged)
-      bindings[name] = nodeId
-    }
-
-    return { nodes, edges, bindings, changedIds }
-  }
-
+  // DSViz uses only the backend heap tracer so it stays tied to the executed code.
   const dsVizTimeline = computed(() => {
-    try {
-      if (dsVizResult.value?.steps?.length) return dsVizResult.value.steps
-      return timeline.value.map((step: any, i: number) => {
-        const { nodes, edges, bindings, changedIds } = buildGraphFromVars(step.vars || {}, step.changed || [])
-        return {
-          index: step.index ?? i,
-          line: step.line ?? 0,
-          code: step.code ?? '',
-          nodes,
-          edges,
-          var_bindings: bindings,
-          changed_objects: changedIds,
-        }
-      })
-    } catch {
-      return []
-    }
+    if (!dsVizResult.value?.success) return []
+    return dsVizResult.value.steps || []
   })
 
   // Reads/Writes: causal dependency per step
@@ -581,6 +483,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     importGraph.value = null
     causalChain.value = null
     sessionId.value = ''
+    analysisCode.value = ''
+    analysisFuncName.value = ''
+    analysisLanguage.value = language.value
     currentStep.value = 0
     explainMode.value = false
     isPlaying.value = false
@@ -629,6 +534,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     githubResult, failureAttribution, importGraph, causalChain,
     agentResult, agentLoading, metrics,
     sessionId, showAllSteps,
+    analysisCode, analysisFuncName, analysisLanguage,
     currentStep, isPlaying, playSpeed,
     highlightedLine,
     history,

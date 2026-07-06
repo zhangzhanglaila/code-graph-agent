@@ -154,7 +154,7 @@ async def ds_viz(req: DSVizRequest):
             "result": repr(result),
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "error_type": type(e).__name__}
     finally:
         if func_file:
             try:

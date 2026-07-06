@@ -6,6 +6,7 @@ Dynamic = engine (pure computation)
 """
 
 from __future__ import annotations
+import inspect
 import os
 import sys
 import traceback
@@ -35,7 +36,11 @@ def prepare_execution(
         raise ValueError("No function found in code. Define a function to analyze.")
 
     module = import_code_as_module(code)
-    func = getattr(module, func_name)
+    func = getattr(module, func_name, None)
+    if func is None:
+        raise ValueError(f"Function '{func_name}' was not found as a top-level function in the submitted code.")
+    if not inspect.isfunction(func) or getattr(func, "__module__", None) != module.__name__:
+        raise ValueError(f"'{func_name}' is not a user-defined top-level function. Select or define a top-level function to analyze.")
     func_file = os.path.abspath(func.__code__.co_filename)
 
     inferred_args, arg_meta = infer_args(func, code)
@@ -121,10 +126,11 @@ def build_insight_response(
     code: str, func_name: str = "", language: str = "python",
 ) -> dict:
     """Full insight pipeline: execute → analyze → build response."""
+    func_file = None
     try:
         module, func, timeline, result, func_file = prepare_execution(code, func_name, language)
-    except ValueError as e:
-        return {"success": False, "error": str(e)}
+    except Exception as e:
+        return {"success": False, "error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()}
 
     try:
         from reasoning.insight_summarizer import summarize_insight

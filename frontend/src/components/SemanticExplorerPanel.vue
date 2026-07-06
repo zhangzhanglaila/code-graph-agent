@@ -14,14 +14,14 @@ const showAllFacts = ref(false)
 const activeStory = ref<string | null>(null)
 
 async function loadSemanticData() {
-  if (!store.code.trim()) return
+  if (!store.hasResults || !store.analysisCode.trim()) return
   loading.value = true
   error.value = ''
   try {
     // Load narrative and facts in parallel
     const [narrativeRes, factsRes] = await Promise.allSettled([
-      query(store.code, store.funcName, store.language, { type: 'explain_slice' }),
-      query(store.code, store.funcName, store.language, { type: 'facts' }),
+      query(store.analysisCode, store.analysisFuncName, store.analysisLanguage, { type: 'explain_slice' }),
+      query(store.analysisCode, store.analysisFuncName, store.analysisLanguage, { type: 'facts' }),
     ])
 
     if (narrativeRes.status === 'fulfilled' && narrativeRes.value.success) {
@@ -82,8 +82,8 @@ watch(showAllFacts, (show) => {
   displayedFacts.value = show ? facts.value : facts.value.slice(0, 12)
 })
 
-onMounted(loadSemanticData)
-watch(() => store.hasResults, (has) => { if (has) loadSemanticData() })
+onMounted(() => { if (store.hasResults) loadSemanticData() })
+watch(() => store.sessionId, () => { if (store.hasResults) loadSemanticData() })
 </script>
 
 <template>

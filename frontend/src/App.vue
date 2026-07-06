@@ -97,6 +97,13 @@ async function runAnalysis() {
     if (results[0].status === 'fulfilled') {
       store.insightResult = results[0].value
       store.sessionId = results[0].value.session_id || ''
+      if (results[0].value.success) {
+        store.analysisCode = requestCode
+        store.analysisFuncName = requestFuncName
+        store.analysisLanguage = requestLanguage
+      } else {
+        errors.push(`Insight: ${results[0].value.error || 'failed'}`)
+      }
     } else {
       errors.push(`Insight: ${results[0].reason?.message || 'failed'}`)
     }

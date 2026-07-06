@@ -15,11 +15,11 @@ const selectedNode = ref<string | null>(null)
 const expandedCats = ref<Set<string>>(new Set(['algorithm', 'variable']))
 
 async function loadIdentityData() {
-  if (!store.code.trim()) return
+  if (!store.hasResults || !store.analysisCode.trim()) return
   loading.value = true
   error.value = ''
   try {
-    const res = await getIdentity(store.code, store.funcName, store.language)
+    const res = await getIdentity(store.analysisCode, store.analysisFuncName, store.analysisLanguage)
     if (res.success) {
       identities.value = (res as any).identities || null
       normalForm.value = (res as any).normal_form || null
@@ -79,8 +79,8 @@ const relationshipEdges = computed(() => {
   return identities.value.relationships
 })
 
-onMounted(loadIdentityData)
-watch(() => store.hasResults, (has) => { if (has) loadIdentityData() })
+onMounted(() => { if (store.hasResults) loadIdentityData() })
+watch(() => store.sessionId, () => { if (store.hasResults) loadIdentityData() })
 </script>
 
 <template>

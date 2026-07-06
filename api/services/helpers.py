@@ -1,7 +1,9 @@
 """Shared helpers for API routes — code execution, caching, utilities."""
 
 from __future__ import annotations
+import ast
 import importlib
+import importlib.util
 import os
 import sys
 import tempfile
@@ -48,13 +50,16 @@ def write_temp_code(code: str, language: str) -> str:
 
 
 def extract_func_name(code: str, func_name: str) -> str:
-    """Extract function name from code if not provided."""
+    """Extract the top-level function name from code if not provided."""
     if func_name:
         return func_name
-    for line in code.splitlines():
-        line = line.strip()
-        if line.startswith("def "):
-            return line[4:].split("(")[0].strip()
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return ""
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            return node.name
     return ""
 
 
