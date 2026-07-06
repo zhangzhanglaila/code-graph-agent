@@ -1,232 +1,186 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useAnalysisStore } from '../store/analysisStore'
-import { getIdentity } from '../api/analysis'
+import { useSemanticModel } from '../composables/useSemanticModel'
 
 const store = useAnalysisStore()
+const model = useSemanticModel()
+const selectedVariable = ref<string | null>(null)
 
-const loading = ref(false)
-const error = ref('')
-const identities = ref<any>(null)
-const normalForm = ref<any>(null)
-const fingerprint = ref<any>(null)
-const ontology = ref<any>(null)
-const selectedNode = ref<string | null>(null)
-const expandedCats = ref<Set<string>>(new Set(['algorithm', 'variable']))
-
-async function loadIdentityData() {
-  if (!store.hasResults || !store.analysisCode.trim()) return
-  loading.value = true
-  error.value = ''
-  try {
-    const res = await getIdentity(store.analysisCode, store.analysisFuncName, store.analysisLanguage)
-    if (res.success) {
-      identities.value = (res as any).identities || null
-      normalForm.value = (res as any).normal_form || null
-      fingerprint.value = (res as any).fingerprint || null
-      ontology.value = (res as any).ontology || null
-    } else {
-      error.value = res.error || 'Failed to load identity'
-    }
-  } catch (e: any) {
-    error.value = e.message
-  } finally {
-    loading.value = false
-  }
-}
-
-function toggleCat(cat: string) {
-  if (expandedCats.value.has(cat)) expandedCats.value.delete(cat)
-  else expandedCats.value.add(cat)
-}
-
-function categoryColor(cat: string): string {
-  const map: Record<string, string> = {
-    algorithm: '#8b5cf6',
-    variable: '#3b82f6',
-    structure: '#f59e0b',
-    control: '#10b981',
-  }
-  return map[cat] || '#6b7280'
-}
-
-function categoryIcon(cat: string): string {
-  const map: Record<string, string> = {
-    algorithm: 'A',
-    variable: 'V',
-    structure: 'S',
-    control: 'C',
-  }
-  return map[cat] || '?'
-}
-
-function confidenceWidth(conf: number): string {
-  return `${Math.round(conf * 100)}%`
-}
-
-const canonicalByCategory = computed(() => {
-  if (!normalForm.value?.canonical_identities) return {}
-  const groups: Record<string, any[]> = {}
-  for (const c of normalForm.value.canonical_identities) {
-    if (!groups[c.category]) groups[c.category] = []
-    groups[c.category].push(c)
-  }
-  return groups
+const focusedVariable = computed(() => {
+  if (!selectedVariable.value) return model.variableRoles.value[0] || null
+  return model.variableRoles.value.find(v => v.name === selectedVariable.value) || null
 })
 
-const relationshipEdges = computed(() => {
-  if (!identities.value?.relationships) return []
-  return identities.value.relationships
+const variableSteps = computed(() => {
+  const variable = focusedVariable.value?.name
+  if (!variable) return []
+  return model.semanticSteps.value.filter(step => step.variables.includes(variable)).slice(0, 18)
 })
 
-onMounted(() => { if (store.hasResults) loadIdentityData() })
-watch(() => store.sessionId, () => { if (store.hasResults) loadIdentityData() })
+const phaseConnections = computed(() => {
+  return model.phases.value.map(phase => ({
+    ...phase,
+    variables: phase.variables
+      .map(name => model.variableRoles.value.find(role => role.name === name))
+      .filter(Boolean)
+      .slice(0, 6),
+  }))
+})
+
+function pickVariable(name: string) {
+  selectedVariable.value = selectedVariable.value === name ? null : name
+}
+
+function jumpToStep(index: number) {
+  const rawIndex = model.steps.value.findIndex(step => step.index === index)
+  if (rawIndex >= 0) store.currentStep = rawIndex
+  const step = model.steps.value[rawIndex]
+  store.highlightedLine = step?.line || 0
+}
+
+function short(value: string) {
+  if (!value) return '无快照'
+  return value.length > 96 ? `${value.slice(0, 96)}...` : value
+}
 </script>
 
 <template>
   <div class="semantic-map">
-    <!-- Loading -->
-    <div v-if="loading" class="loading">
-      <div class="spinner"></div>
-      <span>Analyzing semantic identity...</span>
+    <div v-if="!store.hasResults" class="empty-state">
+      <div class="empty-title">语义地图等待执行数据</div>
+      <div class="empty-copy">运行分析后，这里会按真实代码轨迹生成概念、变量角色和依赖证据。</div>
     </div>
 
-    <!-- Error -->
-    <div v-else-if="error" class="error-box">{{ error }}</div>
-
-    <!-- Empty -->
-    <div v-else-if="!fingerprint" class="empty">
-      <p>No semantic identity available.</p>
-      <p class="hint">Run analysis first to see the semantic map.</p>
-    </div>
-
-    <!-- Content -->
-    <div v-else class="content">
-      <!-- Fingerprint Header -->
-      <div class="fp-header">
-        <div class="fp-hash">{{ fingerprint.hash }}</div>
-        <div class="fp-signature">
-          <span class="fp-algo">{{ fingerprint.algorithm }}</span>
-          <span class="fp-conf">{{ (fingerprint.algorithm_confidence * 100).toFixed(0) }}%</span>
+    <template v-else>
+      <section class="map-header">
+        <div>
+          <span class="eyebrow">概念地图</span>
+          <h2>{{ model.algorithmLabel.value }}</h2>
+          <p>{{ model.summary.value }}</p>
         </div>
-        <div class="fp-details">
-          <span class="fp-tag" v-if="fingerprint.structures.length">
-            {{ fingerprint.structures.join(' + ') }}
+        <div class="compact-metrics">
+          <span v-for="metric in model.metrics.value" :key="metric.label">
+            <strong>{{ metric.value }}</strong>{{ metric.label }}
           </span>
-          <span class="fp-tag complexity">{{ fingerprint.complexity }}</span>
         </div>
-      </div>
+      </section>
 
-      <!-- Canonical Identity Graph -->
-      <div class="graph-section">
-        <h3>Semantic Identity Graph</h3>
-
-        <!-- Node graph (vertical tree) -->
-        <div class="identity-graph">
-          <!-- Algorithm node (root) -->
-          <div class="graph-node algo-node" v-if="fingerprint.algorithm !== 'unknown'">
-            <span class="node-icon" :style="{ background: categoryColor('algorithm') }">A</span>
-            <span class="node-label">{{ fingerprint.algorithm }}</span>
-            <span class="node-conf">{{ (fingerprint.algorithm_confidence * 100).toFixed(0) }}%</span>
+      <section class="concept-grid">
+        <article v-for="phase in phaseConnections" :key="phase.id" class="concept-card" :style="{ '--phase': phase.color }">
+          <div class="concept-head">
+            <span class="phase-marker"></span>
+            <h3>{{ phase.title }}</h3>
+            <strong>{{ phase.steps.length }}</strong>
           </div>
-
-          <!-- Relationship edges -->
-          <div v-for="rel in relationshipEdges" :key="`${rel.from}-${rel.to}`" class="graph-edge">
-            <div class="edge-line"></div>
-            <div class="edge-label">{{ rel.type }}</div>
-            <div class="edge-node from-node">{{ rel.from }}</div>
-            <div class="edge-node to-node">{{ rel.to }}</div>
+          <p>{{ phase.summary }}</p>
+          <div class="concept-lines">
+            <span v-for="line in phase.lines.slice(0, 8)" :key="line">Line {{ line }}</span>
           </div>
-
-          <!-- Canonical nodes by category -->
-          <div v-for="(items, cat) in canonicalByCategory" :key="cat" class="graph-cluster">
-            <div
-              class="cluster-header"
-              @click="toggleCat(cat)"
-              :style="{ borderLeftColor: categoryColor(cat) }"
+          <div class="concept-vars">
+            <button
+              v-for="variable in phase.variables"
+              :key="variable!.name"
+              @click="pickVariable(variable!.name)"
+              :class="{ active: focusedVariable?.name === variable!.name }"
             >
-              <span class="cluster-icon" :style="{ background: categoryColor(cat) }">{{ categoryIcon(cat) }}</span>
-              <span class="cluster-label">{{ cat }} ({{ items.length }})</span>
-              <span class="cluster-toggle">{{ expandedCats.has(cat) ? '-' : '+' }}</span>
-            </div>
-            <div v-if="expandedCats.has(cat)" class="cluster-body">
-              <div
-                v-for="item in items"
-                :key="item.canonical_id"
-                :class="['identity-card', { selected: selectedNode === item.canonical_id }]"
-                @click="selectedNode = selectedNode === item.canonical_id ? null : item.canonical_id"
-              >
-                <div class="card-header">
-                  <span class="card-id">{{ item.canonical_id }}</span>
-                  <div class="card-conf-bar">
-                    <div class="card-conf-fill" :style="{ width: confidenceWidth(item.confidence), background: categoryColor(cat) }"></div>
-                  </div>
-                </div>
-                <div class="card-subjects">
-                  <span v-for="s in item.subjects" :key="s" class="subject-tag">{{ s }}</span>
-                </div>
-                <div class="card-params" v-if="selectedNode === item.canonical_id">
-                  <div v-for="(v, k) in item.parameters" :key="k" class="param-row">
-                    <span class="param-key">{{ k }}:</span>
-                    <span class="param-val">{{ typeof v === 'object' ? JSON.stringify(v) : v }}</span>
-                  </div>
-                </div>
-                <div class="card-invariants" v-if="selectedNode === item.canonical_id">
-                  <span v-for="inv in item.invariants" :key="inv" class="inv-tag">{{ inv }}</span>
-                </div>
-              </div>
-            </div>
+              {{ variable!.name }} / {{ variable!.role }}
+            </button>
           </div>
-        </div>
-      </div>
+        </article>
+      </section>
 
-      <!-- Ontology Context -->
-      <div v-if="ontology && Object.keys(ontology).length" class="ontology-section">
-        <h3>Ontology Context</h3>
-        <div class="ontology-grid">
-          <div v-for="(info, conceptId) in ontology" :key="conceptId" class="ontology-card">
-            <div class="ont-header">
-              <span class="ont-id">{{ conceptId }}</span>
-              <span class="ont-implication" v-if="info.complexity_implication">
-                {{ info.complexity_implication }}
+      <div class="map-body">
+        <section class="inventory-panel">
+          <div class="panel-title">
+            <h3>变量语义清单</h3>
+            <p>每个角色都由执行轨迹推导，不再依赖后端身份猜测。</p>
+          </div>
+          <div class="variable-list">
+            <button
+              v-for="variable in model.variableRoles.value"
+              :key="variable.name"
+              class="variable-row"
+              :class="{ active: focusedVariable?.name === variable.name }"
+              :style="{ '--role': variable.color }"
+              @click="pickVariable(variable.name)"
+            >
+              <span class="var-dot"></span>
+              <span class="var-main">
+                <strong>{{ variable.name }}</strong>
+                <small>{{ variable.role }}</small>
               </span>
+              <span class="var-score">{{ Math.round(variable.confidence * 100) }}%</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="focus-panel">
+          <div class="panel-title">
+            <h3>变量证据</h3>
+            <p v-if="focusedVariable">{{ focusedVariable.name }} 在执行过程中的角色和流动。</p>
+          </div>
+
+          <div v-if="focusedVariable" class="focus-card" :style="{ '--role': focusedVariable.color }">
+            <div class="focus-head">
+              <span>{{ focusedVariable.name }}</span>
+              <strong>{{ focusedVariable.role }}</strong>
             </div>
-            <div class="ont-ancestors" v-if="info.ancestors?.length">
-              <span class="ont-label">is_a:</span>
-              <span v-for="a in info.ancestors" :key="a" class="ont-tag ancestor">{{ a }}</span>
+            <div class="focus-stats">
+              <span>写入 {{ focusedVariable.changes }}</span>
+              <span>读取 {{ focusedVariable.reads }}</span>
+              <span>步骤 #{{ focusedVariable.firstStep }} 到 #{{ focusedVariable.lastStep }}</span>
             </div>
-            <div class="ont-siblings" v-if="info.siblings?.length">
-              <span class="ont-label">sibling:</span>
-              <span v-for="s in info.siblings" :key="s" class="ont-tag sibling">{{ s }}</span>
+            <div class="value-block">
+              <span>初始</span>
+              <code>{{ short(focusedVariable.firstValue) }}</code>
+              <span>最终</span>
+              <code>{{ short(focusedVariable.lastValue) }}</code>
             </div>
-            <div class="ont-mistakes" v-if="info.common_mistakes?.length">
-              <span class="ont-label">watch:</span>
-              <span class="ont-mistake">{{ info.common_mistakes.join(', ') }}</span>
+            <div class="evidence-list">
+              <span v-for="item in focusedVariable.evidence" :key="item">{{ item }}</span>
             </div>
           </div>
-        </div>
-      </div>
 
-      <!-- Variable Archetype Map -->
-      <div v-if="Object.keys(fingerprint.variable_archetypes || {}).length" class="var-map">
-        <h3>Variable Archetypes</h3>
-        <div class="var-grid">
-          <div v-for="(archetype, varName) in fingerprint.variable_archetypes" :key="varName" class="var-card">
-            <span class="var-name">{{ varName }}</span>
-            <span class="var-arrow">→</span>
-            <span class="var-archetype">{{ archetype }}</span>
+          <div class="step-evidence">
+            <h4>相关执行步骤</h4>
+            <button
+              v-for="step in variableSteps"
+              :key="step.index"
+              class="evidence-row"
+              @click="jumpToStep(step.index)"
+            >
+              <span>#{{ step.index }}</span>
+              <strong>{{ step.title }}</strong>
+              <code>{{ step.code }}</code>
+            </button>
           </div>
-        </div>
-      </div>
+        </section>
 
-      <!-- Invariant Set -->
-      <div v-if="fingerprint.invariant_set?.length" class="invariants">
-        <h3>Invariant Set</h3>
-        <div class="inv-list">
-          <span v-for="inv in fingerprint.invariant_set" :key="inv" class="inv-badge">{{ inv }}</span>
-        </div>
+        <section class="flow-panel">
+          <div class="panel-title">
+            <h3>数据依赖链</h3>
+            <p>变量从写入点流向读取点。</p>
+          </div>
+
+          <div v-if="model.semanticLinks.value.length" class="flow-list">
+            <button
+              v-for="link in model.semanticLinks.value"
+              :key="`${link.from}-${link.to}-${link.variable}`"
+              class="flow-row"
+              @click="jumpToStep(link.to)"
+            >
+              <span class="node">#{{ link.from }}</span>
+              <span class="arrow">-></span>
+              <strong>{{ link.variable }}</strong>
+              <span class="arrow">-></span>
+              <span class="node">#{{ link.to }}</span>
+            </button>
+          </div>
+          <div v-else class="muted">没有可见依赖链，通常意味着样例很短或变量读取未形成跨步依赖。</div>
+        </section>
       </div>
-    </div>
+    </template>
   </div>
 </template>
 
@@ -234,467 +188,405 @@ watch(() => store.sessionId, () => { if (store.hasResults) loadIdentityData() })
 .semantic-map {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  font-size: 14px;
+  gap: 14px;
+  min-height: 100%;
+  padding: 14px;
+  color: var(--text);
+  background: #f8fafc;
 }
 
-.loading {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 24px;
-  color: var(--text-dim, #888);
-}
-
-.spinner {
-  width: 20px; height: 20px;
-  border: 2px solid var(--border, #ddd);
-  border-top-color: var(--primary, #4f46e5);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
-
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.error-box {
-  padding: 10px;
-  background: rgba(239,68,68,0.06);
-  border: 1px solid rgba(239,68,68,0.2);
-  border-radius: 6px;
-  color: #dc2626;
-}
-
-.empty {
-  padding: 32px;
+.empty-state {
+  display: grid;
+  place-content: center;
+  min-height: 320px;
+  gap: 8px;
+  color: #475569;
   text-align: center;
-  color: var(--text-dim, #9ca3af);
 }
 
-.empty .hint {
-  font-size: 14px;
-  margin-top: 4px;
-  opacity: 0.7;
+.empty-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f172a;
 }
 
-/* Fingerprint Header */
-.fp-header {
-  padding: 12px 16px;
-  background: linear-gradient(135deg, rgba(139,92,246,0.05), rgba(59,130,246,0.05));
-  border: 1px solid var(--border, #e5e7eb);
+.empty-copy {
+  font-size: 13px;
+}
+
+.map-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 420px);
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #dbe3ef;
   border-radius: 8px;
+  background: #ffffff;
 }
 
-.fp-hash {
-  font-family: monospace;
-  font-size: 20px;
-  font-weight: 700;
-  color: #8b5cf6;
-  letter-spacing: 2px;
+.eyebrow {
+  display: block;
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
 }
 
-.fp-signature {
-  display: flex;
-  align-items: center;
+h2, h3, h4, p {
+  margin: 0;
+}
+
+h2 {
+  color: #0f172a;
+  font-size: 24px;
+}
+
+.map-header p,
+.panel-title p {
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.compact-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  margin-top: 6px;
 }
 
-.fp-algo {
-  font-weight: 700;
-  font-size: 14px;
-  color: var(--text, #333);
-}
-
-.fp-conf {
-  font-size: 14px;
-  padding: 1px 6px;
-  background: rgba(139,92,246,0.1);
-  color: #8b5cf6;
-  border-radius: 4px;
-  font-weight: 600;
-}
-
-.fp-details {
+.compact-metrics span {
   display: flex;
+  align-items: baseline;
   gap: 6px;
-  margin-top: 6px;
-  flex-wrap: wrap;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
 }
 
-.fp-tag {
-  font-size: 14px;
-  padding: 2px 8px;
-  background: rgba(0,0,0,0.04);
-  border-radius: 4px;
-  color: var(--text-dim, #888);
+.compact-metrics strong {
+  color: #0f172a;
+  font-size: 18px;
 }
 
-.fp-tag.complexity {
-  background: rgba(245,158,11,0.08);
-  color: #d97706;
+.concept-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
 }
 
-/* Graph Section */
-.graph-section h3 {
-  font-size: 14px;
-  font-weight: 700;
-  margin: 0 0 8px;
-}
-
-.identity-graph {
+.concept-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-/* Algorithm root node */
-.graph-node.algo-node {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: linear-gradient(135deg, rgba(139,92,246,0.08), rgba(139,92,246,0.03));
-  border: 2px solid #8b5cf6;
+  gap: 9px;
+  min-height: 168px;
+  padding: 12px;
+  border: 1px solid #dbe3ef;
+  border-top: 4px solid var(--phase);
   border-radius: 8px;
-  font-weight: 700;
+  background: #ffffff;
 }
 
-.node-icon {
-  width: 24px;
-  height: 24px;
+.concept-head {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 8px;
+}
+
+.phase-marker {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--phase);
+}
+
+.concept-head h3 {
+  flex: 1;
+  color: #0f172a;
+  font-size: 15px;
+}
+
+.concept-head strong {
+  color: var(--phase);
+}
+
+.concept-card p {
+  min-height: 36px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.concept-lines,
+.concept-vars,
+.evidence-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.concept-lines span {
+  padding: 3px 6px;
   border-radius: 5px;
-  color: white;
-  font-size: 14px;
-  font-weight: 700;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
 }
 
-.node-label {
-  flex: 1;
-  font-size: 14px;
-}
-
-.node-conf {
-  font-size: 14px;
-  color: #8b5cf6;
-  font-weight: 600;
-}
-
-/* Relationship edges */
-.graph-edge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 12px;
-  font-size: 14px;
-}
-
-.edge-line {
-  flex: 1;
-  height: 1px;
-  background: var(--border, #e5e7eb);
-}
-
-.edge-label {
-  font-size: 14px;
-  color: var(--text-dim, #9ca3af);
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.edge-node {
-  font-family: monospace;
-  font-size: 14px;
-  color: var(--text-dim, #888);
-}
-
-/* Clusters */
-.graph-cluster {
-  margin-top: 4px;
-}
-
-.cluster-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-left: 3px solid #6b7280;
+.concept-vars button {
+  max-width: 100%;
+  padding: 4px 7px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 11px;
   cursor: pointer;
-  user-select: none;
-  background: rgba(0,0,0,0.01);
-  border-radius: 0 4px 4px 0;
-}
-
-.cluster-header:hover { background: rgba(0,0,0,0.03); }
-
-.cluster-icon {
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  color: white;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.cluster-label {
-  flex: 1;
-  font-weight: 600;
-  font-size: 14px;
-  text-transform: capitalize;
-}
-
-.cluster-toggle {
-  font-size: 14px;
-  color: var(--text-dim, #888);
-}
-
-.cluster-body {
-  padding: 6px 0 6px 28px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-/* Identity Cards */
-.identity-card {
-  border: 1px solid var(--border, #e5e7eb);
-  border-radius: 6px;
-  padding: 8px 10px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.identity-card:hover {
-  border-color: var(--primary, #4f46e5);
-}
-
-.identity-card.selected {
-  border-color: var(--primary, #4f46e5);
-  background: rgba(79,70,229,0.03);
-}
-
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.card-id {
-  font-family: monospace;
-  font-weight: 700;
-  font-size: 14px;
-  color: var(--text, #333);
-}
-
-.card-conf-bar {
-  flex: 1;
-  height: 4px;
-  background: rgba(0,0,0,0.06);
-  border-radius: 2px;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.card-conf-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.3s;
+.concept-vars button.active {
+  border-color: var(--phase);
+  background: color-mix(in srgb, var(--phase), white 90%);
 }
 
-.card-subjects {
-  display: flex;
-  gap: 4px;
-  margin-top: 4px;
-  flex-wrap: wrap;
+.map-body {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.3fr) minmax(260px, 0.8fr);
+  gap: 12px;
+  align-items: start;
 }
 
-.subject-tag {
-  font-size: 14px;
-  padding: 1px 5px;
-  background: rgba(0,0,0,0.04);
-  border-radius: 3px;
-  font-family: monospace;
-  color: var(--text-dim, #888);
+.inventory-panel,
+.focus-panel,
+.flow-panel {
+  min-width: 0;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
-.card-params {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border, #e5e7eb);
+.panel-title {
+  padding: 12px;
+  border-bottom: 1px solid #e2e8f0;
 }
 
-.param-row {
-  display: flex;
-  gap: 6px;
-  font-size: 14px;
-  padding: 1px 0;
+h3 {
+  color: #0f172a;
+  font-size: 15px;
 }
 
-.param-key {
-  font-weight: 600;
-  color: var(--text-dim, #888);
+h4 {
+  color: #0f172a;
+  font-size: 13px;
 }
 
-.param-val {
-  font-family: monospace;
-  color: var(--text, #333);
-}
-
-.card-invariants {
-  display: flex;
-  gap: 4px;
-  margin-top: 4px;
-  flex-wrap: wrap;
-}
-
-.inv-tag {
-  font-size: 14px;
-  padding: 1px 5px;
-  background: rgba(16,185,129,0.08);
-  color: #059669;
-  border-radius: 3px;
-}
-
-/* Variable Map */
-.var-map h3 {
-  font-size: 14px;
-  font-weight: 700;
-  margin: 0 0 8px;
-}
-
-.var-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.var-card {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid var(--border, #e5e7eb);
-  border-radius: 6px;
-  font-size: 14px;
-}
-
-.var-name {
-  font-family: monospace;
-  font-weight: 700;
-  color: #3b82f6;
-}
-
-.var-arrow {
-  color: var(--text-dim, #9ca3af);
-}
-
-.var-archetype {
-  font-family: monospace;
-  color: #8b5cf6;
-  font-size: 14px;
-}
-
-/* Ontology Section */
-.ontology-section h3 {
-  font-size: 14px;
-  font-weight: 700;
-  margin: 0 0 8px;
-}
-
-.ontology-grid {
+.variable-list,
+.flow-list,
+.step-evidence {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
+  padding: 12px;
 }
 
-.ontology-card {
-  border: 1px solid var(--border, #e5e7eb);
-  border-radius: 6px;
-  padding: 8px 10px;
-  background: rgba(139,92,246,0.02);
-}
-
-.ont-header {
-  display: flex;
+.variable-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  margin-bottom: 4px;
+  min-height: 46px;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
 }
 
-.ont-id {
-  font-family: monospace;
-  font-weight: 700;
-  font-size: 14px;
-  color: #8b5cf6;
+.variable-row.active {
+  border-color: var(--role);
+  background: color-mix(in srgb, var(--role), white 92%);
 }
 
-.ont-implication {
-  font-size: 14px;
-  padding: 1px 6px;
-  background: rgba(245,158,11,0.08);
-  color: #d97706;
-  border-radius: 3px;
+.var-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--role);
 }
 
-.ont-ancestors, .ont-siblings, .ont-mistakes {
+.var-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.var-main strong {
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+.var-main small {
+  color: #64748b;
+}
+
+.var-score {
+  color: var(--role);
+  font-weight: 900;
+  font-size: 12px;
+}
+
+.focus-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--role), white 72%);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--role), white 94%);
+}
+
+.focus-head {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-top: 2px;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
 }
 
-.ont-label {
-  font-size: 14px;
-  color: var(--text-dim, #9ca3af);
-  font-weight: 600;
+.focus-head span {
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
 }
 
-.ont-tag {
-  font-size: 14px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-family: monospace;
+.focus-head strong {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--role);
+  font-size: 12px;
 }
 
-.ont-tag.ancestor {
-  background: rgba(59,130,246,0.08);
-  color: #3b82f6;
-}
-
-.ont-tag.sibling {
-  background: rgba(16,185,129,0.08);
-  color: #059669;
-}
-
-.ont-mistake {
-  font-size: 14px;
-  color: #dc2626;
-}
-
-/* Invariants */
-.invariants h3 {
-  font-size: 14px;
-  font-weight: 700;
-  margin: 0 0 8px;
-}
-
-.inv-list {
+.focus-stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 8px;
 }
 
-.inv-badge {
-  font-size: 14px;
-  padding: 2px 8px;
-  background: rgba(16,185,129,0.08);
-  color: #059669;
-  border-radius: 4px;
-  font-weight: 600;
+.focus-stats span,
+.evidence-list span {
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #475569;
+  font-size: 12px;
+}
+
+.value-block {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+}
+
+.value-block span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+code {
+  padding: 6px;
+  border-radius: 5px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.evidence-row {
+  display: grid;
+  grid-template-columns: 48px minmax(90px, 120px) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #334155;
+  text-align: left;
+  cursor: pointer;
+}
+
+.evidence-row span {
+  color: #2563eb;
+  font-weight: 900;
+}
+
+.evidence-row strong {
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.evidence-row code {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flow-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+}
+
+.flow-row strong {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node {
+  color: #0f172a;
+  font-weight: 900;
+}
+
+.arrow {
+  color: #94a3b8;
+}
+
+.muted {
+  padding: 12px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1180px) {
+  .map-header,
+  .map-body {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
